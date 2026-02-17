@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH -p arguelles_delgado_gpu_mixed          # partition. Remember to change to a desired partition
-#SBATCH --mem=100g                              # memory in GB
+#SBATCH --mem=200g                              # memory in GB
 #SBATCH --time=24:00:00                         # time in HH:MM:SS
 #SBATCH -c 4                                    # number of cores
-#SBATCH --gres=gpu:nvidia_a100_1g.10gb:1        # requested GPU type
+#SBATCH --gres=gpu:nvidia_a100-sxm4-80gb        # requested GPU type
 
 
 module load python 
