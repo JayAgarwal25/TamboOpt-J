@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAMBO Detector Optimization Pipeline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f1729;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.95rem;
+    margin-bottom: 48px;
+  }
+  .pipeline {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* --- Node styles --- */
+  .node {
+    position: relative;
+    width: 680px;
+    border-radius: 14px;
+    padding: 22px 28px;
+    text-align: left;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35);
+  }
+  .node h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .node p, .node ul { font-size: 0.85rem; color: #cbd5e1; line-height: 1.55; }
+  .node ul { margin-left: 18px; margin-top: 4px; }
+  .node .tag {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    vertical-align: middle;
+  }
+
+  /* color themes */
+  .node.setup    { border: 1.5px solid #3b82f6; background: linear-gradient(135deg, #1e3a5f 0%, #172554 100%); }
+  .node.setup .tag { background: #3b82f6; color: #fff; }
+
+  .node.diffusion { border: 1.5px solid #8b5cf6; background: linear-gradient(135deg, #3b1f6e 0%, #2e1065 100%); }
+  .node.diffusion .tag { background: #8b5cf6; color: #fff; }
+
+  .node.scaler   { border: 1.5px solid #ec4899; background: linear-gradient(135deg, #6b1d4e 0%, #4a0e30 100%); }
+  .node.scaler .tag { background: #ec4899; color: #fff; }
+
+  .node.shower   { border: 1.5px solid #14b8a6; background: linear-gradient(135deg, #134e4a 0%, #0f3d3a 100%); }
+  .node.shower .tag { background: #14b8a6; color: #fff; }
+
+  .node.recon    { border: 1.5px solid #f59e0b; background: linear-gradient(135deg, #78540e 0%, #5c3d08 100%); }
+  .node.recon .tag { background: #f59e0b; color: #1e1b10; }
+
+  .node.optim    { border: 1.5px solid #ef4444; background: linear-gradient(135deg, #7f1d1d 0%, #5c1515 100%); }
+  .node.optim .tag { background: #ef4444; color: #fff; }
+
+  .node.utility  { border: 1.5px solid #22d3ee; background: linear-gradient(135deg, #164e63 0%, #0e3a4a 100%); }
+  .node.utility .tag { background: #22d3ee; color: #0e3a4a; }
+
+  .node.update   { border: 1.5px solid #4ade80; background: linear-gradient(135deg, #14532d 0%, #0f3d20 100%); }
+  .node.update .tag { background: #4ade80; color: #0f3d20; }
+
+  .node.finetune { border: 1.5px solid #fb923c; background: linear-gradient(135deg, #6b3a10 0%, #4a2808 100%); }
+  .node.finetune .tag { background: #fb923c; color: #3b1a06; }
+
+  /* --- Arrows --- */
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 38px;
+    position: relative;
+  }
+  .arrow .line {
+    width: 2.5px;
+    flex: 1;
+    background: #475569;
+  }
+  .arrow .head {
+    width: 0; height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #475569;
+  }
+  .arrow.highlight .line { background: #60a5fa; }
+  .arrow.highlight .head { border-top-color: #60a5fa; }
+
+  /* --- Parallel split --- */
+  .parallel-container {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 40px;
+    width: 100%;
+    position: relative;
+  }
+  .parallel-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: calc(50% - 210px);
+    width: 420px;
+    height: 2.5px;
+    background: #475569;
+  }
+  .parallel-branch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .parallel-branch .node { width: 320px; }
+
+  .merge-line {
+    width: 420px;
+    height: 2.5px;
+    background: #475569;
+    margin: 0 auto;
+  }
+
+  /* --- Loop wrapper --- */
+  .loop-wrapper {
+    position: relative;
+    border: 2px dashed #ef4444;
+    border-radius: 20px;
+    padding: 36px 30px 28px 30px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    width: 780px;
+  }
+  .loop-label {
+    position: absolute;
+    top: -14px;
+    left: 30px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 14px;
+    border-radius: 6px;
+  }
+
+  /* --- Feedback arrow --- */
+  .feedback {
+    position: absolute;
+    right: -52px;
+    top: 10%;
+    height: 80%;
+    width: 44px;
+  }
+  .feedback .vert {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 2.5px;
+    height: 100%;
+    background: #4ade80;
+  }
+  .feedback .top-horiz {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 44px;
+    height: 2.5px;
+    background: #4ade80;
+  }
+  .feedback .bot-horiz {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 44px;
+    height: 2.5px;
+    background: #4ade80;
+  }
+  .feedback .head-up {
+    position: absolute;
+    right: -5.5px;
+    top: -1px;
+    width: 0; height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-bottom: 10px solid #4ade80;
+  }
+  .feedback-label {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%) rotate(90deg);
+    white-space: nowrap;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #4ade80;
+    letter-spacing: .5px;
+  }
+
+  /* detail annotations */
+  .detail {
+    font-size: 0.72rem;
+    color: #64748b;
+    font-style: italic;
+    margin-top: 4px;
+  }
+  .io-label {
+    display: inline-block;
+    background: rgba(255,255,255,.08);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-top: 4px;
+  }
+
+  /* legend */
+  .legend {
+    max-width: 1100px;
+    margin: 56px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: #94a3b8;
+  }
+  .legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+  }
+
+  /* step numbers */
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+  .setup .step-num { background: #3b82f6; color: #fff; }
+  .diffusion .step-num { background: #8b5cf6; color: #fff; }
+  .scaler .step-num { background: #ec4899; color: #fff; }
+  .shower .step-num { background: #14b8a6; color: #fff; }
+  .recon .step-num { background: #f59e0b; color: #1e1b10; }
+  .optim .step-num { background: #ef4444; color: #fff; }
+  .utility .step-num { background: #22d3ee; color: #0e3a4a; }
+  .update .step-num { background: #4ade80; color: #0f3d20; }
+  .finetune .step-num { background: #fb923c; color: #3b1a06; }
+</style>
+</head>
+<body>
+
+<h1>TAMBO Detector Array Optimization Pipeline</h1>
+<p class="subtitle">End-to-end differentiable layout optimization using diffusion-generated air showers &amp; neural reconstruction</p>
+
+<div class="pipeline">
+
+  <!-- 1. Initial Layout -->
+  <div class="node setup">
+    <h3><span class="step-num">1</span> Initial Detector Layout <span class="tag">Setup</span></h3>
+    <p>Place <strong>500 detectors</strong> on <strong>9 concentric rings</strong> (radii 5 &ndash; 100 m), distributed proportionally to circumference. Positions <code>(x, y)</code> are wrapped in a <strong>LearnableXY</strong> module so they become optimizable <code>nn.Parameter</code>s.</p>
+    <span class="io-label">Output: x, y &isin; R<sup>500</sup> (learnable)</span>
+  </div>
+
+  <div class="arrow highlight"><div class="line"></div><div class="head"></div></div>
+
+  <!-- 2. Reconstruction NN pre-training -->
+  <div class="node recon">
+    <h3><span class="step-num">2</span> Pre-train Reconstruction NN <span class="tag">Neural Net</span></h3>
+    <p>A fully-connected network (<strong>Reconstruction</strong>) is trained on <strong>200 k</strong> simulated showers to predict shower parameters from detector readings.</p>
+    <ul>
+      <li><strong>Input:</strong> flattened <code>[x, y, N, T]</code> per detector &rarr; 500 &times; 4 = 2000 features</li>
+      <li><strong>Output:</strong> <code>[X<sub>0</sub>, Y<sub>0</sub>, E, &theta;, &phi;]</code> (normalized)</li>
+      <li>Architecture: 2000 &rarr; 256 &rarr; 128 &rarr; 32 &rarr; 5, ReLU + Dropout, Adam lr=3e-5</li>
+    </ul>
+    <span class="io-label">Saved: model_weights.pth</span>
+  </div>
+
+  <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+  <!-- ===== OPTIMIZATION LOOP ===== -->
+  <div class="loop-wrapper">
+    <span class="loop-label">Optimization Loop &mdash; 100+ epochs</span>
+
+    <!-- feedback arrow -->
+    <div class="feedback">
+      <div class="vert"></div>
+      <div class="top-horiz"></div>
+      <div class="bot-horiz"></div>
+      <div class="head-up"></div>
+      <span class="feedback-label">Update (x, y) &amp; repeat</span>
+    </div>
+
+    <!-- 3. Sample shower parameters -->
+    <div class="node setup" style="width:660px;">
+      <h3><span class="step-num">3</span> Sample Shower Parameters <span class="tag">Random</span></h3>
+      <p>Draw a batch of <strong>500 showers</strong> with uniformly sampled energy (0 &ndash; 1 PeV), zenith, and azimuth angles. Build conditioning vector <code>[E, class, sin&thinsp;z, cos&thinsp;z, sin&thinsp;a, cos&thinsp;a]</code>.</p>
+    </div>
+
+    <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 4 & 5: Parallel diffusion + scaler -->
+    <div class="parallel-container">
+      <div class="parallel-branch">
+        <div class="arrow"><div class="line"></div><div class="head"></div></div>
+        <div class="node diffusion">
+          <h3><span class="step-num">4a</span> Diffusion Model <span class="tag">Generative</span></h3>
+          <p><strong>PlaneDiffusionEvaluator</strong> &mdash; a DDIM-based conditional diffusion model generates 3-channel 32&times;32 shower images across 24 altitude planes autoregressively.</p>
+          <ul>
+            <li>DDIM steps: 10, &eta; = 0, guidance w = 1.8</li>
+            <li>Plane 20 is selected as the ground-level slice</li>
+          </ul>
+          <span class="io-label">Output: shower_rgb &isin; R<sup>B&times;32&times;32&times;3</sup></span>
+        </div>
+      </div>
+      <div class="parallel-branch">
+        <div class="arrow"><div class="line"></div><div class="head"></div></div>
+        <div class="node scaler">
+          <h3><span class="step-num">4b</span> FNN Bbox Scaler <span class="tag">Scaling</span></h3>
+          <p><strong>PlaneFNNGenerator</strong> &mdash; a feed-forward network predicts physical bounding boxes (x<sub>min</sub>, x<sub>max</sub>, y<sub>min</sub>, y<sub>max</sub>) for each altitude plane, mapping the 32&times;32 pixel grid to real-world coordinates.</p>
+          <span class="io-label">Output: bboxes &isin; R<sup>B&times;24&times;4</sup></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="merge-line"></div>
+    <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 5. GetCounts -->
+    <div class="node shower" style="width:660px;">
+      <h3><span class="step-num">5</span> Compute Detector Counts &amp; Times <span class="tag">GetCounts</span></h3>
+      <p>Map each detector <code>(x<sub>i</sub>, y<sub>i</sub>)</code> into the bounding-box-scaled shower image to look up particle density and arrival time. Apply detector noise (<strong>SmearN</strong>) and background, then estimate time-of-arrival (<strong>TimeAverage</strong>).</p>
+      <ul>
+        <li>Pixel index = clamp&thinsp;((x &minus; x<sub>min</sub>) / width &times; 32)</li>
+        <li>Edge detectors (pixel 0 or 31) receive zero counts</li>
+        <li>Gaussian noise with 5% relative resolution</li>
+      </ul>
+      <span class="io-label">Output: N<sub>e</sub>, T<sub>e</sub> &isin; R<sup>B&times;500</sup></span>
+    </div>
+
+    <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 6. Reconstruction forward pass -->
+    <div class="node recon" style="width:660px;">
+      <h3><span class="step-num">6</span> Reconstruction NN &mdash; Forward Pass <span class="tag">Inference</span></h3>
+      <p>Run the pre-trained (and periodically fine-tuned) <strong>Reconstruction</strong> network on the batch to predict <code>[X<sub>0</sub>, Y<sub>0</sub>, E, &theta;, &phi;]</code> from the detector readings. The network is in <code>eval()</code> mode but <strong>gradients flow through</strong> the detector positions.</p>
+    </div>
+
+    <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 7. Utility -->
+    <div class="node utility" style="width:660px;">
+      <h3><span class="step-num">7</span> Compute Utility Function <span class="tag">Objective</span></h3>
+      <p>A composite, differentiable utility measures array performance:</p>
+      <ul>
+        <li><strong>U<sub>PR</sub></strong> &mdash; Reconstructability: soft-threshold count of detectors with &ge; 5 particles; event needs &ge; 3 such detectors</li>
+        <li><strong>U<sub>E</sub></strong> &mdash; Energy resolution: &Sigma; r / ((E<sub>pred</sub> &minus; E<sub>true</sub>)<sup>2</sup> + 0.01)</li>
+        <li><strong>U<sub>&theta;</sub></strong> &mdash; Angular resolution: 10<sup>&minus;2</sup> &Sigma; r / ((&theta;<sub>pred</sub> &minus; &theta;<sub>true</sub>)<sup>2</sup> + 10<sup>&minus;5</sup>)</li>
+      </ul>
+      <p style="margin-top:6px;"><strong>U = 10<sup>&minus;2</sup> U<sub>&theta;</sub> + U<sub>E</sub> + U<sub>PR</sub> / &radic;density</strong></p>
+      <span class="io-label">Loss = &minus;U &nbsp;(maximize utility by minimizing negative)</span>
+    </div>
+
+    <div class="arrow highlight"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 8. Backprop & Update -->
+    <div class="node update" style="width:660px;">
+      <h3><span class="step-num">8</span> Backpropagate &amp; Update Detector Positions <span class="tag">SGD Step</span></h3>
+      <p>Compute <code>Loss.backward()</code> which propagates gradients <strong>through the reconstruction NN, through GetCounts, back to (x, y)</strong>. Then:</p>
+      <ul>
+        <li>Clip gradients to max norm 10</li>
+        <li>SGD step (lr = 5, momentum = 0.9) updates detector coordinates</li>
+        <li><strong>push_apart()</strong> enforces minimum separation of 2 &times; TankRadius between all pairs</li>
+      </ul>
+    </div>
+
+    <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 9. Fine-tune -->
+    <div class="node finetune" style="width:660px;">
+      <h3><span class="step-num">9</span> Fine-tune Reconstruction NN <span class="tag">Every 5 epochs</span></h3>
+      <p>Every 5 optimization epochs, generate <strong>2500&ndash;5000 fresh showers</strong> at the current detector positions and retrain the reconstruction network for 5 mini-epochs (batch 32, Adam lr=5e-5). This keeps the NN calibrated to the evolving layout.</p>
+    </div>
+
+  </div><!-- end loop-wrapper -->
+
+  <div class="arrow"><div class="line"></div><div class="head"></div></div>
+
+  <!-- 10. Output -->
+  <div class="node setup" style="border-color:#22d3ee;">
+    <h3><span class="step-num" style="background:#22d3ee;color:#0e3a4a;">10</span> Save &amp; Visualize <span class="tag" style="background:#22d3ee;color:#0e3a4a;">Output</span></h3>
+    <p>At each epoch, save a <strong>checkpoint</strong> (model weights + optimizer state + epoch) and the detector layout as a text file. After optimization, plot the final vs. initial layout and the utility curve.</p>
+  </div>
+
+</div><!-- end pipeline -->
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:#3b82f6;"></div>Setup / I/O</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#8b5cf6;"></div>Diffusion Model</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#ec4899;"></div>FNN Bbox Scaler</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#14b8a6;"></div>Shower Physics</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#f59e0b;"></div>Reconstruction NN</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#22d3ee;"></div>Utility / Objective</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4ade80;"></div>Position Update</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#fb923c;"></div>NN Fine-tuning</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:transparent;border:2px dashed #ef4444;"></div>Optimization Loop</div>
+</div>
+
+</body>
+</html>
