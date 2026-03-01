@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p gpu
-#SBATCH --mem=32g
-#SBATCH --time=5:00:00 			# time in HH:MM:SS
+#SBATCH --mem=50g
+#SBATCH --time=24:00:00 			# time in HH:MM:SS
 #SBATCH -c 2            			# number of cores
 #SBATCH --gres=gpu:1        # requested GPU type
 
