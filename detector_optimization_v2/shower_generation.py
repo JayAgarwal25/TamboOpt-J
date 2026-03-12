@@ -65,8 +65,36 @@ def ReadShowers(path_g, path_p):
     return PXmg_p, PXeg_p, PXmp_p, PXep_p
 
 
+_cached_stats = {}
+
+def _get_stats(stats_path, plane=20):
+    """Load and cache per-plane/per-channel mean/std for denormalization."""
+    if stats_path not in _cached_stats:
+        stats = torch.load(stats_path, weights_only=True)
+        _cached_stats[stats_path] = stats
+    stats = _cached_stats[stats_path]
+    return stats['mean'][plane], stats['std'][plane]  # each (3,)
+
+
+def denormalize_shower(images, stats_path, plane=20):
+    """Denormalize generator output using per-plane/per-channel statistics.
+
+    Parameters:
+        images (torch.Tensor): standardized images from generator, shape (N, 24, C, H, W).
+        stats_path (str): path to standardization_stats_train_only.pt file.
+        plane (int): which plane to extract and denormalize.
+
+    Returns:
+        torch.Tensor: denormalized image for the given plane, shape (N, H, W, C).
+    """
+    mean, std = _get_stats(stats_path, plane)
+    plane_data = images[:, plane, :, :, :]  # (N, C, H, W)
+    plane_data = plane_data * std[:, None, None] + mean[:, None, None]
+    return plane_data.permute(0, 2, 3, 1)  # (N, H, W, C)
+
+
 def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN_fn,
-                    fluxB_e, log=False, number_of_showers=1):
+                    fluxB_e, log=False, number_of_showers=1, stats_path=None):
     """Randomly generate showers with energy, angle, and core position.
 
     Parameters:
@@ -79,6 +107,7 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
         fluxB_e: background flux tensor.
         log (bool): if True, plot generated showers.
         number_of_showers (int): number of showers to generate.
+        stats_path (str): path to standardization stats file for denormalization.
 
     Returns:
         tuple: (N, T, X0, Y0, energy, sin_z, cos_z, sin_a, cos_a)
@@ -105,19 +134,50 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
 
     outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
     output_images = outputs_arr['images']
-    shower_rgb = output_images[:, 20, :, :, :]
-    shower_rgb = shower_rgb.permute(0, 2, 3, 1)
+    if stats_path is not None:
+        shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
+    else:
+        shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
 
     outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
     bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
+    location_means = torch.prod(shower_rgb[:, :, :, :2], dim=3)
 
     if log:
+        ncols = 5
+        nrows = (number_of_showers + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
+        axes = np.atleast_2d(axes).flatten()
         for i in range(number_of_showers):
-            plt.figure()
-            plt.imshow(shower_rgb[i])
-            print('BBox:', bboxes[i])
+            bbox = bboxes[i]
+            extent = [bbox[2].item(), bbox[3].item(), bbox[1].item(), bbox[0].item()]
+            im = axes[i].imshow(location_means[i], extent=extent)
+            fig.colorbar(im, ax=axes[i])
+            axes[i].set_xlabel('y [m]')
+            axes[i].set_ylabel('x [m]')
+            axes[i].set_title(f'Shower {i}')
+        for i in range(number_of_showers, len(axes)):
+            axes[i].set_visible(False)
+        plt.tight_layout()
+        plt.show()
 
-    location_means = torch.prod(shower_rgb[:, :, :, :2], dim=3)
+        for ch, ch_name in [(0, 'Channel 0'), (2, 'Channel 2')]:
+            fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
+            axes = np.atleast_2d(axes).flatten()
+            for i in range(number_of_showers):
+                bbox = bboxes[i]
+                extent = [bbox[2].item(), bbox[3].item(), bbox[1].item(), bbox[0].item()]
+                im = axes[i].imshow(shower_rgb[i, :, :, ch], extent=extent)
+                fig.colorbar(im, ax=axes[i])
+                axes[i].set_xlabel('y [m]')
+                axes[i].set_ylabel('x [m]')
+                axes[i].set_title(f'Shower {i}')
+            for i in range(number_of_showers, len(axes)):
+                axes[i].set_visible(False)
+            fig.suptitle(ch_name, fontsize=16)
+            plt.tight_layout()
+            plt.show()
+
     i_indices = torch.arange(32, dtype=torch.float32)
     j_indices = torch.arange(32, dtype=torch.float32)
     i_grid, j_grid = torch.meshgrid(i_indices, j_indices, indexing='ij')
@@ -128,5 +188,11 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
     Y0 = Y0 * (bboxes[:, 3] - bboxes[:, 2]) / 32 + bboxes[:, 2]
 
     N, T = GetCounts_differentiable_fn(shower_rgb, x, y, bboxes)
+
+    # Normalize N to [0, 1] range using log scaling
+    N = torch.log1p(N) / torch.log1p(N.max())
+
+    # Normalize T to [0, 1] range
+    T = (T - T.min()) / (T.max() - T.min())
 
     return N, T, X0, Y0, p_energy, sin_z, cos_z, sin_a, cos_a
