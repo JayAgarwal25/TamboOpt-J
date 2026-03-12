@@ -77,7 +77,7 @@ def _get_stats(stats_path, plane=20):
 
 
 def denormalize_shower(images, stats_path, plane=20):
-    """Denormalize generator output using per-plane/per-channel statistics.
+    """Denormalize generator output using per-plane/per-channel statistics. Original data is scaled [-1 1] using mean and std, accessible through _getstats().
 
     Parameters:
         images (torch.Tensor): standardized images from generator, shape (N, 24, C, H, W).
@@ -87,9 +87,8 @@ def denormalize_shower(images, stats_path, plane=20):
     Returns:
         torch.Tensor: denormalized image for the given plane, shape (N, H, W, C).
     """
-    mean, std = _get_stats(stats_path, plane)
     plane_data = images[:, plane, :, :, :]  # (N, C, H, W)
-    plane_data = plane_data * std[:, None, None] + mean[:, None, None]
+    plane_data = (plane_data + 1) / 2  # map from [-1, 1] to [0, 1]
     return plane_data.permute(0, 2, 3, 1)  # (N, H, W, C)
 
 
@@ -134,10 +133,10 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
 
     outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
     output_images = outputs_arr['images']
-    if stats_path is not None:
-        shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
-    else:
-        shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
+    # if stats_path is not None:
+    #     shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
+    # else:
+    shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
 
     outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
     bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
@@ -161,7 +160,7 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
         plt.tight_layout()
         plt.show()
 
-        for ch, ch_name in [(0, 'Channel 0'), (2, 'Channel 2')]:
+        for ch, ch_name in [(0, 'Channel 0'), (1, 'Channel 1'), (2, 'Channel 2')]:
             fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
             axes = np.atleast_2d(axes).flatten()
             for i in range(number_of_showers):
@@ -188,11 +187,5 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
     Y0 = Y0 * (bboxes[:, 3] - bboxes[:, 2]) / 32 + bboxes[:, 2]
 
     N, T = GetCounts_differentiable_fn(shower_rgb, x, y, bboxes)
-
-    # Normalize N to [0, 1] range using log scaling
-    N = torch.log1p(N) / torch.log1p(N.max())
-
-    # Normalize T to [0, 1] range
-    T = (T - T.min()) / (T.max() - T.min())
 
     return N, T, X0, Y0, p_energy, sin_z, cos_z, sin_a, cos_a
