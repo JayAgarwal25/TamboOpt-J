@@ -133,10 +133,10 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
 
     outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
     output_images = outputs_arr['images']
-    # if stats_path is not None:
-    #     shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
-    # else:
-    shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
+    if stats_path is not None:
+        shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
+    else:
+        shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
 
     outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
     bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
@@ -159,7 +159,8 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
             axes[i].set_visible(False)
         plt.tight_layout()
         plt.show()
-
+        
+        
         for ch, ch_name in [(0, 'Channel 0'), (1, 'Channel 1'), (2, 'Channel 2')]:
             fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
             axes = np.atleast_2d(axes).flatten()
