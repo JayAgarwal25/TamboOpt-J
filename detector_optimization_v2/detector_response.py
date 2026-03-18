@@ -64,11 +64,11 @@ def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
     # align_corners=True:   extrema ±1 refer to center of corner pixels,
     #                       consistent with normalizing x_min→-1, x_max→1
     local_intensity = F.grid_sample(
-        inp_intensity, grid, mode='bilinear', padding_mode='zeros', align_corners=True
+        inp_intensity, grid, mode='bilinear', padding_mode='border', align_corners=True
     ).squeeze(1).squeeze(-1)    # (B, num_det)
 
     et = F.grid_sample(
-        inp_time, grid, mode='bilinear', padding_mode='zeros', align_corners=True
+        inp_time, grid, mode='bilinear', padding_mode='border', align_corners=True
     ).squeeze(1).squeeze(-1)    # (B, num_det)
 
     # Smearing
