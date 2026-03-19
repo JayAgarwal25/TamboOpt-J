@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 
-def Layouts(n_detectors=100, n_rings=6):
+def Layouts(n_detectors=100, n_rings=6, radius=500, center=(300,0)):
     """Create a detector layout with detectors distributed across concentric rings.
 
     Parameters:
@@ -17,7 +17,7 @@ def Layouts(n_detectors=100, n_rings=6):
     Returns:
         tuple: (x, y) numpy arrays of detector positions in meters.
     """
-    R = np.linspace(5, 500, n_rings)
+    R = np.linspace(5, radius, n_rings)
 
     weights = R / R.sum()
     N = np.round(weights * n_detectors).astype(int)
@@ -28,7 +28,7 @@ def Layouts(n_detectors=100, n_rings=6):
     radii = np.repeat(R, N)
     angles = np.concatenate([np.linspace(0, 2 * np.pi, n, endpoint=False) for n in N])
 
-    return radii * np.cos(angles), radii * np.sin(angles)
+    return center[0] + radii * np.cos(angles), center[1] + radii * np.sin(angles)
 
 
 def barycentric_coords(P, A, B, C):
