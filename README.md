@@ -1,62 +1,131 @@
-# TambOpt — TAMBO Optimization & Simulation Suite
+# TambOpt — TAMBO Detector Optimization & Simulation Suite
 
-TambOpt is a small collection of tools, models, and notebooks for simulating particle showers (via a CORSIKA-based app), generating detector responses, optimizing detector layouts, and training machine learning models to  create surrogates and optimize detector layouts. The project contains utilities for cluster job submission, detector optimization experiments, and research notebooks.
-
----
-
-## Quick Highlights 
-- Simulate particle showers with a C++ CORSIKA-based application (in `corsika_application/`) and submit jobs to SLURM clusters with `cluster_scripts/submit_tambo_jobs.py`.
-- Optimize detector placement using an experimental class `Simulator` in `detector_optimization/`.
-- Train and evaluate NN models in `ml/` using preprocessed data and utilities.
-- Several notebooks to explore datasets, model architecture, and results in `notebooks/`.
+TambOpt is a differentiable end-to-end pipeline for optimizing cosmic ray detector layouts for the TAMBO Observatory. It combines CORSIKA-based air shower simulation, diffusion-model surrogates for fast shower generation, differentiable detector response modeling, neural network reconstruction, and gradient-based layout optimization — all within a PyTorch autograd framework.
 
 ---
 
-## Structure (what’s where) 
-- `corsika_application/` — C++ code for a CORSIKA-based particle-shower application; instructions included in `corsika_application/README.md`.
-- `cluster_scripts/` — helper scripts for generating args and SBATCH scripts for cluster submission (`submit_tambo_jobs.py`).
-- `detector_optimization/` — simulation and optimization tools for detector placement (has `requirements.txt` and `simulator.py`).
-- `ml/` — ML training and preprocessing for NNs; see `ml/README.md` and scripts such as `gnn.py`, `nn.py`, and preprocessing utilities.
-- `notebooks/` — Jupyter notebooks for EDA, training experiments, and visualization.
-- `resources/` — plotting style/theme and other small resources.
-- `data/` — sample data (e.g., `first_10k_rows.csv`) used for initial detector optimization script.
+## Pipeline Overview
 
----
+```
+1. SIMULATION                 2. SURROGATE MODELING           3. DETECTOR RESPONSE
+   CORSIKA C++ app               Diffusion model (24-plane       Bilinear interpolation
+   → particle shower tracks      RGB images) + FNN bbox          of shower at detector
+   → cluster batch jobs           predictor                      positions, smearing,
+     (SLURM)                                                     timing (differentiable)
 
-## Quick Start (local development) 
-1. Clone repository:
-
-```powershell
-git clone https://github.com/TAMBO-Observatory/TambOpt.git
-cd TambOpt
+4. RECONSTRUCTION             5. OPTIMIZATION
+   4-layer MLP:                  Learnable (x, y) positions
+   [N, T] × detectors            Utility = αU_PR + βU_E + γU_TH
+   → [X0, Y0, E, θ, φ]          Adam optimizer + constraints
+                                  (min separation, boundary)
 ```
 
-2. Python dependencies (recommended in an isolated env):
+All steps from surrogate generation onward are differentiable, enabling gradient-based optimization without Monte Carlo sampling overhead.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r detector_optimization/requirements.txt
-# ML pipeline requires PyTorch & PyTorch Geometric
+---
+
+## Repository Structure
+
+```
+TambOpt/
+├── corsika_application/           # C++ CORSIKA v8 particle shower simulator
+│   ├── source/                    #   C++ source code
+│   └── README.md                  #   Build instructions (FLUKA, Conan, GCC 13.2)
+│
+├── cluster_scripts/               # SLURM batch job generation
+│   └── submit_tambo_jobs.py       #   Log-uniform energy sampling, random angles,
+│                                  #   multiple PDG IDs (π±, π0, e±)
+│
+├── detector_optimization_v2/      # Main optimization pipeline (refactored)
+│   ├── geometry.py                #   Concentric ring layouts, triangle boundary projection
+│   ├── shower_generation.py       #   Diffusion + FNN shower generation
+│   ├── detector_response.py       #   Differentiable counts, smearing, timing
+│   ├── reconstruction.py          #   4-layer MLP for shower parameter estimation
+│   ├── layout_optimization.py     #   Learnable detector positions, constraints
+│   ├── tambo_physics.py           #   Direction, timing, LDF models (from TamboDirReco.jl)
+│   ├── utility_functions.py       #   Reconstructability, energy, angular utilities
+│   ├── diffusion_model/           #   PlaneDiffusionEvaluator, PlaneFNNGenerator
+│   ├── SWGOLO7_optimization.ipynb #   Main optimization notebook
+│   ├── SWGOLO7_plots.ipynb        #   Results visualization
+│   ├── auto_run_notebook.py       #   Papermill-based automated execution
+│   ├── common_gpu_auto_run_notebook_batch.sh  # GPU batch runner
+│   ├── outputs/                   #   Data from optimization runs (NN_Files_9 through _15)
+│   └── outputs_notebooks/         #   Timestamped output notebooks
+│
+├── detector_optimization/         # Original optimization pipeline (v1, exploratory)
+│   ├── SWGOLO7*.ipynb             #   Earlier optimization notebooks
+│   ├── simple_simulator_class/    #   Experimental simulator (simulator.py)
+│   ├── diffusion_model/           #   Original diffusion generator
+│   └── data_exploration/          #   EDA notebooks
+│
+├── ml/                            # ML training pipeline
+│   ├── nn.py                      #   Feedforward NN (hit-level regression)
+│   ├── gnn.py                     #   Graph NN with PyTorch Geometric (PDG classification)
+│   ├── pre_processing_per_hit.py  #   Hit-level preprocessing
+│   ├── combine.py                 #   Dataset merging
+│   ├── normalization_*.py         #   Normalization utilities
+│   ├── scaling_NN/                #   Scaling neural network pipeline
+│   │   ├── preprocessing/         #     3-step preprocessing (step1–3) + SLURM auto-submit
+│   │   ├── FNN/                   #     Feedforward bbox predictor (24 planes × 4 coords)
+│   │   └── diffusion_model/       #     Diffusion-based bbox generation (UNet, DDIM) [Unsuccessful]
+│   └── README.md                  #   Pipeline execution order
+│
+├── 2d_diffusion_model/            # Standalone diffusion model evaluation
+│   ├── tambo_diffusion_evaluation.py
+│   └── tambo_flow_evalution.py
+│
+├── notebooks/   # Research notebooks
+│   ├── 01–04: NN architecture, EDA, FNN training
+│   ├── 05–08: Physics-Informed NN (PINA) experiments
+│   └── 09: Diffusion model output analysis
+│
+└── resources/                     # Plot styles and themes
 ```
 
-3. Run CORSIKA/C++ using bash scripts  (see `corsika_application/README.md`):
+---
 
-4. Generate cluster jobs (slurm) for multiple simultions (`cluster_scripts`):
+## Core Modules (detector_optimization_v2)
 
-5. Train surrogate model
-
-6. Run detector optimization scripts
+| Module | Purpose |
+|--------|---------|
+| `geometry.py` | `Layouts()` generates concentric ring arrays; `project_to_triangle()` enforces site boundary via barycentric coords |
+| `shower_generation.py` | `GenerateShowers()` produces synthetic events using diffusion model + FNN bbox predictor, conditioned on energy/angles |
+| `detector_response.py` | `GetCounts_differentiable()` computes bilinear-interpolated counts; `SmearN()` adds 5% resolution + threshold; `TimeAverage_vectorized()` handles timing |
+| `reconstruction.py` | `Reconstruction` NN: input [x, y, N, T] per detector -> output [X0, Y0, E, theta, phi]; includes normalization helpers and early stopping |
+| `layout_optimization.py` | `LearnableXY` wraps positions as `nn.Parameter`; `push_apart()` enforces min separation; `symmetry_loss()` penalizes asymmetry |
+| `tambo_physics.py` | Direction/rotation utilities, `great_circle_distance()`, quadratic timing delay, power-law LDF model, Poisson/Gaussian likelihoods (ported from TamboDirReco.jl) |
+| `utility_functions.py` | `reconstructability()` (soft detection threshold), `U_PR` (detection utility), `U_E` (energy utility), `U_TH` (angular utility) |
 
 ---
 
-## Key Usage Notes & Tips 💡
-- CORSIKA and the C++ simulation require third-party dependencies, and the build assumes a FLUKA-enabled environment and Conan dependencies; follow the `corsika_application/README.md` file for cluster-specific details and env var settings.
-- `cluster_scripts/submit_tambo_jobs.py` generates argument files and a reusable SBATCH template.
-- The ML code uses PyTorch.
-- Example dataset and quick debugging/test usage: `data/first_10k_rows.csv` is a small CSV example used for detector optimization tests.
+## Optimization Objective
+
+The layout optimizer maximizes a weighted utility:
+
+**U = alpha * U_PR + beta * U_E + gamma * U_TH**
+
+- **U_PR**: Fraction of reconstructable events (soft threshold on detector counts)
+- **U_E**: Energy reconstruction accuracy (weighted by reconstructability)
+- **U_TH**: Angular reconstruction accuracy (great-circle distance on sphere)
+
+Constraints are applied after each gradient step: minimum detector separation (`push_apart`) and triangular site boundary projection.
 
 ---
 
-## Notebooks & Examples 🧪
-- `notebooks/` houses exploratory notebooks for: dataset EDA, model training checkpoints, architecture visualization, and simulator experiments (e.g., `simulator_test_tambo.ipynb`, `tambo_data_exploration.ipynb`).
+## Technology Stack
+
+- **Simulation**: CORSIKA v8 (C++), FLUKA
+- **ML Framework**: PyTorch, PyTorch Lightning, PyTorch Geometric
+- **Generative Models**: Custom diffusion models (DDIM sampling), FNN regressors
+- **Compute**: SLURM cluster (GPU partitions), Papermill for notebook automation
+- **Data**: NumPy, Pandas, SciPy, h5py
+- **Visualization**: Matplotlib
+
+---
+
+## Key Usage Notes
+
+- CORSIKA builds require FLUKA and Conan dependencies — see `corsika_application/README.md` for cluster-specific env vars.
+- The v2 pipeline (`detector_optimization_v2/`) supersedes v1 with modular, well-separated components.
+- Optimization outputs are saved as `Layout_N.txt` files with (x, y) detector coordinates, along with checkpoints and cached tensors.
+- `auto_run_notebook.py` uses Papermill to execute notebooks with different parameters for hyperparameter sweeps.

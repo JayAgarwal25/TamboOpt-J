@@ -21,8 +21,8 @@ tambo_pre_processed_files_500000_simulations/*
 .vscode/*
 *.log
 */__pycache__/*
-diffusion_model/*/*.png
-diffusion_model/*/*.npz
+2d_diffusion_model/*/*.png
+2d_diffusion_model/*/*.npz
 .DS_Store
 *.pyc
 detector_optimization/NN_Files/
