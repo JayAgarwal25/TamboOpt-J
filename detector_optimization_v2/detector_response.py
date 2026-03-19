@@ -8,8 +8,8 @@ import torch.nn.functional as F
 
 
 def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
-                             TimeAverage_vectorized_fn,
-                             electron_scale_factor=10.0, temperature=0.1):
+                             TimeAverage_vectorized_fn, electron_scale_factor=10,
+                                temperature=0.1):
     """Differentiable version of count extraction. Gradients flow w.r.t. x, y.
 
     Parameters:
@@ -79,7 +79,7 @@ def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
 
     # Vectorized arrival time
     TAe_m, TAe_s = TimeAverage_vectorized_fn(et, neb, nes)  # (B, num_det)
-    eps = torch.randn_like(TAe_m)
+    eps = 0.05 * torch.randn_like(TAe_m)
     Te_raw = TAe_m + TAe_s * eps                            # (B, num_det)
 
     mask_soft = torch.sigmoid(Ne / temperature)             # (B, num_det)
@@ -98,7 +98,7 @@ def SmearN(flux, RelResCounts=0.05):
     Returns:
         torch.Tensor: noisy, gated counts reflecting detector response.
     """
-    gate = torch.sigmoid(10 * (flux - 0.1))
+    gate = torch.sigmoid(2 * (flux - 0.1))
     noise = torch.randn_like(flux)
     noisy = flux + RelResCounts * flux * noise
     return gate * noisy
@@ -127,16 +127,15 @@ def TimeAverage_vectorized(T, Nb, Ns, IntegrationWindow=128., sigma_time=10., ep
             torch.where(Nb <= 3, torch.full_like(Nb, IntegrationWindow * .16666),
             torch.where(Nb <= 4, torch.full_like(Nb, IntegrationWindow * .1445),
                                  torch.full_like(Nb, IntegrationWindow * .11)))))
-
     eps_bgr = torch.randn_like(T) - 0.5
-    AvTbgr_raw = T + eps_bgr * STbgr
+    AvTbgr_raw = T + 0.05 * eps_bgr * STbgr
     AvTbgr = T + torch.clamp(AvTbgr_raw - T,
                               -0.5 * IntegrationWindow,
                                0.5 * IntegrationWindow)
 
     STsig = sigma_time / torch.sqrt(torch.clamp(Ns - 1, min=1e-3))
     eps_sig = torch.randn_like(T)
-    AvTsig = T + eps_sig * STsig
+    AvTsig = T + 0.05 * eps_sig * STsig
 
     tau = 0.1
     has_bgr = torch.sigmoid((Nb - 0.5) / tau)
