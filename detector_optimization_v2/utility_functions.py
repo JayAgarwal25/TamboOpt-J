@@ -6,7 +6,7 @@ Extracted from SWGOLO7_optimization.ipynb cells 25-28.
 import torch
 
 
-def reconstructability(events, layout_threshold=1e-2, tau_layout=5.,
+def reconstructability(events, layout_threshold=5e-1, tau_layout=5.,
                        reconstruct_threshold=3., tau_reconstruct=5.):
     """Compute a differentiable reconstructability score per event.
 
