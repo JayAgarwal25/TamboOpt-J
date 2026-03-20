@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+from .diffusion_loc_zlt import DDIMSamplerPlanes
 
 
 class PlaneDiffusionEvaluator:
@@ -62,7 +63,6 @@ class PlaneDiffusionEvaluator:
 
         # Import dependencies (after path is set)
         from lightning_training import PlaneDataset, PlaneDiffusionModule
-        from diffusion import DDIMSamplerPlanes
 
         self.PlaneDataset = PlaneDataset
         self.PlaneDiffusionModule = PlaneDiffusionModule
@@ -171,45 +171,45 @@ class PlaneDiffusionEvaluator:
         # Get the ground truth planes shape from test_images
         P, C, H, W = (24, 3, 32, 32)
         
-        with torch.no_grad():
-            for chunk_start in range(0, num_total, batch_size):
-                print(f"Processing conditions {chunk_start} to {min(chunk_start + batch_size, num_total)} / {num_total}...")
-                chunk = conditions_to_process[chunk_start:chunk_start + batch_size]
-                bs = chunk.shape[0]
-                
-                p_energy = chunk[:, 0]
-                class_id = chunk[:, 1].long()
-                sin_zenith = chunk[:, 2]
-                cos_zenith = chunk[:, 3]
-                sin_azimuth = chunk[:, 4]
-                cos_azimuth = chunk[:, 5]
-                
-                # Generate all 24 planes autoregressively
-                pred_all = torch.zeros((bs, P, C, H, W), device=self.device)
-                past = torch.zeros((bs, C, H, W), device=self.device)
-                
-                for plane_idx in range(P):
-                    plane_idx_tensor = torch.full((bs,), plane_idx, device=self.device, dtype=torch.long)
-                    noise = torch.randn((bs, C, H, W), device=self.device)
+        # with torch.no_grad():
+        for chunk_start in range(0, num_total, batch_size):
+            print(f"Processing conditions {chunk_start} to {min(chunk_start + batch_size, num_total)} / {num_total}...")
+            chunk = conditions_to_process[chunk_start:chunk_start + batch_size]
+            bs = chunk.shape[0]
+            
+            p_energy = chunk[:, 0]
+            class_id = chunk[:, 1].long()
+            sin_zenith = chunk[:, 2]
+            cos_zenith = chunk[:, 3]
+            sin_azimuth = chunk[:, 4]
+            cos_azimuth = chunk[:, 5]
+            
+            # Generate all 24 planes autoregressively
+            pred_all = torch.zeros((bs, P, C, H, W), device=self.device)
+            past = torch.zeros((bs, C, H, W), device=self.device)
+            
+            for plane_idx in range(P):
+                plane_idx_tensor = torch.full((bs,), plane_idx, device=self.device, dtype=torch.long)
+                noise = torch.randn((bs, C, H, W), device=self.device)
 
-                    pred = self.sampler(
-                        noise,
-                        p_energy,
-                        class_id,
-                        sin_zenith,
-                        cos_zenith,
-                        sin_azimuth,
-                        cos_azimuth,
-                        plane_idx_tensor,
-                        past,
-                    )
-                    pred_all[:, plane_idx] = pred
-                    past = pred
+                pred = self.sampler(
+                    noise,
+                    p_energy,
+                    class_id,
+                    sin_zenith,
+                    cos_zenith,
+                    sin_azimuth,
+                    cos_azimuth,
+                    plane_idx_tensor,
+                    past,
+                )
+                pred_all[:, plane_idx] = pred
+                past = pred
 
-                all_chunks.append(pred_all.cpu())
+            all_chunks.append(pred_all.cpu())
 
-                del noise, pred, pred_all, past
-                torch.cuda.empty_cache()
+            del noise, pred, pred_all, past
+            torch.cuda.empty_cache()
         
         all_samples = torch.cat(all_chunks, dim=0)
 
