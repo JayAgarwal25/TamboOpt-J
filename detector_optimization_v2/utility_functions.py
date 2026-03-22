@@ -7,7 +7,7 @@ import torch
 
 
 def reconstructability(events, layout_threshold=5e-1, tau_layout=5.,
-                       reconstruct_threshold=3., tau_reconstruct=5.):
+                       reconstruct_threshold=130., tau_reconstruct=5.):
     """Compute a differentiable reconstructability score per event.
 
     Parameters:
