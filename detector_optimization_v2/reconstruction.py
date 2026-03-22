@@ -67,7 +67,7 @@ def NormalizeLabels(E, theta, phi, theta_max=np.pi * 65 / 180):
     return E_norm, theta_norm, phi_norm
 
 
-def DenormalizeLabels(E_norm, theta_norm, phi_norm, theta_max=np.pi * 65 / 180):
+def DenormalizeLabels(E_norm, theta_norm, phi_norm, theta_max=torch.pi * 65 / 180):
     """Inverse of NormalizeLabels: map normalized outputs back to physical units.
 
     Parameters:
