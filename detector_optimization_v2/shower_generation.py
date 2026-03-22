@@ -131,7 +131,9 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
     generator.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
     scaler.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
 
-    outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
+    with torch.no_grad():
+        outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
+    
     output_images = outputs_arr['images']
     if stats_path is not None:
         shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
@@ -150,7 +152,7 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
         for i in range(number_of_showers):
             bbox = bboxes[i]
             extent = [bbox[2].item(), bbox[3].item(), bbox[1].item(), bbox[0].item()]
-            im = axes[i].imshow(location_means[i], extent=extent)
+            im = axes[i].imshow(location_means[i].detach().cpu().numpy(), extent=extent)
             fig.colorbar(im, ax=axes[i])
             axes[i].set_xlabel('y [m]')
             axes[i].set_ylabel('x [m]')
@@ -167,7 +169,7 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
             for i in range(number_of_showers):
                 bbox = bboxes[i]
                 extent = [bbox[2].item(), bbox[3].item(), bbox[1].item(), bbox[0].item()]
-                im = axes[i].imshow(shower_rgb[i, :, :, ch], extent=extent)
+                im = axes[i].imshow(shower_rgb[i, :, :, ch].detach().cpu().numpy(), extent=extent)
                 fig.colorbar(im, ax=axes[i])
                 axes[i].set_xlabel('y [m]')
                 axes[i].set_ylabel('x [m]')
