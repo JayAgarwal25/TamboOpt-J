@@ -184,6 +184,7 @@ class PlaneFNNGenerator:
     def generate_samples(
         self,
         num_conditions: Optional[int] = None,
+        logs = False
     ) -> Dict:
         """
         Generate bbox predictions for each test condition.
@@ -250,8 +251,9 @@ class PlaneFNNGenerator:
         }
 
         total_predictions = self.generated_sets['bboxes'].shape[0]
-        print(f"Done: generated {total_predictions} bbox predictions across {num_conditions} conditions.")
-        print(f"Total generation time: {time.time() - start_time:.2f}s")
+        if logs:
+            print(f"Done: generated {total_predictions} bbox predictions across {num_conditions} conditions.")
+            print(f"Total generation time: {time.time() - start_time:.2f}s")
         
         return self.generated_sets
 

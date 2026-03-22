@@ -142,7 +142,8 @@ class PlaneDiffusionEvaluator:
     def generate_samples(
         self, 
         num_conditions: Optional[int] = None,
-        batch_size : int = 100
+        batch_size : int = 100,
+        logs=False
     ):
         """
         Generate samples for each test condition using autoregressive plane generation.
@@ -225,8 +226,9 @@ class PlaneDiffusionEvaluator:
 
         total_images = self.generated_sets["images"].shape[0]
         total_conditions = self.generated_sets["conditions"].shape[0]
-        print(f"✔ Done: generated {total_images} showers across {total_conditions} conditions.")
-        print(f"Total generation time: {time.time() - start_time:.2f}s")
+        if logs:
+            print(f"✔ Done: generated {total_images} showers across {total_conditions} conditions.")
+            print(f"Total generation time: {time.time() - start_time:.2f}s")
         return self.generated_sets
 
 
