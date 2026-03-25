@@ -16,8 +16,8 @@ class Reconstruction(nn.Module):
 
     Outputs are a vector of length `output_dim` with `[X0, Y0, E_norm, Theta_norm, Phi_norm]`.
     """
-    def __init__(self, input_features=4, num_detectors=90, hidden_lay1=256, hidden_lay2=128,
-                 hidden_lay3=32, output_dim=5):
+    def __init__(self, input_features=6, num_detectors=90, hidden_lay1=256, hidden_lay2=128,
+                 hidden_lay3=32, output_dim=3):
         super(Reconstruction, self).__init__()
         self.num_detectors = num_detectors
         self.input_features = input_features
