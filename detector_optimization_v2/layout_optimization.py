@@ -12,10 +12,10 @@ class LearnableXY(torch.nn.Module):
 
     The parameters can be optimized with standard PyTorch optimizers to change the layout.
     """
-    def __init__(self, x_init, y_init):
+    def __init__(self, x_init, y_init, device='cpu'):
         super().__init__()
-        self.x = torch.nn.Parameter(x_init)
-        self.y = torch.nn.Parameter(y_init)
+        self.x = torch.nn.Parameter(x_init.to(device))
+        self.y = torch.nn.Parameter(y_init.to(device))
 
     def forward(self):
         """Return current learnable coordinates as (x, y)."""

@@ -6,6 +6,7 @@ Extracted from SWGOLO7_optimization.ipynb cells 4-6, 15, 22.
 import warnings
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 
 def ReadShowers(path_g, path_p):
@@ -92,18 +93,16 @@ def denormalize_shower(images, stats_path, plane=20):
     return plane_data.permute(0, 2, 3, 1)  # (N, H, W, C)
 
 
-def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN_fn,
-                    fluxB_e, log=False, number_of_showers=1, stats_path=None):
+def GenerateShowers(x_det, y_det, generator, scaler, GetCounts_differentiable_fn,
+                    log=False, number_of_showers=1, stats_path=None, device = 'cpu'):
     """Randomly generate showers with energy, angle, and core position.
 
     Parameters:
-        x (torch.Tensor): detector x positions.
-        y (torch.Tensor): detector y positions.
+        x_det (torch.Tensor): detector x positions.
+        y_det (torch.Tensor): detector y positions.
         generator: PlaneDiffusionEvaluator instance.
         scaler: PlaneFNNGenerator instance.
         GetCounts_differentiable_fn: callable for differentiable count extraction.
-        SmearN_fn: callable for detector smearing.
-        fluxB_e: background flux tensor.
         log (bool): if True, plot generated showers.
         number_of_showers (int): number of showers to generate.
         stats_path (str): path to standardization stats file for denormalization.
@@ -111,39 +110,52 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
     Returns:
         tuple: (N, T, X0, Y0, energy, sin_z, cos_z, sin_a, cos_a)
     """
-    import matplotlib.pyplot as plt
 
+
+    # Sample random priamry particle parameters
     p_energy = torch.exp(
-        torch.rand(number_of_showers) * (torch.log(torch.tensor(1.0)) - torch.log(torch.tensor(1e-5)))
-        + torch.log(torch.tensor(1e-5))
+        torch.rand(number_of_showers, device=device) *
+        (
+            torch.log( torch.tensor(1.0, device=device) ) -
+            torch.log( torch.tensor(1e-5, device=device) )
+        )
+        + torch.log(torch.tensor(1e-5, device=device))
     )
 
-    azimuth = torch.rand(number_of_showers) * 2 * torch.pi
-    zenith = torch.rand(number_of_showers) * torch.pi
+    zenith = torch.rand(number_of_showers, device=device) * torch.pi
+    azimuth = torch.rand(number_of_showers, device=device) * 2 * torch.pi
 
+    # Convert angles to cos and sin
     sin_z = torch.sin(zenith)
     cos_z = torch.cos(zenith)
     sin_a = torch.sin(azimuth)
     cos_a = torch.cos(azimuth)
 
-    class_id = torch.arange(3).repeat((number_of_showers + 2) // 3)[:number_of_showers].float()
+    class_id = torch.arange(3, device=device).repeat((number_of_showers + 2) // 3)[:number_of_showers].float()
 
+    # input primary charactersitics to geneartor and scaler network
     generator.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
     scaler.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
 
+    # generate showers
     with torch.no_grad():
         outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
-    
     output_images = outputs_arr['images']
+
+    # denormalize showers and shift to [0, 1] range
     if stats_path is not None:
         shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
     else:
         shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
 
+    # compute global coordinates
     outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
     bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
+    
+    # compute (mean particle energy) x (particle density) for each shower 
     location_means = torch.prod(shower_rgb[:, :, :, :2], dim=3)
 
+    # plot showers if logging is enabled 
     if log:
         ncols = 5
         nrows = (number_of_showers + ncols - 1) // ncols
@@ -180,15 +192,17 @@ def GenerateShowers(x, y, generator, scaler, GetCounts_differentiable_fn, SmearN
             plt.tight_layout()
             plt.show()
 
-    i_indices = torch.arange(32, dtype=torch.float32)
-    j_indices = torch.arange(32, dtype=torch.float32)
+    # indices for the diffusion model output
+    i_indices = torch.arange(32, dtype=torch.float32, device=device)
+    j_indices = torch.arange(32, dtype=torch.float32, device=device)
     i_grid, j_grid = torch.meshgrid(i_indices, j_indices, indexing='ij')
 
+    # compute energy weighted shwoer center 
     X0 = torch.sum(i_grid * location_means, dim=(1, 2)) / torch.sum(location_means, dim=(1, 2))
     X0 = X0 * (bboxes[:, 1] - bboxes[:, 0]) / 32 + bboxes[:, 0]
     Y0 = torch.sum(j_grid * location_means, dim=(1, 2)) / torch.sum(location_means, dim=(1, 2))
     Y0 = Y0 * (bboxes[:, 3] - bboxes[:, 2]) / 32 + bboxes[:, 2]
 
-    N, T = GetCounts_differentiable_fn(shower_rgb, x, y, bboxes)
+    N, T = GetCounts_differentiable_fn(shower_rgb, x_det, y_det, bboxes)
 
     return N, T, X0, Y0, p_energy, sin_z, cos_z, sin_a, cos_a

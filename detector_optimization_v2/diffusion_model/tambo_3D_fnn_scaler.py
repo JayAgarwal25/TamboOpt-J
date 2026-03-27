@@ -246,8 +246,8 @@ class PlaneFNNGenerator:
         pred_bbox = self._denormalize_bbox(pred_bbox_std)
         
         self.generated_sets = {
-            "condition": conditions_to_process.cpu(),
-            "bboxes": pred_bbox.cpu(),
+            "condition": conditions_to_process,
+            "bboxes": pred_bbox,
         }
 
         total_predictions = self.generated_sets['bboxes'].shape[0]

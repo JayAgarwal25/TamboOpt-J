@@ -6,7 +6,7 @@ Extracted from SWGOLO7_optimization.ipynb cells 25-28.
 import torch
 
 
-def reconstructability(events, layout_threshold=5e-1, tau_layout=5.,
+def reconstructability(events, layout_threshold=5e-2, tau_layout=5.,
                        reconstruct_threshold=130., tau_reconstruct=5.):
     """Compute a differentiable reconstructability score per event.
 
@@ -54,16 +54,16 @@ def U_E(E_preds, E_trues, r):
     return u
 
 
-def U_TH(Th_preds, Th_trues, r):
-    """Utility term for angular performance (theta), weighted by reconstructability.
+def U_angle(angle_preds, angle_trues, r):
+    """Utility term for angular performance , weighted by reconstructability.
 
     Parameters:
-        Th_preds (torch.Tensor): predicted theta values.
-        Th_trues (torch.Tensor): true theta values.
+        angle_preds (torch.Tensor): predicted theta values.
+        angle_trues (torch.Tensor): true theta values.
         r (torch.Tensor): reconstructability weights per event.
 
     Returns:
         torch.Tensor: scalar utility contribution.
     """
-    u = torch.sum(r / ((Th_preds - Th_trues) ** 2 + .00001))
+    u = torch.sum(r / ((angle_preds - angle_trues) ** 2 + .001))
     return u

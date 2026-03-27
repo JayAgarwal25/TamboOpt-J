@@ -7,14 +7,14 @@ import torch
 import torch.nn.functional as F
 
 
-def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
+def GetCounts_differentiable(shower_rgb, x_det, y_det, bboxes, SmearN_fn, fluxB_e,
                              TimeAverage_vectorized_fn, electron_scale_factor=10,
                                 temperature=0.1):
     """Differentiable version of count extraction. Gradients flow w.r.t. x, y.
 
     Parameters:
         shower_rgb: (B, 32, 32, 3) tensor.
-        x, y: detector positions (num_det,) tensors with requires_grad=True.
+        x_det, y_det: detector positions (num_det,) tensors with requires_grad=True.
         bboxes: (B, 4) bounding box [x_min, x_max, y_min, y_max].
         SmearN_fn: callable for detector smearing.
         fluxB_e: background flux tensor.
@@ -26,7 +26,7 @@ def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
         tuple: (Ne, Te) -- (B, num_det) tensors, differentiable w.r.t. x, y.
     """
     B = shower_rgb.shape[0]
-    num_det = len(x)
+    num_det = len(x_det)
 
     x_min, x_max = bboxes[:, 0], bboxes[:, 1]
     y_min, y_max = bboxes[:, 2], bboxes[:, 3]
@@ -39,8 +39,8 @@ def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
     # Bilinear sampling (differentiable w.r.t. x, y)
     #   x_norm01[b, d] ∈ [0,1]: fraction along x-axis within bbox b
     #   y_norm01[b, d] ∈ [0,1]: fraction along y-axis within bbox b
-    x_norm01 = (x.unsqueeze(0) - x_min.unsqueeze(1)) / bboxes_width.unsqueeze(1)
-    y_norm01 = (y.unsqueeze(0) - y_min.unsqueeze(1)) / bboxes_height.unsqueeze(1)
+    x_norm01 = (x_det.unsqueeze(0) - x_min.unsqueeze(1)) / bboxes_width.unsqueeze(1)
+    y_norm01 = (y_det.unsqueeze(0) - y_min.unsqueeze(1)) / bboxes_height.unsqueeze(1)
 
     x_norm11 = 2 * x_norm01 - 1
     y_norm11 = 2 * y_norm01 - 1
@@ -71,21 +71,24 @@ def GetCounts_differentiable(shower_rgb, x, y, bboxes, SmearN_fn, fluxB_e,
         inp_time, grid, mode='bilinear', padding_mode='border', align_corners=True
     ).squeeze(1).squeeze(-1)    # (B, num_det)
 
-    # Smearing
-    e0 = local_intensity * electron_scale_factor
-    nes = SmearN_fn(e0)
-    neb = SmearN_fn(fluxB_e.unsqueeze(0).expand(B, num_det))
-    Ne = nes + neb                                          # (B, num_det)
+    return local_intensity, et
 
-    # Vectorized arrival time
-    TAe_m, TAe_s = TimeAverage_vectorized_fn(et, neb, nes)  # (B, num_det)
-    eps = 0.05 * torch.randn_like(TAe_m)
-    Te_raw = TAe_m + TAe_s * eps                            # (B, num_det)
+    # TODO enable smearing
+    # # Smearing
+    # e0 = local_intensity * electron_scale_factor
+    # nes = SmearN_fn(e0)
+    # neb = SmearN_fn(fluxB_e.unsqueeze(0).expand(B, num_det))
+    # Ne = nes + neb                                          # (B, num_det)
 
-    mask_soft = torch.sigmoid(Ne / temperature)             # (B, num_det)
-    Te = mask_soft * Te_raw                                 # (B, num_det)
+    # # Vectorized arrival time
+    # TAe_m, TAe_s = TimeAverage_vectorized_fn(et, neb, nes)  # (B, num_det)
+    # eps = 0.05 * torch.randn_like(TAe_m)
+    # Te_raw = TAe_m + TAe_s * eps                            # (B, num_det)
 
-    return Ne, Te
+    # mask_soft = torch.sigmoid(Ne / temperature)             # (B, num_det)
+    # Te = mask_soft * Te_raw                                 # (B, num_det)
+
+    # return Ne, Te
 
 
 def SmearN(flux, RelResCounts=0.05):
@@ -120,7 +123,7 @@ def TimeAverage_vectorized(T, Nb, Ns, IntegrationWindow=128., sigma_time=10., ep
     Returns:
         tuple: (mean, std) tensors of shape (B, num_det).
     """
-    sqrt12 = torch.tensor([12.0]).sqrt()
+    sqrt12 = torch.tensor([12.0], device=T.device).sqrt()
 
     STbgr = torch.where(Nb <= 1, IntegrationWindow / sqrt12,
             torch.where(Nb <= 2, torch.full_like(Nb, IntegrationWindow * .2041),

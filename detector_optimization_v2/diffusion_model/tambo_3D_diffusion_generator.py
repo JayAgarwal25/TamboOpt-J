@@ -207,7 +207,7 @@ class PlaneDiffusionEvaluator:
                 pred_all[:, plane_idx] = pred
                 past = pred
 
-            all_chunks.append(pred_all.cpu())
+            all_chunks.append(pred_all)
 
             del noise, pred, pred_all, past
             torch.cuda.empty_cache()
@@ -217,7 +217,7 @@ class PlaneDiffusionEvaluator:
                         
         # Concatenate all chunks -> (num_samples, 24, 3, H, W)
         self.generated_sets = {
-            "conditions": conditions_to_process.cpu(),
+            "conditions": conditions_to_process,
             "images": all_samples,
         }
 
