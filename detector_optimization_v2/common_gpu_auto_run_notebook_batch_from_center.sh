@@ -9,4 +9,4 @@ module load python
 
 conda activate multiproc_env
 
-python auto_run_notebook.py SWGOLO7_optimization.ipynb
+python auto_run_notebook.py SWGOLO7_optimization_from_center.ipynb
