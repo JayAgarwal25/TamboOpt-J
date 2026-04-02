@@ -3,6 +3,7 @@
 Extracted from SWGOLO7_optimization.ipynb cells 4-6, 15, 22.
 """
 
+import os
 import warnings
 import numpy as np
 import torch
@@ -94,7 +95,8 @@ def denormalize_shower(images, stats_path, plane=20):
 
 
 def GenerateShowers(x_det, y_det, generator, scaler, GetCounts_differentiable_fn,
-                    log=False, number_of_showers=1, stats_path=None, device = 'cpu'):
+                    log=False, number_of_showers=1, stats_path=None, device = 'cpu', use_cache=False,
+                    output_dir=None):
     """Randomly generate showers with energy, angle, and core position.
 
     Parameters:
@@ -106,51 +108,61 @@ def GenerateShowers(x_det, y_det, generator, scaler, GetCounts_differentiable_fn
         log (bool): if True, plot generated showers.
         number_of_showers (int): number of showers to generate.
         stats_path (str): path to standardization stats file for denormalization.
+        use_cache (bool): if True, cache the generated shower RGB and boundary boxes and reuse them.
 
     Returns:
         tuple: (N, T, X0, Y0, energy, sin_z, cos_z, sin_a, cos_a)
     """
 
-
-    # Sample random priamry particle parameters
-    p_energy = torch.exp(
-        torch.rand(number_of_showers, device=device) *
-        (
-            torch.log( torch.tensor(1.0, device=device) ) -
-            torch.log( torch.tensor(1e-5, device=device) )
-        )
-        + torch.log(torch.tensor(1e-5, device=device))
-    )
-
-    zenith = torch.rand(number_of_showers, device=device) * torch.pi
-    azimuth = torch.rand(number_of_showers, device=device) * 2 * torch.pi
-
-    # Convert angles to cos and sin
-    sin_z = torch.sin(zenith)
-    cos_z = torch.cos(zenith)
-    sin_a = torch.sin(azimuth)
-    cos_a = torch.cos(azimuth)
-
-    class_id = torch.arange(3, device=device).repeat((number_of_showers + 2) // 3)[:number_of_showers].float()
-
-    # input primary charactersitics to geneartor and scaler network
-    generator.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
-    scaler.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
-
-    # generate showers
-    with torch.no_grad():
-        outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
-    output_images = outputs_arr['images']
-
-    # denormalize showers and shift to [0, 1] range
-    if stats_path is not None:
-        shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
+    cache_path = f"{output_dir}/cached_showers_{number_of_showers}.pt"
+    if use_cache and output_dir is not None and os.path.exists(cache_path):
+        print(f"Loading cached showers from {cache_path}")
+        (shower_rgb, bboxes, p_energy, sin_z, cos_z, sin_a, cos_a) = torch.load(cache_path)
     else:
-        shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
+        # Sample random priamry particle parameters
+        p_energy = torch.exp(
+            torch.rand(number_of_showers, device=device) *
+            (
+                torch.log( torch.tensor(1.0, device=device) ) -
+                torch.log( torch.tensor(1e-5, device=device) )
+            )
+            + torch.log(torch.tensor(1e-5, device=device))
+        )
 
-    # compute global coordinates
-    outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
-    bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
+        zenith = torch.rand(number_of_showers, device=device) * torch.pi
+        azimuth = torch.rand(number_of_showers, device=device) * 2 * torch.pi
+
+        # Convert angles to cos and sin
+        sin_z = torch.sin(zenith)
+        cos_z = torch.cos(zenith)
+        sin_a = torch.sin(azimuth)
+        cos_a = torch.cos(azimuth)
+
+        class_id = torch.arange(3, device=device).repeat((number_of_showers + 2) // 3)[:number_of_showers].float()
+
+        # input primary charactersitics to geneartor and scaler network
+        generator.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
+        scaler.test_conditions = torch.stack([p_energy, class_id, sin_z, cos_z, sin_a, cos_a], dim=1)
+
+        # generate showers
+        with torch.no_grad():
+            outputs_arr = generator.generate_samples(num_conditions=number_of_showers, batch_size=5000)
+        output_images = outputs_arr['images']
+
+        # denormalize showers and shift to [0, 1] range
+        if stats_path is not None:
+            shower_rgb = denormalize_shower(output_images, stats_path, plane=20)
+        else:
+            shower_rgb = output_images[:, 20, :, :, :].permute(0, 2, 3, 1)
+
+        # compute global coordinates
+        outputs_arr_bboxes = scaler.generate_samples(num_conditions=number_of_showers)
+        bboxes = outputs_arr_bboxes['bboxes'][:, 20, :]
+        
+        if use_cache and output_dir is not None:
+            _cached_showers = (shower_rgb, bboxes, p_energy, sin_z, cos_z, sin_a, cos_a)
+            torch.save(_cached_showers, cache_path)
+            print(f"Saved generated showers to {cache_path}")
     
     # compute (mean particle energy) x (particle density) for each shower 
     location_means = torch.prod(shower_rgb[:, :, :, :2], dim=3)
