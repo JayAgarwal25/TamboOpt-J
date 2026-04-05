@@ -51,35 +51,55 @@ class Reconstruction(nn.Module):
         return out
 
 
-def NormalizeLabels(E, theta, phi, theta_max=torch.pi * 2):
-    """Normalize physical labels to the ranges expected by the network.
+def NormalizeLabels(
+        E, theta, phi, 
+        e_min = 1e5, e_max = 1e8,
+        theta_min = 60/180 * torch.pi,  theta_max = 100/180 * torch.pi, 
+        phi_min = 0, phi_max = torch.pi * 2
+        ):
+    """Normalize physical labels to the range (0, 1).
 
     Parameters:
         E, theta, phi (torch.Tensor): true energy, theta and phi.
+        e_min (float): minimum energy value for normalization.
+        e_max (float): maximum energy value for normalization.
+        theta_min (float): minimum theta value for normalization.
         theta_max (float): maximum theta value for normalization.
+        phi_min (float): minimum phi value for normalization.
+        phi_max (float): maximum phi value for normalization.
 
     Returns:
         tuple: normalized (E_norm, theta_norm, phi_norm).
     """
-    E_norm = 2 * (E - .1) / (10 - .1) - 1
-    theta_norm = 2 * theta / theta_max - 1
-    phi_norm = phi / torch.pi
+    E_norm = (E - e_min) / (e_max - e_min)
+    theta_norm = (theta - theta_min) / (theta_max - theta_min)
+    phi_norm = (phi - phi_min) / (phi_max - phi_min)
     return E_norm, theta_norm, phi_norm
 
 
-def DenormalizeLabels(E_norm, theta_norm, phi_norm, theta_max=torch.pi * 2):
-    """Inverse of NormalizeLabels: map normalized outputs back to physical units.
+def DenormalizeLabels(
+        E_norm, theta_norm, phi_norm, 
+        e_min = 1e5, e_max = 1e8,
+        theta_min = 60/180 * torch.pi, theta_max = 100/180 * torch.pi, 
+        phi_min = 0, phi_max = torch.pi * 2
+        ):
+    """Inverse of NormalizeLabels: map normalized outputs from (0, 1) back to physical units.
 
     Parameters:
         E_norm, theta_norm, phi_norm (torch.Tensor): normalized network outputs.
+        e_min (float): minimum energy value for denormalization.
+        e_max (float): maximum energy value for denormalization.
+        theta_min (float): minimum theta value for denormalization.
         theta_max (float): maximum theta value for denormalization.
+        phi_min (float): minimum phi value for denormalization.
+        phi_max (float): maximum phi value for denormalization.
 
     Returns:
         tuple: denormalized (E, theta, phi).
     """
-    E = 0.1 + (E_norm + 1) * (10 - 0.1) / 2
-    theta = (theta_norm + 1) * theta_max / 2
-    phi = phi_norm * torch.pi
+    E = e_min + (E_norm) * (e_max - e_min)
+    theta = theta_min + (theta_norm) * (theta_max - theta_min)
+    phi = phi_min + (phi_norm) * (phi_max - phi_min)
     return E, theta, phi
 
 
