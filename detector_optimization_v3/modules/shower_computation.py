@@ -151,14 +151,13 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
         directions = directions.to(device)
         labels     = labels.to(device)
 
-    # fitler a specific plane if needed (e.g. plane 20)
+    # fitler a specific plane if needed
     if filter_plane is not None:
-        mask = samples[:, :, 2] == filter_plane
-        samples = samples[mask]
-        energies = energies[mask.any(dim=1)]
-        directions = directions[mask.any(dim=1)]
-        labels = labels[mask.any(dim=1)]
-
+        # boolean mask for the particles on the specific plane
+        on_plane = samples[:, :, 2] == filter_plane
+        # set the energy of those particles to 0
+        samples[:, :, 3] = samples[:, :, 3] * on_plane.float()
+        
     # samples: (N, max_points, 5) — columns: x, y, layer_index, energy, time
     point_x = samples[:, :, 0]                # (N, max_points)
     point_y = samples[:, :, 1]                # (N, max_points)
@@ -182,8 +181,10 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
 
     # plot showers if logging is enabled
     if log:
+        from matplotlib.colors import LogNorm
         ncols = 5
         nrows = (number_of_showers + ncols - 1) // ncols
+        
         fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
         axes = np.atleast_2d(axes).flatten()
         for i in range(number_of_showers):
@@ -192,6 +193,7 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
                 point_x[i].detach().cpu().numpy(),
                 c=point_e[i].detach().cpu().numpy(),
                 s=2, cmap='viridis',
+                norm=LogNorm(vmin=1e0, vmax=1e2)
             )
             fig.colorbar(sc, ax=axes[i], label='energy')
             axes[i].set_xlabel('y [m]')

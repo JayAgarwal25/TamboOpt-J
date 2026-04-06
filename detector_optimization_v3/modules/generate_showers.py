@@ -78,10 +78,10 @@ class GenerateShowers:
             num_samples (int, optional): Number of shower samples to generate. Defaults to 2000.
             save (bool, optional): Whether to save the generated samples to disk. Defaults to True.
         Returns:
-            samples (torch.Tensor): Generated shower samples of shape (N, max_points, 5).
-            energies (torch.Tensor): Generated primary particle energies.
-            directions (torch.Tensor): Generated primary particle directions.
-            labels (torch.Tensor): Generated primary particle labels.
+            samples (torch.Tensor): Generated shower samples of shape N x points x (x, y, z (layer), e, t).
+            energies (torch.Tensor): Generated primary particle energies of shape N x 1.
+            directions (torch.Tensor): Generated primary particle directions of shape N x 3.
+            labels (torch.Tensor): Generated primary particle labels of shape N.
         """
         primary = sample_primary_particles(
             n=num_samples, e_min=self.e_min, e_max=self.e_max,
