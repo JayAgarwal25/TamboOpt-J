@@ -3,11 +3,13 @@
 Extracted from SWGOLO7_optimization.ipynb cells 7, 18, 19, 72, 73.
 """
 
+from typing import Union
+
 import numpy as np
 import torch
 
 
-def Layouts(n_detectors=100, n_rings=6, radius=500, center=(300,0), device='cpu'):
+def Layouts(n_detectors=100, n_rings=6, radius=500, center=(300,0), device:Union[str, torch.device]='cpu'):
     """Create a detector layout with detectors distributed across concentric rings.
 
     Parameters:
@@ -28,9 +30,9 @@ def Layouts(n_detectors=100, n_rings=6, radius=500, center=(300,0), device='cpu'
     diff = n_detectors - N.sum()
     N[-1] += diff
 
-    radii = torch.cat([R[i].repeat(n) for i, n in enumerate(N)])
+    radii = torch.cat([R[i].repeat(int(n)) for i, n in enumerate(N)])
     angles = torch.cat([
-            torch.linspace(0, 2 * torch.pi, n + 1, device=device)[:-1]
+            torch.linspace(0, 2 * torch.pi, int(n) + 1, device=device)[:-1]
             for n in N
         ])
     return center[0] + radii * torch.cos(angles), center[1] + radii * torch.sin(angles)

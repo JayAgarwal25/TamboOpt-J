@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import showerdata
+from typing import Union
 
 
 def ReadShowers(path_g, path_p):
@@ -96,8 +97,8 @@ def denormalize_shower(images, stats_path, plane=20):
 
 
 def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_differentiable_fn,
-                    log=False, number_of_showers=1, device='cpu', use_cache=False,
-                    output_dir=None):
+                    log=False, number_of_showers=1, device:Union[str, torch.device]='cpu', use_cache=False,
+                    output_dir=None, filter_plane=None):
     """Randomly generate showers with energy, angle, and core position.
 
     Shower generation is delegated to a ``GenerateShowers`` class instance
@@ -122,6 +123,7 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
             on subsequent calls. Defaults to False.
         output_dir (str, optional): directory for reading/writing the cache file.
             Defaults to None.
+        filter_plane (int, optional): plane to filter showers by. Defaults to None.
 
     Returns:
         tuple: (N, T, X0, Y0, energies, directions, labels)
@@ -149,6 +151,13 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
         directions = directions.to(device)
         labels     = labels.to(device)
 
+    # fitler a specific plane if needed (e.g. plane 20)
+    if filter_plane is not None:
+        mask = samples[:, :, 2] == filter_plane
+        samples = samples[mask]
+        energies = energies[mask.any(dim=1)]
+        directions = directions[mask.any(dim=1)]
+        labels = labels[mask.any(dim=1)]
 
     # samples: (N, max_points, 5) — columns: x, y, layer_index, energy, time
     point_x = samples[:, :, 0]                # (N, max_points)

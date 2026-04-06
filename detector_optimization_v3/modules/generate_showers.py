@@ -1,4 +1,5 @@
 import sys
+from typing import Union
 import torch
 
 sys.path.insert(0, "/n/home05/zdimitrov/tambo/TAMBO-opt")
@@ -12,39 +13,49 @@ from allshowers.generate_showers import (
 class GenerateShowers:
     """
     GenerateShowers class with the specified parameters.
-    Args:
-        output_dir (str): Directory to save the generated shower samples.
-        num_timesteps (int, optional): Number of timesteps for the shower simulation. Defaults to 16.
-        device (str, optional): Device to run the simulations on. Defaults to "cuda:0".
-        solver (str, optional): Numerical solver to use for the shower simulation. Defaults to "midpoint".
-        batch_size (int, optional): Batch size for running the simulations. Defaults to 30.
-        point_count_model (str, optional): Path to the model used for predicting the number of points in the shower.
-            Defaults to ".../num_of_point_clouds_dequantize_compiled.pt".
-        allshowers_run_dir (str, optional): Directory where the AllShowers simulations are run and stored.
-            Defaults to ".../checkpoints/all_showers".
-        e_min (float, optional): Minimum energy of the primary particles. Defaults to 1e5.
-        e_max (float, optional): Maximum energy of the primary particles. Defaults to 1e8.
-        zenith_min (float, optional): Minimum zenith angle of the primary particles. Defaults to 60.0.
-        zenith_max (float, optional): Maximum zenith angle of the primary particles. Defaults to 100.0.
-        azimuth_min (float, optional): Minimum azimuth angle of the primary particles. Defaults to 0.0.
-        azimuth_max (float, optional): Maximum azimuth angle of the primary particles. Defaults to 360.0.
+
+    This class is responsible for generating shower samples using the AllShowers framework. It takes in various parameters 
+    for controlling the generation process, such as the number of timesteps, device to run on, numerical solver, batch size, 
+    and energy/angular ranges for the primary particles. The generated showers are returned as point clouds with associated 
+    energies, directions, and labels, which can then be used for further processing (e.g., count extraction) in the 
+    optimization pipeline. The class also supports caching of generated showers to speed up subsequent runs.
     """
     def __init__(
             self,
             output_dir,
-            num_timesteps      = 16,
-            device             = "cuda:0",
-            solver             = "midpoint",
-            batch_size         = 30,
-            point_count_model  = "/n/home05/zdimitrov/tambo/TAMBO-opt/allshowers/checkpoints/num_of_point_clouds_dequantize_compiled.pt",
-            allshowers_run_dir = "/n/home05/zdimitrov/tambo/TAMBO-opt/allshowers/checkpoints/all_showers",
-            e_min              = 1e5,
-            e_max              = 1e8,
-            zenith_min         = 60.0,
-            zenith_max         = 100.0,
-            azimuth_min        = 0.0,
-            azimuth_max        = 360.0,
+            num_timesteps                       = 16,
+            device:Union[str, torch.device]     = "cuda:0",
+            solver                              = "midpoint",
+            batch_size                          = 30,
+            point_count_model                   = "/n/home05/zdimitrov/tambo/TAMBO-opt/allshowers/checkpoints/num_of_point_clouds_dequantize_compiled.pt",
+            allshowers_run_dir                  = "/n/home05/zdimitrov/tambo/TAMBO-opt/allshowers/checkpoints/all_showers",
+            e_min                               = 1e5,
+            e_max                               = 1e8,
+            zenith_min                          = 60.0,
+            zenith_max                          = 100.0,
+            azimuth_min                         = 0.0,
+            azimuth_max                         = 360.0,
     ):
+        """
+        Instantiates the GenerateShowers class with the specified parameters.
+        
+        Args:
+            output_dir (str): Directory to save the generated shower samples.
+            num_timesteps (int, optional): Number of timesteps for the shower simulation. Defaults to 16.
+            device (str, optional): Device to run the simulations on. Defaults to "cuda:0".
+            solver (str, optional): Numerical solver to use for the shower simulation. Defaults to "midpoint".
+            batch_size (int, optional): Batch size for running the simulations. Defaults to 30.
+            point_count_model (str, optional): Path to the model used for predicting the number of points in the shower.
+                Defaults to ".../num_of_point_clouds_dequantize_compiled.pt".
+            allshowers_run_dir (str, optional): Directory where the AllShowers simulations are run and stored.
+                Defaults to ".../checkpoints/all_showers".
+            e_min (float, optional): Minimum energy of the primary particles. Defaults to 1e5.
+            e_max (float, optional): Maximum energy of the primary particles. Defaults to 1e8.
+            zenith_min (float, optional): Minimum zenith angle of the primary particles. Defaults to 60.0.
+            zenith_max (float, optional): Maximum zenith angle of the primary particles. Defaults to 100.0.
+            azimuth_min (float, optional): Minimum azimuth angle of the primary particles. Defaults to 0.0.
+            azimuth_max (float, optional): Maximum azimuth angle of the primary particles. Defaults to 360.0.
+        """
         self.num_timesteps      = num_timesteps
         self.device             = device
         self.solver             = solver

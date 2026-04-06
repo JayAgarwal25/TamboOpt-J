@@ -5,14 +5,15 @@ Extracted from SWGOLO7_optimization.ipynb cells 23, 74, 75.
 
 import numpy as np
 import torch
-
+from torch import device as TorchDevice
+from typing import Union
 
 class LearnableXY(torch.nn.Module):
     """Small module holding detector x, y positions as learnable parameters.
 
     The parameters can be optimized with standard PyTorch optimizers to change the layout.
     """
-    def __init__(self, x_init, y_init, device='cpu'):
+    def __init__(self, x_init, y_init, device:Union[str, TorchDevice]='cpu'):
         super().__init__()
         self.x = torch.nn.Parameter(x_init.to(device))
         self.y = torch.nn.Parameter(y_init.to(device))
