@@ -50,7 +50,7 @@ def U_E(E_preds, E_trues, r):
     Returns:
         torch.Tensor: scalar utility contribution.
     """
-    u = torch.sum(r / ((E_preds - E_trues) ** 2 + .01))
+    u = torch.sum(r / ((torch.log10(E_preds) - torch.log10(E_trues)) ** 2 + .01))
     return u
 
 
