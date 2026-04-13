@@ -179,6 +179,8 @@ class MountainData:
 
         scheme='grid'   : dense grid in the bbox, filtered, then thinned to n_units.
         scheme='random' : uniform random in the bbox, accept-reject until n_units valid.
+        scheme='center' : all n_units clustered at the mountain-centroid centre with
+                          ~50 m Gaussian jitter; each sample snapped onto the mountain.
         """
         N_c = self.centroids_NUE[:, 0]
         U_c = self.centroids_NUE[:, 1]
@@ -232,8 +234,37 @@ class MountainData:
                 raise RuntimeError(f"Random sampling could only place {len(out_n)} of {n_units}")
             return np.array(out_n, dtype=np.float32), np.array(out_u, dtype=np.float32)
 
+        elif scheme == "center":
+            # Find the centroid nearest to the bbox centre and use it as the cluster
+            # anchor, so the cluster sits on the mountain surface even if the bbox
+            # centre itself lies in a "hole".
+            cn = 0.5 * (self.n_min + self.n_max)
+            cu = 0.5 * (self.u_min + self.u_max)
+            d2_center = (N_c - cn) ** 2 + (U_c - cu) ** 2
+            anchor = int(np.argmin(d2_center))
+            anchor_n = float(N_c[anchor])
+            anchor_u = float(U_c[anchor])
+
+            rng = np.random.default_rng(0)
+            sigma = 50.0 / 3.0  # ~50 m total spread (≈3σ)
+            out_n, out_u = [], []
+            tries = 0
+            while len(out_n) < n_units and tries < 1000 * n_units:
+                pn = anchor_n + float(rng.normal(0.0, sigma))
+                pu = anchor_u + float(rng.normal(0.0, sigma))
+                if _is_on_mountain(pn, pu):
+                    out_n.append(pn); out_u.append(pu)
+                tries += 1
+            if len(out_n) < n_units:
+                # Fall back: if jitter keeps falling off the surface, just stack on
+                # the anchor point itself — guarantees we return n_units.
+                while len(out_n) < n_units:
+                    out_n.append(anchor_n); out_u.append(anchor_u)
+            return (np.array(out_n, dtype=np.float32),
+                    np.array(out_u, dtype=np.float32))
+
         else:
-            raise ValueError(f"Unknown scheme '{scheme}'. Use 'grid' or 'random'.")
+            raise ValueError(f"Unknown scheme '{scheme}'. Use 'grid', 'random', or 'center'.")
 
 
 # ── Top-level loader ──────────────────────────────────────────────────────────
