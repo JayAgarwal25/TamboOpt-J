@@ -215,6 +215,8 @@ def ComputeShowerDetection(x_det, y_det, generate_showers_instance, GetCounts_di
     N = torch.cat(N_list, dim=0)   # (total_showers,  ...)
     T = torch.cat(T_list, dim=0)   # (total_showers,  ...)
 
-    energies = energies.squeeze() # (N,)
+    # energies = energies.squeeze() # (N,)
+    energies = energies.squeeze(-1) if energies.ndim > 1 else energies
+
 
     return N, T, X0, Y0, energies, sin_z, cos_z, sin_a, cos_a, labels
