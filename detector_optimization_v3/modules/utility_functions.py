@@ -50,7 +50,7 @@ def U_E(E_preds, E_trues, r):
     Returns:
         torch.Tensor: scalar utility contribution.
     """
-    u = torch.sum(r / ((torch.log10(E_preds) - torch.log10(E_trues)) ** 2 + .01))
+    u = torch.mean(r / ((torch.log10(E_preds) - torch.log10(E_trues)) ** 2 + .01))
     return u
 
 
@@ -65,5 +65,5 @@ def U_angle(angle_preds, angle_trues, r):
     Returns:
         torch.Tensor: scalar utility contribution.
     """
-    u = torch.sum(r / ((angle_preds - angle_trues) ** 2 + .001))
+    u = torch.mean(r / ((angle_preds - angle_trues) ** 2 + .001))
     return u
