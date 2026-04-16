@@ -41,15 +41,19 @@ from modules_v6.constants import (
 
 # ── Config ───────────────────────────────────────────────────────────────────
 BATCH_SIZE          = 256
-N_EPOCHS            = 100 #TODO 60
+N_EPOCHS            = 100
 LR                  = 1e-5
 LR_MIN              = 1e-7
 GRAD_CLIP           = 10.0
-EARLY_STOP_PATIENCE = 100 #TODO 8
 VAL_FRAC            = 0.10
 SEED                = 0
 NUM_WORKERS         = 0   # set >0 if disk I/O becomes the bottleneck
 DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
+LBFGS_LR                 = 1.0
+LBFGS_MAX_ITER           = 500
+LBFGS_HISTORY_SIZE       = 20
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -127,22 +131,43 @@ def mse_normalized(pred: torch.Tensor,
     return total, mse_E, mse_T
 
 
-def _plot_curves(log, path: str) -> None:
+def _plot_curves(log, path: str, adam_epochs: int = 0,
+                 lbfgs_iter_log=None) -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        ep = [e["epoch"] for e in log]
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
-        axes[0].plot(ep, [e["train"] for e in log], label="train")
-        axes[0].plot(ep, [e["val"]   for e in log], label="val")
-        axes[0].set_xlabel("epoch"); axes[0].set_ylabel("MSE (z-scored)")
+
+        # Adam entries only (exclude the single lbfgs summary row)
+        adam_log = [e for e in log if e.get("phase") != "lbfgs"]
+        ep = [e["epoch"] for e in adam_log]
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].plot(ep, [e["train"] for e in adam_log], label="train")
+        axes[0].plot(ep, [e["val"]   for e in adam_log], label="val")
+        axes[1].plot(ep, [e["train_E"] for e in adam_log], label="train E", linestyle="--")
+        axes[1].plot(ep, [e["val_E"]   for e in adam_log], label="val E")
+        axes[1].plot(ep, [e["train_T"] for e in adam_log], label="train T", linestyle="--")
+        axes[1].plot(ep, [e["val_T"]   for e in adam_log], label="val T")
+
+        # L-BFGS iterations (train only — no per-iter val)
+        if lbfgs_iter_log:
+            lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
+            axes[0].plot(lb_ep, [e["loss"]  for e in lbfgs_iter_log],
+                         label="L-BFGS train", alpha=0.7)
+            axes[1].plot(lb_ep, [e["mse_E"] for e in lbfgs_iter_log],
+                         label="L-BFGS train E", linestyle="--", alpha=0.7)
+            axes[1].plot(lb_ep, [e["mse_T"] for e in lbfgs_iter_log],
+                         label="L-BFGS train T", linestyle="--", alpha=0.7)
+
+        if adam_epochs > 0:
+            for ax in axes:
+                ax.axvline(adam_epochs, color="gray", linestyle="--", alpha=0.5,
+                           label="Adam\u2192L-BFGS")
+
+        axes[0].set_xlabel("epoch / iter"); axes[0].set_ylabel("MSE (z-scored)")
         axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend()
-        axes[1].plot(ep, [e["train_E"] for e in log], label="train E", linestyle="--")
-        axes[1].plot(ep, [e["val_E"]   for e in log], label="val E")
-        axes[1].plot(ep, [e["train_T"] for e in log], label="train T", linestyle="--")
-        axes[1].plot(ep, [e["val_T"]   for e in log], label="val T")
-        axes[1].set_xlabel("epoch"); axes[1].set_ylabel("MSE (z-scored)")
+        axes[1].set_xlabel("epoch / iter"); axes[1].set_ylabel("MSE (z-scored)")
         axes[1].set_title("per-channel"); axes[1].grid(alpha=0.3); axes[1].legend()
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -162,7 +187,7 @@ def main():
     print(f"fnn output      : {FNN_FOLDER}")
     print(f"device          : {DEVICE}")
     print(f"batch           : {BATCH_SIZE}")
-    print(f"epochs          : {N_EPOCHS} (early stop patience {EARLY_STOP_PATIENCE})")
+    print(f"epochs          : {N_EPOCHS}")
     print(f"lr              : {LR} -> {LR_MIN} cosine")
     print(f"val frac        : {VAL_FRAC} (shower-level)")
     print(f"seed            : {SEED}")
@@ -210,7 +235,6 @@ def main():
     log = []
     best_val   = float("inf")
     best_epoch = -1
-    patience   = 0
 
     for epoch in range(N_EPOCHS):
         t_epoch = time.time()
@@ -282,7 +306,6 @@ def main():
         if va_tot < best_val - 1e-5:
             best_val   = va_tot
             best_epoch = epoch + 1
-            patience   = 0
             torch.save({
                 "state_dict": model.state_dict(),
                 "epoch": epoch + 1,
@@ -295,12 +318,6 @@ def main():
                     hidden=512, dropout=0.1,
                 ),
             }, os.path.join(FNN_FOLDER, "fnn.pt"))
-        else:
-            patience += 1
-            if patience >= EARLY_STOP_PATIENCE:
-                print(f"[early-stop] val plateau at epoch {epoch+1}  "
-                      f"(best {best_val:.4f} at epoch {best_epoch})")
-                break
 
     with open(os.path.join(FNN_FOLDER, "fnn_train_log.json"), "w") as f:
         json.dump({
@@ -309,12 +326,151 @@ def main():
             "best_epoch": best_epoch,
             "config": dict(
                 batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR, lr_min=LR_MIN,
-                grad_clip=GRAD_CLIP, early_stop_patience=EARLY_STOP_PATIENCE,
-                val_frac=VAL_FRAC, seed=SEED,
+                grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
             ),
         }, f, indent=2)
     _plot_curves(log, os.path.join(FNN_FOLDER, "fnn_train_curves.png"))
-    print(f"[done] best val {best_val:.4f} at epoch {best_epoch}  -> {FNN_FOLDER}")
+    print(f"[adam done] best val {best_val:.4f} at epoch {best_epoch}")
+
+    # ── Phase 2: L-BFGS fine-tuning (full-batch) ────────────────────────────
+    print("\n" + "=" * 72)
+    print("Phase 2: L-BFGS fine-tuning (full-batch)")
+    print("=" * 72)
+
+    adam_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
+    model.load_state_dict(adam_ckpt["state_dict"])
+    adam_best_val = adam_ckpt["val_total"]
+    print(f"[lbfgs] loaded Adam best  epoch={adam_ckpt['epoch']}  "
+          f"val={adam_best_val:.6f}")
+
+    # eval() disables dropout; requires_grad stays True
+    model.eval()
+
+    # Move full training set to GPU
+    p_all  = primary[train_idx].to(DEVICE)
+    xy_all = xy[train_idx].to(DEVICE)
+    E_all_train = E_all[train_idx].to(DEVICE)
+    T_all_train = T_all[train_idx].to(DEVICE)
+    print(f"[lbfgs] full train batch on {DEVICE}: {p_all.shape[0]} samples")
+
+    lbfgs_optimizer = torch.optim.LBFGS(
+        model.parameters(),
+        lr=LBFGS_LR,
+        max_iter=LBFGS_MAX_ITER,
+        history_size=LBFGS_HISTORY_SIZE,
+        line_search_fn="strong_wolfe",
+    )
+
+    lbfgs_iter_log = []   # one entry per closure call
+    t_lbfgs = time.time()
+
+    def closure():
+        lbfgs_optimizer.zero_grad()
+        pred = model(p_all, xy_all)
+        loss, mE, mT = mse_normalized(
+            pred, E_all_train, T_all_train, model.out_mean, model.out_std,
+        )
+        loss.backward()
+        it = len(lbfgs_iter_log)
+        lbfgs_iter_log.append(dict(
+            iter=it, loss=loss.item(), mse_E=mE.item(), mse_T=mT.item(),
+        ))
+        print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
+              f"(E={mE.item():.6f} T={mT.item():.6f})")
+        return loss
+
+    final_loss = lbfgs_optimizer.step(closure)
+
+    # Free GPU memory
+    del p_all, xy_all, E_all_train, T_all_train
+
+    dt_lbfgs = time.time() - t_lbfgs
+    n_iters = len(lbfgs_iter_log)
+    lbfgs_abort = torch.isnan(final_loss) or torch.isinf(final_loss)
+
+    if lbfgs_abort:
+        print(f"[lbfgs] ABORT — NaN/Inf after {n_iters} iters")
+        model.load_state_dict(adam_ckpt["state_dict"])
+
+    print(f"[lbfgs] {n_iters} iterations in {dt_lbfgs:.1f}s")
+
+    # Validation after L-BFGS
+    overall_best_val = adam_best_val
+    lbfgs_log = []
+
+    if not lbfgs_abort:
+        va_tot, va_E, va_T, n_va = 0.0, 0.0, 0.0, 0
+        with torch.no_grad():
+            for p_b, xy_b, E_b, T_b in val_loader:
+                p_b  = p_b.to(DEVICE, non_blocking=True)
+                xy_b = xy_b.to(DEVICE, non_blocking=True)
+                E_b  = E_b.to(DEVICE, non_blocking=True)
+                T_b  = T_b.to(DEVICE, non_blocking=True)
+                pred = model(p_b, xy_b)
+                loss, mE, mT = mse_normalized(
+                    pred, E_b, T_b, model.out_mean, model.out_std,
+                )
+                B = p_b.shape[0]
+                va_tot += loss.item() * B
+                va_E   += mE.item()   * B
+                va_T   += mT.item()   * B
+                n_va   += B
+        va_tot /= max(n_va, 1)
+        va_E   /= max(n_va, 1)
+        va_T   /= max(n_va, 1)
+
+        print(f"[lbfgs val] val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f})")
+
+        lbfgs_log.append(dict(
+            epoch=N_EPOCHS + 1, phase="lbfgs",
+            train=lbfgs_iter_log[-1]["loss"],
+            train_E=lbfgs_iter_log[-1]["mse_E"],
+            train_T=lbfgs_iter_log[-1]["mse_T"],
+            val=va_tot, val_E=va_E, val_T=va_T, dt=dt_lbfgs,
+        ))
+
+        if va_tot > 2.0 * adam_best_val:
+            print(f"[lbfgs] ABORT — val {va_tot:.4f} > 2x Adam best {adam_best_val:.4f}")
+            model.load_state_dict(adam_ckpt["state_dict"])
+        elif va_tot < overall_best_val - 1e-5:
+            overall_best_val = va_tot
+            torch.save({
+                "state_dict": model.state_dict(),
+                "epoch": N_EPOCHS + 1,
+                "phase": "lbfgs",
+                "val_total": va_tot,
+                "val_E": va_E,
+                "val_T": va_T,
+                "norm_stats": norm_stats,
+                "config": dict(
+                    n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
+                    hidden=512, dropout=0.1,
+                ),
+            }, os.path.join(FNN_FOLDER, "fnn.pt"))
+            print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")
+        else:
+            print(f"[lbfgs] no improvement  val={va_tot:.6f} vs Adam {adam_best_val:.6f}")
+
+    # Merge logs and re-save
+    full_log = log + lbfgs_log
+    with open(os.path.join(FNN_FOLDER, "fnn_train_log.json"), "w") as f:
+        json.dump({
+            "log": full_log,
+            "lbfgs_iter_log": lbfgs_iter_log,
+            "best_val_total": overall_best_val,
+            "best_epoch": best_epoch if overall_best_val == adam_best_val else N_EPOCHS + 1,
+            "adam_best_val": adam_best_val,
+            "adam_best_epoch": best_epoch,
+            "config": dict(
+                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR, lr_min=LR_MIN,
+                grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
+                lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
+                lbfgs_history_size=LBFGS_HISTORY_SIZE,
+            ),
+        }, f, indent=2)
+    _plot_curves(full_log, os.path.join(FNN_FOLDER, "fnn_train_curves.png"),
+                 adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
+    print(f"[done] best val {overall_best_val:.4f}  -> {FNN_FOLDER}")
 
 
 if __name__ == "__main__":

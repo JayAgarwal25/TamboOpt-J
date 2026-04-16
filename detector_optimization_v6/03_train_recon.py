@@ -59,14 +59,18 @@ from modules_v6.constants import (
 
 RECON_INPUT_FEATURES = 4   # (x, y, E, T) per detector
 BATCH_SIZE           = 256
-N_EPOCHS             = 400
+N_EPOCHS             = 300
 LR                   = 3e-5
 GRAD_CLIP            = 10.0
-EARLY_STOP_PATIENCE  = 200 #TODO 20
 VAL_FRAC             = 0.10
 SEED                 = 1
 NUM_WORKERS          = 0
 DEVICE               = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
+LBFGS_LR                 = 1.0
+LBFGS_MAX_ITER           = 500
+LBFGS_HISTORY_SIZE       = 20
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -187,21 +191,44 @@ def compute_recon_input_stats(xy: torch.Tensor,
     return mean, std
 
 
-def _plot_curves(log, path: str) -> None:
+def _plot_curves(log, path: str, adam_epochs: int = 0,
+                 lbfgs_iter_log=None) -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        ep = [e["epoch"] for e in log]
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
-        axes[0].plot(ep, [e["train"] for e in log], label="train")
-        axes[0].plot(ep, [e["val"]   for e in log], label="val")
-        axes[0].set_xlabel("epoch"); axes[0].set_ylabel("MSE (normalized labels)")
+
+        # Adam entries only (exclude the single lbfgs summary row)
+        adam_log = [e for e in log if e.get("phase") != "lbfgs"]
+        ep = [e["epoch"] for e in adam_log]
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].plot(ep, [e["train"] for e in adam_log], label="train")
+        axes[0].plot(ep, [e["val"]   for e in adam_log], label="val")
+        axes[1].plot(ep, [e["val_E"]  for e in adam_log], label="val E")
+        axes[1].plot(ep, [e["val_th"] for e in adam_log], label="val \u03b8")
+        axes[1].plot(ep, [e["val_ph"] for e in adam_log], label="val \u03c6")
+
+        # L-BFGS iterations (train only — no per-iter val)
+        if lbfgs_iter_log:
+            lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
+            axes[0].plot(lb_ep, [e["loss"]   for e in lbfgs_iter_log],
+                         label="L-BFGS train", alpha=0.7)
+            axes[1].plot(lb_ep, [e["mse_E"]  for e in lbfgs_iter_log],
+                         label="L-BFGS train E", linestyle="--", alpha=0.7)
+            axes[1].plot(lb_ep, [e["mse_th"] for e in lbfgs_iter_log],
+                         label="L-BFGS train \u03b8", linestyle="--", alpha=0.7)
+            axes[1].plot(lb_ep, [e["mse_ph"] for e in lbfgs_iter_log],
+                         label="L-BFGS train \u03c6", linestyle="--", alpha=0.7)
+
+        if adam_epochs > 0:
+            for ax in axes:
+                ax.axvline(adam_epochs, color="gray", linestyle="--", alpha=0.5,
+                           label="Adam\u2192L-BFGS")
+
+        axes[0].set_xlabel("epoch / iter"); axes[0].set_ylabel("MSE (normalized labels)")
         axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend()
-        axes[1].plot(ep, [e["val_E"]  for e in log], label="val E")
-        axes[1].plot(ep, [e["val_th"] for e in log], label="val θ")
-        axes[1].plot(ep, [e["val_ph"] for e in log], label="val φ")
-        axes[1].set_xlabel("epoch"); axes[1].set_ylabel("MSE")
+        axes[1].set_xlabel("epoch / iter"); axes[1].set_ylabel("MSE")
         axes[1].set_title("per-axis val"); axes[1].grid(alpha=0.3); axes[1].legend()
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -221,7 +248,7 @@ def main():
     print(f"fnn checkpoint  : {FNN_FOLDER}")
     print(f"device          : {DEVICE}")
     print(f"batch           : {BATCH_SIZE}")
-    print(f"epochs          : {N_EPOCHS}  (early stop patience {EARLY_STOP_PATIENCE})")
+    print(f"epochs          : {N_EPOCHS}")
     print(f"lr              : {LR}")
     print(f"feats/det       : {RECON_INPUT_FEATURES}  (x, y, E, T)")
     print(f"seed            : {SEED}")
@@ -300,7 +327,6 @@ def main():
     log = []
     best_val   = float("inf")
     best_epoch = -1
-    patience   = 0
 
     for epoch in range(N_EPOCHS):
         t_epoch = time.time()
@@ -379,7 +405,6 @@ def main():
         if va_tot < best_val - 1e-6:
             best_val   = va_tot
             best_epoch = epoch + 1
-            patience   = 0
             torch.save({
                 "state_dict": recon.state_dict(),
                 "epoch": epoch + 1,
@@ -393,12 +418,6 @@ def main():
                     hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=3,
                 ),
             }, os.path.join(RECON_FOLDER, "recon.pt"))
-        else:
-            patience += 1
-            if patience >= EARLY_STOP_PATIENCE:
-                print(f"[early-stop] val plateau at epoch {epoch+1}  "
-                      f"(best {best_val:.4f} at epoch {best_epoch})")
-                break
 
     with open(os.path.join(RECON_FOLDER, "recon_train_log.json"), "w") as f:
         json.dump({
@@ -407,13 +426,167 @@ def main():
             "best_epoch": best_epoch,
             "config": dict(
                 batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
-                grad_clip=GRAD_CLIP, early_stop_patience=EARLY_STOP_PATIENCE,
-                recon_input_features=RECON_INPUT_FEATURES,
+                grad_clip=GRAD_CLIP, recon_input_features=RECON_INPUT_FEATURES,
                 val_frac=VAL_FRAC, seed=SEED,
             ),
         }, f, indent=2)
     _plot_curves(log, os.path.join(RECON_FOLDER, "recon_train_curves.png"))
-    print(f"[done] best recon val {best_val:.4f} at epoch {best_epoch}  -> {RECON_FOLDER}")
+    print(f"[adam done] best recon val {best_val:.4f} at epoch {best_epoch}")
+
+    # ── Phase 2: L-BFGS fine-tuning (full-batch) ────────────────────────────
+    print("\n" + "=" * 72)
+    print("Phase 2: L-BFGS fine-tuning (full-batch)")
+    print("=" * 72)
+
+    adam_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
+    recon.load_state_dict(adam_ckpt["state_dict"])
+    adam_best_val = adam_ckpt["val_total"]
+    print(f"[lbfgs] loaded Adam best  epoch={adam_ckpt['epoch']}  "
+          f"val={adam_best_val:.6f}")
+
+    # eval() disables dropout; requires_grad stays True
+    recon.eval()
+
+    # Move full training set to GPU and pre-compute normalized input
+    xy_train = xy[train_idx].to(DEVICE)
+    E_train  = E_pred[train_idx].to(DEVICE)
+    T_train  = T_pred[train_idx].to(DEVICE)
+    tgt_train = target[train_idx].to(DEVICE)
+    inp_all  = build_recon_input(xy_train, E_train, T_train)
+    inp_all_n = (inp_all - in_mean) / in_std
+    del xy_train, E_train, T_train, inp_all  # free intermediates
+    print(f"[lbfgs] full train batch on {DEVICE}: {tgt_train.shape[0]} samples")
+
+    lbfgs_optimizer = torch.optim.LBFGS(
+        recon.parameters(),
+        lr=LBFGS_LR,
+        max_iter=LBFGS_MAX_ITER,
+        history_size=LBFGS_HISTORY_SIZE,
+        line_search_fn="strong_wolfe",
+    )
+
+    lbfgs_iter_log = []   # one entry per closure call
+    t_lbfgs = time.time()
+
+    def closure():
+        lbfgs_optimizer.zero_grad()
+        pred = recon(inp_all_n)
+        l_E  = F.mse_loss(pred[:, 0], tgt_train[:, 0])
+        l_th = F.mse_loss(pred[:, 1], tgt_train[:, 1])
+        l_ph = F.mse_loss(pred[:, 2], tgt_train[:, 2])
+        loss = l_E + l_th + l_ph
+        loss.backward()
+        it = len(lbfgs_iter_log)
+        lbfgs_iter_log.append(dict(
+            iter=it, loss=loss.item(),
+            mse_E=l_E.item(), mse_th=l_th.item(), mse_ph=l_ph.item(),
+        ))
+        print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
+              f"(E={l_E.item():.6f} \u03b8={l_th.item():.6f} \u03c6={l_ph.item():.6f})")
+        return loss
+
+    final_loss = lbfgs_optimizer.step(closure)
+
+    # Free GPU memory
+    del inp_all_n, tgt_train
+
+    dt_lbfgs = time.time() - t_lbfgs
+    n_iters = len(lbfgs_iter_log)
+    lbfgs_abort = torch.isnan(final_loss) or torch.isinf(final_loss)
+
+    if lbfgs_abort:
+        print(f"[lbfgs] ABORT — NaN/Inf after {n_iters} iters")
+        recon.load_state_dict(adam_ckpt["state_dict"])
+
+    print(f"[lbfgs] {n_iters} iterations in {dt_lbfgs:.1f}s")
+
+    # Validation after L-BFGS
+    overall_best_val = adam_best_val
+    lbfgs_log = []
+
+    if not lbfgs_abort:
+        va_tot, va_E, va_th, va_ph, n_va = 0.0, 0.0, 0.0, 0.0, 0
+        with torch.no_grad():
+            for xy_b, E_b, T_b, tgt_b in val_loader:
+                xy_b  = xy_b.to(DEVICE, non_blocking=True)
+                E_b   = E_b.to(DEVICE,  non_blocking=True)
+                T_b   = T_b.to(DEVICE,  non_blocking=True)
+                tgt_b = tgt_b.to(DEVICE, non_blocking=True)
+                inp  = build_recon_input(xy_b, E_b, T_b)
+                inp  = (inp - in_mean) / in_std
+                pred = recon(inp)
+                l_E  = F.mse_loss(pred[:, 0], tgt_b[:, 0])
+                l_th = F.mse_loss(pred[:, 1], tgt_b[:, 1])
+                l_ph = F.mse_loss(pred[:, 2], tgt_b[:, 2])
+                l    = l_E + l_th + l_ph
+                B = xy_b.shape[0]
+                va_tot += l.item()    * B
+                va_E   += l_E.item()  * B
+                va_th  += l_th.item() * B
+                va_ph  += l_ph.item() * B
+                n_va   += B
+        va_tot /= max(n_va, 1)
+        va_E   /= max(n_va, 1)
+        va_th  /= max(n_va, 1)
+        va_ph  /= max(n_va, 1)
+
+        print(f"[lbfgs val] val={va_tot:.6f} "
+              f"(E={va_E:.6f} \u03b8={va_th:.6f} \u03c6={va_ph:.6f})")
+
+        lbfgs_log.append(dict(
+            epoch=N_EPOCHS + 1, phase="lbfgs",
+            train=lbfgs_iter_log[-1]["loss"],
+            train_E=lbfgs_iter_log[-1]["mse_E"],
+            train_th=lbfgs_iter_log[-1]["mse_th"],
+            train_ph=lbfgs_iter_log[-1]["mse_ph"],
+            val=va_tot, val_E=va_E, val_th=va_th, val_ph=va_ph,
+            dt=dt_lbfgs,
+        ))
+
+        if va_tot > 2.0 * adam_best_val:
+            print(f"[lbfgs] ABORT — val {va_tot:.4f} > 2x Adam best {adam_best_val:.4f}")
+            recon.load_state_dict(adam_ckpt["state_dict"])
+        elif va_tot < overall_best_val - 1e-6:
+            overall_best_val = va_tot
+            torch.save({
+                "state_dict": recon.state_dict(),
+                "epoch": N_EPOCHS + 1,
+                "phase": "lbfgs",
+                "val_total": va_tot,
+                "val_E": va_E, "val_th": va_th, "val_ph": va_ph,
+                "input_features": RECON_INPUT_FEATURES,
+                "num_detectors": N_DETECTORS,
+                "input_mean": in_mean.detach().cpu(),
+                "input_std":  in_std.detach().cpu(),
+                "config": dict(
+                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=3,
+                ),
+            }, os.path.join(RECON_FOLDER, "recon.pt"))
+            print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")
+        else:
+            print(f"[lbfgs] no improvement  val={va_tot:.6f} vs Adam {adam_best_val:.6f}")
+
+    # Merge logs and re-save
+    full_log = log + lbfgs_log
+    with open(os.path.join(RECON_FOLDER, "recon_train_log.json"), "w") as f:
+        json.dump({
+            "log": full_log,
+            "lbfgs_iter_log": lbfgs_iter_log,
+            "best_val_total": overall_best_val,
+            "best_epoch": best_epoch if overall_best_val == adam_best_val else N_EPOCHS + 1,
+            "adam_best_val": adam_best_val,
+            "adam_best_epoch": best_epoch,
+            "config": dict(
+                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
+                grad_clip=GRAD_CLIP, recon_input_features=RECON_INPUT_FEATURES,
+                val_frac=VAL_FRAC, seed=SEED,
+                lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
+                lbfgs_history_size=LBFGS_HISTORY_SIZE,
+            ),
+        }, f, indent=2)
+    _plot_curves(full_log, os.path.join(RECON_FOLDER, "recon_train_curves.png"),
+                 adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
+    print(f"[done] best recon val {overall_best_val:.4f}  -> {RECON_FOLDER}")
 
 
 if __name__ == "__main__":
