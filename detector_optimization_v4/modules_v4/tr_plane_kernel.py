@@ -83,13 +83,14 @@ def GetCounts_planeaware(
     energy_kernel = point_e.unsqueeze(2) * kernel                 # (B, P, n_det)
 
     local_intensity = energy_kernel.sum(dim=1)                    # (B, n_det)
-    et = (
-        (point_t.unsqueeze(2) * energy_kernel).sum(dim=1)
-        / local_intensity.clamp(min=1e-8)
-    )                                                              # (B, n_det)
+    arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
+    # et = (
+    #     (point_t.unsqueeze(2) * energy_kernel).sum(dim=1)
+    #     / local_intensity.clamp(min=1e-8)
+    # )                                                              # (B, n_det)
 
     # Return raw (local_intensity, et), matching v3's GetCounts_differentiable
     # behaviour.  SmearN_fn / TimeAverage_vectorized_fn are accepted for
     # interface compatibility but not called — v3 also accepts them as kwargs
     # without calling them.
-    return local_intensity, et
+    return local_intensity, arrival_time
