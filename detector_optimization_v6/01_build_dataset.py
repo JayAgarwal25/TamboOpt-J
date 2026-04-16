@@ -39,7 +39,7 @@ from modules_v4.tr_surface_map import SurfaceEastMap
 # ── Config ───────────────────────────────────────────────────────────────────
 MAX_SHOWERS = NUM_SHOWERS
 SEED        = 0
-DEVICE      = torch.device("cpu") # dataset build is I/O-bound on CPU
+DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main():
@@ -76,6 +76,7 @@ def main():
         batch_size=BATCH_SIZE_TRAIN,
         max_showers=MAX_SHOWERS,
         seed=SEED,
+        device=DEVICE,
         verbose=True,
     )
     print(f"[build] training pairs in {time.time() - t0:.1f}s")
