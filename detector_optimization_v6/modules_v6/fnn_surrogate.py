@@ -94,6 +94,7 @@ def build_training_pairs(mountain, surface,
                          batch_size:        int = 20,
                          max_showers:       int = 0,
                          seed:              int = 0,
+                         device:            torch.device = torch.device("cpu"),
                          verbose:           bool = True):
     """Build (primary, xy, E, T) training tensors from the cached shower corpus.
 
@@ -101,6 +102,8 @@ def build_training_pairs(mountain, surface,
     drawn (so `layouts_per_shower = len(_STRATEGIES)`). Within each strategy,
     showers are grouped into batches of `batch_size` that share one layout —
     this is what makes v4's non-batched kernel affordable in one pass.
+
+    The kernel runs on `device` (GPU if available); outputs are returned on CPU.
 
     Returns:
         primaries : (N_pairs, 5)   float32
@@ -152,22 +155,22 @@ def build_training_pairs(mountain, surface,
 
             # Fresh layout for this batch
             x_det, y_det = fn(mountain, n_det=n_det, rng=rng, **kwargs)
-            x_det = x_det.float()
-            y_det = y_det.float()
+            x_det = x_det.float().to(device)
+            y_det = y_det.float().to(device)
 
-            # Shared-layout kernel call
-            clouds = points[lo:hi]                         # (B, P, 5)
+            # Shared-layout kernel call (batch slice moved to device)
+            clouds = points[lo:hi].to(device)              # (B, P, 5)
             E, T = compute_labels_batch(
                 clouds, x_det, y_det, surface,
             )
 
-            # Slot into output arrays at strategy-major order
+            # Slot into CPU output arrays
             dst = slice(s_idx * n_showers + lo, s_idx * n_showers + hi)
             out_primary[dst] = primaries_all[lo:hi]
-            out_xy[dst, :, 0] = x_det.unsqueeze(0).expand(B, -1)
-            out_xy[dst, :, 1] = y_det.unsqueeze(0).expand(B, -1)
-            out_E[dst] = E
-            out_T[dst] = T
+            out_xy[dst, :, 0] = x_det.cpu().unsqueeze(0).expand(B, -1)
+            out_xy[dst, :, 1] = y_det.cpu().unsqueeze(0).expand(B, -1)
+            out_E[dst] = E.cpu()
+            out_T[dst] = T.cpu()
             out_strat[dst] = s_idx
 
     return out_primary, out_xy, out_E, out_T, out_strat
@@ -181,16 +184,42 @@ def compute_normalization(primary:   torch.Tensor,
 
     Input vector layout (for the FNN) is `[primary (5), xy_flat (200)]` = 205.
     Output vector layout is `[E (100), T (100)]` = 200 (first E then T).
-    Standard deviations are floored at 1e-8 to avoid division by zero.
-    """
-    B = primary.shape[0]
-    in_vec  = torch.cat([primary, xy.reshape(B, -1)], dim=1)       # (B, 205)
-    out_vec = torch.cat([E, T], dim=1)                              # (B, 200)
 
-    in_mean  = in_vec.mean(dim=0)
-    in_std   = in_vec.std(dim=0).clamp(min=1e-16)
-    out_mean = out_vec.mean(dim=0)
-    out_std  = out_vec.std(dim=0).clamp(min=1e-16)
+    For the input, primary features (5) keep per-feature stats, but all xy
+    slots share one (mean_x, std_x, mean_y, std_y) pair — otherwise
+    permutation augmentation creates a train/val z-score mismatch.
+    Likewise the output uses one shared (mean, std) for all E slots and
+    one for all T slots.
+    """
+    n_det = E.shape[1]
+
+    # ── Input: primary per-feature, xy shared across detectors ──────────
+    p_mean = primary.mean(dim=0)                                    # (5,)
+    p_std  = primary.std(dim=0).clamp(min=1e-10)                     # (5,)
+
+    # One scalar mean/std for x coords, one for y coords
+    xy_x = xy[..., 0]                                               # (B, n_det)
+    xy_y = xy[..., 1]                                               # (B, n_det)
+    x_mean = xy_x.mean();  x_std = xy_x.std()
+    y_mean = xy_y.mean();  y_std = xy_y.std()
+
+    # Broadcast to the full (205,) layout: [primary(5), x0,y0,x1,y1,...,x99,y99]
+    xy_mean = torch.stack([x_mean.expand(n_det),
+                           y_mean.expand(n_det)], dim=-1).reshape(-1)   # (200,)
+    xy_std  = torch.stack([x_std.expand(n_det),
+                           y_std.expand(n_det)], dim=-1).reshape(-1)    # (200,)
+
+    in_mean = torch.cat([p_mean, xy_mean])                          # (205,)
+    in_std  = torch.cat([p_std,  xy_std])                           # (205,)
+
+    # ── Output: one shared stat for all E slots, one for all T slots ────
+    E_mean = E.mean();  E_std = E.std()
+    T_mean = T.mean();  T_std = T.std()
+
+    out_mean = torch.cat([E_mean.expand(n_det),
+                          T_mean.expand(n_det)])                    # (200,)
+    out_std  = torch.cat([E_std.expand(n_det),
+                          T_std.expand(n_det)])                     # (200,)
 
     return dict(
         in_mean=in_mean,   in_std=in_std,
