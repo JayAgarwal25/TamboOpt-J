@@ -63,7 +63,7 @@ from modules_v4.tr_geometry      import load_tr_mountain
 # ── Config ───────────────────────────────────────────────────────────────────
 OPT_DIR = os.path.join(_HERE, "outputs", "v6_run_04_optimize")
 
-N_OPT_EPOCHS       = 10000 #TODO 1000
+N_OPT_EPOCHS       = 10000 
 PRIMARIES_PER_STEP = 256
 LR                 = 1              # v3/v4 use lr=10; MLP Jacobian is larger
 GRAD_CLIP          = 100.0
@@ -290,7 +290,7 @@ def main():
         u_phi   = U_angle(phi_pred,   phi_true,   r)
         u_e     = U_E    (E_pred_phys, E_true,    r)
         u_pr    = U_PR(r)
-        U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e + W_PR * u_pr) / W_DIV
+        U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e ) / W_DIV
         loss = -U
 
         optimizer.zero_grad(set_to_none=True)

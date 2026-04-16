@@ -155,10 +155,16 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
             lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
             axes[0].plot(lb_ep, [e["loss"]  for e in lbfgs_iter_log],
                          label="L-BFGS train", alpha=0.7)
+            axes[0].plot(lb_ep, [e["val"]   for e in lbfgs_iter_log],
+                         label="L-BFGS val", alpha=0.7)
             axes[1].plot(lb_ep, [e["mse_E"] for e in lbfgs_iter_log],
                          label="L-BFGS train E", linestyle="--", alpha=0.7)
             axes[1].plot(lb_ep, [e["mse_T"] for e in lbfgs_iter_log],
                          label="L-BFGS train T", linestyle="--", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_E"] for e in lbfgs_iter_log],
+                         label="L-BFGS val E", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_T"] for e in lbfgs_iter_log],
+                         label="L-BFGS val T", alpha=0.7)
 
         if adam_epochs > 0:
             for ax in axes:
@@ -169,6 +175,7 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
         axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend()
         axes[1].set_xlabel("epoch / iter"); axes[1].set_ylabel("MSE (z-scored)")
         axes[1].set_title("per-channel"); axes[1].grid(alpha=0.3); axes[1].legend()
+        axes[0].set_yscale("log"); axes[1].set_yscale("log")
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
@@ -371,12 +378,34 @@ def main():
             pred, E_all_train, T_all_train, model.out_mean, model.out_std,
         )
         loss.backward()
+        # Validation (no_grad — does not affect L-BFGS gradients)
+        with torch.no_grad():
+            va_tot, va_E, va_T, n_va = 0.0, 0.0, 0.0, 0
+            for p_b, xy_b, E_b, T_b in val_loader:
+                p_b  = p_b.to(DEVICE, non_blocking=True)
+                xy_b = xy_b.to(DEVICE, non_blocking=True)
+                E_b  = E_b.to(DEVICE, non_blocking=True)
+                T_b  = T_b.to(DEVICE, non_blocking=True)
+                v_pred = model(p_b, xy_b)
+                v_loss, v_mE, v_mT = mse_normalized(
+                    v_pred, E_b, T_b, model.out_mean, model.out_std,
+                )
+                B = p_b.shape[0]
+                va_tot += v_loss.item() * B
+                va_E   += v_mE.item()   * B
+                va_T   += v_mT.item()   * B
+                n_va   += B
+            va_tot /= max(n_va, 1)
+            va_E   /= max(n_va, 1)
+            va_T   /= max(n_va, 1)
         it = len(lbfgs_iter_log)
         lbfgs_iter_log.append(dict(
             iter=it, loss=loss.item(), mse_E=mE.item(), mse_T=mT.item(),
+            val=va_tot, val_E=va_E, val_T=va_T,
         ))
         print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
-              f"(E={mE.item():.6f} T={mT.item():.6f})")
+              f"(E={mE.item():.6f} T={mT.item():.6f})  "
+              f"val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f})")
         return loss
 
     final_loss = lbfgs_optimizer.step(closure)
