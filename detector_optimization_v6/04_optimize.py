@@ -85,12 +85,6 @@ SAVE_EVERY = 50
 SEED       = 42
 DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
-LBFGS_PRIMARIES          = 4096   # larger primary batch for stable curvature
-LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 100
-LBFGS_HISTORY_SIZE       = 50     # only 200 params, cheap
-
 
 def primary_to_physical_labels(primary: torch.Tensor):
     """(B, 5) -> (E_GeV, θ_rad, φ_rad)."""
@@ -108,7 +102,7 @@ def primary_to_physical_labels(primary: torch.Tensor):
     return E_gev, theta, phi
 
 
-def _plot_curves(log, path: str, adam_epochs: int = 0) -> None:
+def _plot_curves(log, path: str) -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -124,12 +118,6 @@ def _plot_curves(log, path: str, adam_epochs: int = 0) -> None:
         axes[1].plot(ep, [e["r_mean"]  for e in log], label="r_mean", linestyle="--")
         axes[1].set_xlabel("epoch"); axes[1].set_ylabel("component")
         axes[1].set_title("components"); axes[1].grid(alpha=0.3); axes[1].legend()
-        if adam_epochs > 0:
-            for ax in axes:
-                ax.axvline(adam_epochs, color="gray", linestyle="--", alpha=0.5,
-                           label="Adam\u2192L-BFGS")
-            axes[0].legend()
-            axes[1].legend()
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
@@ -387,175 +375,6 @@ def main():
         }, f, indent=2)
 
     _plot_curves(log, os.path.join(OPT_DIR, "optimize_curves.png"))
-    print(f"[adam done] best U {best_u:+.3f} at epoch {best_epoch}")
-
-    # ── Phase 2: L-BFGS fine-tuning (full primary batch) ──────────────────
-    print("\n" + "=" * 72)
-    print("Phase 2: L-BFGS fine-tuning")
-    print("=" * 72)
-
-    adam_layout = torch.load(os.path.join(OPT_DIR, "layout_best.pt"), map_location=DEVICE)
-    with torch.no_grad():
-        xy_module.x.data.copy_(adam_layout["x"].to(DEVICE))
-        xy_module.y.data.copy_(adam_layout["y"].to(DEVICE))
-    adam_best_u = adam_layout["U"]
-    print(f"[lbfgs] loaded Adam best layout  epoch={adam_layout['epoch']}  "
-          f"U={adam_best_u:+.3f}")
-
-    # Fixed primary batch for deterministic closure
-    torch.manual_seed(SEED + 1)
-    lbfgs_idx = torch.randint(0, n_total_primaries, (LBFGS_PRIMARIES,))
-    lbfgs_primary = primary_all[lbfgs_idx].to(DEVICE)
-    lbfgs_E_true, lbfgs_theta_true, lbfgs_phi_true = primary_to_physical_labels(lbfgs_primary)
-    B_lbfgs = LBFGS_PRIMARIES
-    print(f"[lbfgs] {B_lbfgs} primaries on {DEVICE}")
-
-    lbfgs_optimizer = torch.optim.LBFGS(
-        xy_module.parameters(),
-        lr=LBFGS_LR,
-        max_iter=LBFGS_MAX_ITER,
-        history_size=LBFGS_HISTORY_SIZE,
-        line_search_fn="strong_wolfe",
-    )
-
-    lbfgs_iter_log = []
-    t_lbfgs = time.time()
-
-    def closure():
-        lbfgs_optimizer.zero_grad()
-        x_det, y_det = xy_module()
-        xy_per_det = torch.stack([x_det, y_det], dim=-1)
-        xy_batch = xy_per_det.unsqueeze(0).expand(B_lbfgs, -1, -1)
-
-        pred_ET = fnn(lbfgs_primary, xy_batch)
-        E_pred_det = pred_ET[..., 0]
-        T_pred_det = pred_ET[..., 1]
-
-        recon_feats = torch.stack(
-            [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
-            dim=-1,
-        )
-        recon_input = recon_feats.reshape(B_lbfgs, -1)
-        recon_input = (recon_input - recon_in_mean) / recon_in_std
-        pred_norm = recon(recon_input)
-        E_norm, theta_norm, phi_norm = pred_norm[:, 0], pred_norm[:, 1], pred_norm[:, 2]
-
-        E_pred_phys, theta_pred, phi_pred = DenormalizeLabels(E_norm, theta_norm, phi_norm)
-        E_pred_phys = E_pred_phys.clamp(min=1.0)
-
-        r = reconstructability(
-            torch.expm1(E_pred_det),
-            layout_threshold=LAYOUT_THRESHOLD,
-            reconstruct_threshold=RECONSTRUCT_THRESHOLD,
-        )
-
-        u_theta = U_angle(theta_pred, lbfgs_theta_true, r)
-        u_phi   = U_angle(phi_pred,   lbfgs_phi_true,   r)
-        u_e     = U_E    (E_pred_phys, lbfgs_E_true,    r)
-        u_pr    = U_PR(r)
-        U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e + W_PR * u_pr) / W_DIV
-        loss = -U
-        loss.backward()
-
-        it = len(lbfgs_iter_log)
-        lbfgs_iter_log.append(dict(
-            iter=it, U=U.item(), loss=loss.item(),
-            u_theta=u_theta.item(), u_phi=u_phi.item(),
-            u_e=u_e.item(), u_pr=u_pr.item(), r_mean=r.mean().item(),
-        ))
-        print(f"  [lbfgs iter {it:3d}] U={U.item():+.4f} "
-              f"(\u03b8={u_theta.item():.3f} \u03c6={u_phi.item():.3f} "
-              f"E={u_e.item():.3f} PR={u_pr.item():.3f})  r={r.mean().item():.3f}")
-        return loss
-
-    final_loss = lbfgs_optimizer.step(closure)
-
-    dt_lbfgs = time.time() - t_lbfgs
-    n_iters = len(lbfgs_iter_log)
-    lbfgs_abort = torch.isnan(final_loss) or torch.isinf(final_loss)
-
-    if lbfgs_abort:
-        print(f"[lbfgs] ABORT — NaN/Inf after {n_iters} iters")
-        with torch.no_grad():
-            xy_module.x.data.copy_(adam_layout["x"].to(DEVICE))
-            xy_module.y.data.copy_(adam_layout["y"].to(DEVICE))
-
-    # Project to mountain
-    with torch.no_grad():
-        N_cpu  = xy_module.x.detach().cpu()
-        Up_cpu = xy_module.y.detach().cpu()
-        N_new, Up_new = mountain.project_to_mountain(N_cpu, Up_cpu)
-        xy_module.x.data.copy_(N_new.to(DEVICE).to(xy_module.x.dtype))
-        xy_module.y.data.copy_(Up_new.to(DEVICE).to(xy_module.y.dtype))
-
-    print(f"[lbfgs] {n_iters} iterations in {dt_lbfgs:.1f}s")
-
-    # Check if L-BFGS improved (evaluate on a fresh sample for fair comparison)
-    if not lbfgs_abort and lbfgs_iter_log:
-        lbfgs_final_U = lbfgs_iter_log[-1]["U"]
-        if lbfgs_final_U > best_u:
-            best_u = lbfgs_final_U
-            best_epoch = N_OPT_EPOCHS + 1
-            torch.save({
-                "x": xy_module.x.detach().cpu(),
-                "y": xy_module.y.detach().cpu(),
-                "epoch": N_OPT_EPOCHS + 1,
-                "phase": "lbfgs",
-                "U": lbfgs_final_U,
-            }, os.path.join(OPT_DIR, "layout_best.pt"))
-            print(f"[lbfgs] new best U={lbfgs_final_U:+.4f}  (Adam was {adam_best_u:+.4f})")
-        else:
-            print(f"[lbfgs] no improvement  U={lbfgs_final_U:+.4f} vs Adam {adam_best_u:+.4f}")
-            with torch.no_grad():
-                xy_module.x.data.copy_(adam_layout["x"].to(DEVICE))
-                xy_module.y.data.copy_(adam_layout["y"].to(DEVICE))
-
-    # Re-save final layout and merged log
-    x_final = xy_module.x.detach().cpu().numpy()
-    y_final = xy_module.y.detach().cpu().numpy()
-    torch.save({
-        "x": torch.as_tensor(x_final),
-        "y": torch.as_tensor(y_final),
-        "epoch": N_OPT_EPOCHS + 1,
-        "U_final": best_u,
-    }, os.path.join(OPT_DIR, "layout_final.pt"))
-
-    # Append a single summary entry for the L-BFGS phase to the main log
-    if lbfgs_iter_log:
-        log.append(dict(
-            epoch=N_OPT_EPOCHS + 1, phase="lbfgs",
-            U=lbfgs_iter_log[-1]["U"],
-            u_theta=lbfgs_iter_log[-1]["u_theta"],
-            u_phi=lbfgs_iter_log[-1]["u_phi"],
-            u_e=lbfgs_iter_log[-1]["u_e"],
-            u_pr=lbfgs_iter_log[-1]["u_pr"],
-            r_mean=lbfgs_iter_log[-1]["r_mean"],
-            grad_norm=0.0, dt=dt_lbfgs,
-        ))
-
-    with open(os.path.join(OPT_DIR, "optimize_log.json"), "w") as f:
-        json.dump({
-            "log": log,
-            "lbfgs_iter_log": lbfgs_iter_log,
-            "best_U": best_u,
-            "best_epoch": best_epoch,
-            "adam_best_U": adam_best_u,
-            "config": dict(
-                n_opt_epochs=N_OPT_EPOCHS,
-                primaries_per_step=PRIMARIES_PER_STEP,
-                lr=LR, grad_clip=GRAD_CLIP,
-                layout_init_scheme=LAYOUT_INIT_SCHEME,
-                w_theta=W_THETA, w_phi=W_PHI, w_e=W_E, w_pr=W_PR, w_div=W_DIV,
-                layout_threshold=LAYOUT_THRESHOLD,
-                reconstruct_threshold=RECONSTRUCT_THRESHOLD,
-                seed=SEED,
-                lbfgs_primaries=LBFGS_PRIMARIES, lbfgs_lr=LBFGS_LR,
-                lbfgs_max_iter=LBFGS_MAX_ITER, lbfgs_history_size=LBFGS_HISTORY_SIZE,
-            ),
-        }, f, indent=2)
-
-    _plot_curves(log, os.path.join(OPT_DIR, "optimize_curves.png"),
-                 adam_epochs=N_OPT_EPOCHS)
     _plot_layout(
         x_final, y_final, N_init_plot, U_init_plot, mountain,
         os.path.join(OPT_DIR, "layout_before_after.png"),
