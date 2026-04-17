@@ -16,7 +16,7 @@ import os
 import sys
 import time
 
-# Make `modules_v6` importable when running this file from the v6 folder
+# Make `modules_v6` importable when running this file from the external folder
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)

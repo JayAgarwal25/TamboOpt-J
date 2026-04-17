@@ -63,11 +63,11 @@ from modules_v4.tr_geometry      import load_tr_mountain
 # ── Config ───────────────────────────────────────────────────────────────────
 OPT_DIR = os.path.join(_HERE, "outputs", "v6_run_04_optimize")
 
-N_OPT_EPOCHS       = 10000 
+N_OPT_EPOCHS       = 1000000 
 PRIMARIES_PER_STEP = 256
 LR                 = 1              # v3/v4 use lr=10; MLP Jacobian is larger
 GRAD_CLIP          = 100.0
-LAYOUT_INIT_SCHEME = "center"           # grid | center | random
+LAYOUT_INIT_SCHEME = "grid"           # grid | center | random
 
 # Utility composite weights (match v4: (1e2·U_θ + 1e2·U_φ + 1e3·U_E + 5e5·U_PR) / 1e3)
 W_THETA = 1e2

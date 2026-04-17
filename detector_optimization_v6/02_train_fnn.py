@@ -428,33 +428,14 @@ def main():
     lbfgs_log = []
 
     if not lbfgs_abort:
-        va_tot, va_E, va_T, n_va = 0.0, 0.0, 0.0, 0
-        with torch.no_grad():
-            for p_b, xy_b, E_b, T_b in val_loader:
-                p_b  = p_b.to(DEVICE, non_blocking=True)
-                xy_b = xy_b.to(DEVICE, non_blocking=True)
-                E_b  = E_b.to(DEVICE, non_blocking=True)
-                T_b  = T_b.to(DEVICE, non_blocking=True)
-                pred = model(p_b, xy_b)
-                loss, mE, mT = mse_normalized(
-                    pred, E_b, T_b, model.out_mean, model.out_std,
-                )
-                B = p_b.shape[0]
-                va_tot += loss.item() * B
-                va_E   += mE.item()   * B
-                va_T   += mT.item()   * B
-                n_va   += B
-        va_tot /= max(n_va, 1)
-        va_E   /= max(n_va, 1)
-        va_T   /= max(n_va, 1)
+        last = lbfgs_iter_log[-1]
+        va_tot, va_E, va_T = last["val"], last["val_E"], last["val_T"]
 
         print(f"[lbfgs val] val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f})")
 
         lbfgs_log.append(dict(
             epoch=N_EPOCHS + 1, phase="lbfgs",
-            train=lbfgs_iter_log[-1]["loss"],
-            train_E=lbfgs_iter_log[-1]["mse_E"],
-            train_T=lbfgs_iter_log[-1]["mse_T"],
+            train=last["loss"], train_E=last["mse_E"], train_T=last["mse_T"],
             val=va_tot, val_E=va_E, val_T=va_T, dt=dt_lbfgs,
         ))
 

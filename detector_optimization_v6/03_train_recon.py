@@ -536,40 +536,17 @@ def main():
     lbfgs_log = []
 
     if not lbfgs_abort:
-        va_tot, va_E, va_th, va_ph, n_va = 0.0, 0.0, 0.0, 0.0, 0
-        with torch.no_grad():
-            for xy_b, E_b, T_b, tgt_b in val_loader:
-                xy_b  = xy_b.to(DEVICE, non_blocking=True)
-                E_b   = E_b.to(DEVICE,  non_blocking=True)
-                T_b   = T_b.to(DEVICE,  non_blocking=True)
-                tgt_b = tgt_b.to(DEVICE, non_blocking=True)
-                inp  = build_recon_input(xy_b, E_b, T_b)
-                inp  = (inp - in_mean) / in_std
-                pred = recon(inp)
-                l_E  = F.mse_loss(pred[:, 0], tgt_b[:, 0])
-                l_th = F.mse_loss(pred[:, 1], tgt_b[:, 1])
-                l_ph = F.mse_loss(pred[:, 2], tgt_b[:, 2])
-                l    = l_E + l_th + l_ph
-                B = xy_b.shape[0]
-                va_tot += l.item()    * B
-                va_E   += l_E.item()  * B
-                va_th  += l_th.item() * B
-                va_ph  += l_ph.item() * B
-                n_va   += B
-        va_tot /= max(n_va, 1)
-        va_E   /= max(n_va, 1)
-        va_th  /= max(n_va, 1)
-        va_ph  /= max(n_va, 1)
+        last = lbfgs_iter_log[-1]
+        va_tot = last["val"]
+        va_E, va_th, va_ph = last["val_E"], last["val_th"], last["val_ph"]
 
         print(f"[lbfgs val] val={va_tot:.6f} "
               f"(E={va_E:.6f} \u03b8={va_th:.6f} \u03c6={va_ph:.6f})")
 
         lbfgs_log.append(dict(
             epoch=N_EPOCHS + 1, phase="lbfgs",
-            train=lbfgs_iter_log[-1]["loss"],
-            train_E=lbfgs_iter_log[-1]["mse_E"],
-            train_th=lbfgs_iter_log[-1]["mse_th"],
-            train_ph=lbfgs_iter_log[-1]["mse_ph"],
+            train=last["loss"],
+            train_E=last["mse_E"], train_th=last["mse_th"], train_ph=last["mse_ph"],
             val=va_tot, val_E=va_E, val_th=va_th, val_ph=va_ph,
             dt=dt_lbfgs,
         ))
