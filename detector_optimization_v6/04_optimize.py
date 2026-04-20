@@ -54,7 +54,7 @@ from modules_v6.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
 )
-from modules.reconstruction      import Reconstruction, DenormalizeLabels
+from modules_v6.reconstruction   import Reconstruction
 from modules.utility_functions   import reconstructability, U_E, U_angle, U_PR
 from modules.layout_optimization import LearnableXY
 from modules_v4.tr_geometry      import load_tr_mountain
@@ -63,11 +63,11 @@ from modules_v4.tr_geometry      import load_tr_mountain
 # ── Config ───────────────────────────────────────────────────────────────────
 OPT_DIR = os.path.join(_HERE, "outputs", "v6_run_04_optimize")
 
-N_OPT_EPOCHS       = 1000000 
+N_OPT_EPOCHS       = 10000
 PRIMARIES_PER_STEP = 256
 LR                 = 1              # v3/v4 use lr=10; MLP Jacobian is larger
 GRAD_CLIP          = 100.0
-LAYOUT_INIT_SCHEME = "grid"           # grid | center | random
+LAYOUT_INIT_SCHEME = "center"           # grid | center | random
 
 # Utility composite weights (match v4: (1e2·U_θ + 1e2·U_φ + 1e3·U_E + 5e5·U_PR) / 1e3)
 W_THETA = 1e2
@@ -94,7 +94,7 @@ def primary_to_physical_labels(primary: torch.Tensor):
     log_e_norm = primary[:, 3]
 
     log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
-    E_gev = torch.pow(10.0, log_e)
+    E_gev = torch.exp(log_e) - 1.0
     theta = torch.arccos(dir_z)
     phi   = torch.atan2(dir_y, dir_x)
     two_pi = 2.0 * math.pi
@@ -191,27 +191,22 @@ def main():
     recon_nd   = int(recon_ckpt.get("num_detectors", N_DETECTORS))
     cfg = recon_ckpt.get("config", {})
     recon = Reconstruction(
+        n_det=recon_nd,
         input_features=recon_feat,
-        num_detectors=recon_nd,
-        hidden_lay1=int(cfg.get("hidden_lay1", 256)),
-        hidden_lay2=int(cfg.get("hidden_lay2", 128)),
-        hidden_lay3=int(cfg.get("hidden_lay3", 32)),
-        output_dim=int(cfg.get("output_dim", 3)),
+        output_dim=int(cfg.get("output_dim", 4)),
+        hidden=int(cfg.get("hidden", 512)),
+        dropout=float(cfg.get("dropout", 0.1)),
     ).to(DEVICE)
     recon.load_state_dict(recon_ckpt["state_dict"])
+    recon.set_normalization(
+        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
+        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
+        out_mean = recon_ckpt["target_mean"].to(DEVICE),
+        out_std  = recon_ckpt["target_std" ].to(DEVICE),
+    )
     recon.eval()
     for p in recon.parameters():
         p.requires_grad_(False)
-    # Frozen z-score stats for the recon input (v4 pattern). Required because
-    # v3's Reconstruction has no internal normalization and mountain-scale xy
-    # would otherwise saturate its Tanh head.
-    if "input_mean" not in recon_ckpt or "input_std" not in recon_ckpt:
-        raise RuntimeError(
-            "recon.pt is missing 'input_mean'/'input_std'. "
-            "Retrain with the updated 03_train_recon.py."
-        )
-    recon_in_mean = recon_ckpt["input_mean"].to(DEVICE)
-    recon_in_std  = recon_ckpt["input_std"].to(DEVICE)
     print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
           f"val={recon_ckpt.get('val_total', recon_ckpt.get('val','?'))}  "
           f"feats/det={recon_feat}")
@@ -267,15 +262,11 @@ def main():
             [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
             dim=-1,
         )                                                                    # (B, 100, 4)
-        recon_input = recon_feats.reshape(PRIMARIES_PER_STEP, -1)             # (B, 400)
-        recon_input = (recon_input - recon_in_mean) / recon_in_std            # frozen z-score
-        pred_norm = recon(recon_input)                                        # (B, 3) tanh
-        E_norm, theta_norm, phi_norm = pred_norm[:, 0], pred_norm[:, 1], pred_norm[:, 2]
-
-        # Denormalize + clamp E to the training support [1e5, 1e8] GeV. The
-        # clamp prevents log10 of negative numbers when Tanh emits values <0
-        # for the E channel. Clamp is differentiable on the active side.
-        E_pred_phys, theta_pred, phi_pred = DenormalizeLabels(E_norm, theta_norm, phi_norm)
+        recon_input = recon_feats.reshape(PRIMARIES_PER_STEP, -1)             # (B, 400) raw
+        pred = recon(recon_input)                                             # (B, 4) raw primary encoding
+        # pred columns: [dir_x, dir_y, dir_z, log_e_norm] — same layout as
+        # primary[:, :4], so primary_to_physical_labels decodes it directly.
+        E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
         E_pred_phys = E_pred_phys.clamp(min=1.0)
 
         # Reconstructability from the predicted per-detector counts (physical space)

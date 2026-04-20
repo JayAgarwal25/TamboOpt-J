@@ -46,9 +46,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
-import modules_v6   # sys.path injection for v3 + v4
-from modules_v6.fnn_surrogate import FNNSurrogate
-from modules.reconstruction   import Reconstruction
+import modules_v6   # sys.path injection for v3 + v4 (also used at import time)
+from modules_v6.fnn_surrogate  import FNNSurrogate
+from modules_v6.reconstruction import Reconstruction
 from modules_v6.constants import (
     RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
     N_DETECTORS, PRIMARY_DIM,
@@ -149,24 +149,6 @@ def build_recon_input(xy: torch.Tensor,
     return feats.reshape(feats.shape[0], -1)
 
 
-def compute_recon_input_stats(xy: torch.Tensor,
-                              E:  torch.Tensor,
-                              T:  torch.Tensor
-                              ) -> "tuple[torch.Tensor, torch.Tensor]":
-    """Z-score stats over the (x, y, E_pred, T_pred) flat input.
-
-    v3's `Reconstruction` has no internal normalization — raw mountain-scale
-    xy would saturate Tanh. v4's optimization driver solves this by z-scoring
-    the per-detector feature vector with FROZEN training-time stats. We do
-    the same here: stats are computed once over the recon training corpus
-    and saved alongside the checkpoint.
-    """
-    flat = build_recon_input(xy, E, T)                       # (N, 400)
-    mean = flat.mean(dim=0)
-    std  = flat.std(dim=0).clamp(min=1e-8)
-    return mean, std
-
-
 def _plot_curves(log, path: str, adam_epochs: int = 0,
                  lbfgs_iter_log=None) -> None:
     try:
@@ -263,19 +245,14 @@ def main():
           f"E mean={E_pred.mean():.3g} std={E_pred.std():.3g}  "
           f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
 
-    # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm],
-    # z-scored with the FNN's per-feature primary stats (slots 0..4 of norm_stats
-    # are the per-feature primary stats; slot 4 = pdg is dropped).
-    target_raw = primary[:, :4].clone().float()                              # (N, 4)
-    tgt_mean   = norm_stats["in_mean"][:4].float()                           # (4,)
-    tgt_std    = norm_stats["in_std" ][:4].float().clamp(min=1e-8)           # (4,)
-    target     = (target_raw - tgt_mean) / tgt_std                           # (N, 4)
+    # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw units.
+    # z-score stats reuse the FNN's per-feature primary stats (slots 0..3 of norm_stats;
+    # slot 4 = pdg is dropped). These get baked into the Reconstruction model via
+    # `set_normalization(...)`, so training/validation MSE is computed in raw units.
+    target   = primary[:, :4].clone().float()                                # (N, 4)
+    tgt_mean = norm_stats["in_mean"][:4].float()                             # (4,)
+    tgt_std  = norm_stats["in_std" ][:4].float().clamp(min=1e-8)             # (4,)
     print(f"[target raw] "
-          f"dx in [{target_raw[:,0].min():.3f}, {target_raw[:,0].max():.3f}]  "
-          f"dy in [{target_raw[:,1].min():.3f}, {target_raw[:,1].max():.3f}]  "
-          f"dz in [{target_raw[:,2].min():.3f}, {target_raw[:,2].max():.3f}]  "
-          f"logE in [{target_raw[:,3].min():.3f}, {target_raw[:,3].max():.3f}]")
-    print(f"[target z  ] "
           f"dx in [{target[:,0].min():.3f}, {target[:,0].max():.3f}]  "
           f"dy in [{target[:,1].min():.3f}, {target[:,1].max():.3f}]  "
           f"dz in [{target[:,2].min():.3f}, {target[:,2].max():.3f}]  "
@@ -286,17 +263,34 @@ def main():
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
     print(f"[split] train pairs={len(train_idx)}  val pairs={len(val_idx)}")
 
-    # Compute recon input stats over the TRAIN subset only — these are frozen
-    # and reused by 04_optimize.py so mountain-scale xy doesn't saturate Tanh.
-    in_mean, in_std = compute_recon_input_stats(
-        xy[train_idx], E_pred[train_idx], T_pred[train_idx],
-    )
-    print(f"[norm] recon in_mean[:4] = {in_mean[:4].tolist()}  "
-          f"in_std[:4] = {in_std[:4].tolist()}")
-    in_mean  = in_mean.to(DEVICE)
-    in_std   = in_std.to(DEVICE)
-    tgt_mean = tgt_mean.to(DEVICE)
-    tgt_std  = tgt_std.to(DEVICE)
+    # Reuse the FNN's dataset-wide stats (norm_stats.pt) instead of recomputing
+    # over the train subset — keeps train/val/04_optimize on a single z-score.
+    # norm_stats layout:
+    #   in_mean  : (205,) = [primary(5), x0, y0, x1, y1, ..., x99, y99]
+    #   out_mean : (200,) = [E(100), T(100)]
+    # xy are broadcast (same stat every slot) and so are E/T, so one scalar each.
+    fnn_in_mean  = norm_stats["in_mean" ].float()
+    fnn_in_std   = norm_stats["in_std"  ].float()
+    fnn_out_mean = norm_stats["out_mean"].float()
+    fnn_out_std  = norm_stats["out_std" ].float()
+    per_det_mean = torch.stack([
+        fnn_in_mean[5],           # x
+        fnn_in_mean[6],           # y
+        fnn_out_mean[0],          # E
+        fnn_out_mean[N_DETECTORS],# T
+    ])
+    per_det_std = torch.stack([
+        fnn_in_std[5],
+        fnn_in_std[6],
+        fnn_out_std[0],
+        fnn_out_std[N_DETECTORS],
+    ]).clamp(min=1e-8)
+    in_mean = per_det_mean.repeat(N_DETECTORS)   # (400,)
+    in_std  = per_det_std.repeat(N_DETECTORS)
+    print(f"[norm] recon per-det stats (from norm_stats.pt)  "
+          f"mean={per_det_mean.tolist()}  std={per_det_std.tolist()}")
+    # No .to(DEVICE) needed here — stats are pushed to the model via
+    # `set_normalization(...)` and live on the model's device as buffers.
 
     full_ds  = TensorDataset(xy, E_pred, T_pred, target)
     train_ds = Subset(full_ds, train_idx.tolist())
@@ -307,14 +301,23 @@ def main():
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,
                               num_workers=NUM_WORKERS, pin_memory=pin)
 
-    # Model
+    # Model — v6 Reconstruction mirrors FNNSurrogate's architecture and
+    # normalization contract (hidden=512x3, dropout=0.1, z-score baked into
+    # forward via registered buffers).
     torch.manual_seed(SEED)
     recon = Reconstruction(
+        n_det=N_DETECTORS,
         input_features=RECON_INPUT_FEATURES,
-        num_detectors=N_DETECTORS,
-        hidden_lay1=256, hidden_lay2=128, hidden_lay3=32,
         output_dim=4,
+        hidden=512,
+        dropout=0.1,
     ).to(DEVICE)
+    recon.set_normalization(
+        in_mean  = in_mean.to(DEVICE),
+        in_std   = in_std.to(DEVICE),
+        out_mean = tgt_mean.to(DEVICE),
+        out_std  = tgt_std.to(DEVICE),
+    )
     n_params = sum(p.numel() for p in recon.parameters() if p.requires_grad)
     print(f"[model] recon params={n_params:,}")
 
@@ -337,9 +340,8 @@ def main():
             # Permutation augmentation (input-only; target stays fixed)
             xy_b, E_b, T_b = permute_detectors_recon(xy_b, E_b, T_b)
 
-            inp  = build_recon_input(xy_b, E_b, T_b)   # (B, 400)
-            inp  = (inp - in_mean) / in_std             # frozen z-score
-            pred = recon(inp)                           # (B, 4) tanh
+            inp  = build_recon_input(xy_b, E_b, T_b)   # (B, 400) raw
+            pred = recon(inp)                           # (B, 4) raw primary units
             l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
             l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
             l_dz = F.mse_loss(pred[:, 2], tgt_b[:, 2])
@@ -373,7 +375,6 @@ def main():
                 T_b   = T_b.to(DEVICE,  non_blocking=True)
                 tgt_b = tgt_b.to(DEVICE, non_blocking=True)
                 inp  = build_recon_input(xy_b, E_b, T_b)
-                inp  = (inp - in_mean) / in_std
                 pred = recon(inp)
                 l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
                 l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
@@ -421,7 +422,7 @@ def main():
                 "target_mean": tgt_mean.detach().cpu(),
                 "target_std":  tgt_std.detach().cpu(),
                 "config": dict(
-                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=4,
+                    hidden=512, n_hidden_layers=3, dropout=0.1, output_dim=4,
                 ),
             }, os.path.join(RECON_FOLDER, "recon.pt"))
 
@@ -453,14 +454,13 @@ def main():
     # eval() disables dropout; requires_grad stays True
     recon.eval()
 
-    # Move full training set to GPU and pre-compute normalized input
-    xy_train = xy[train_idx].to(DEVICE)
-    E_train  = E_pred[train_idx].to(DEVICE)
-    T_train  = T_pred[train_idx].to(DEVICE)
+    # Move full training set to GPU and pre-compute raw flat input (model does z-score).
+    xy_train  = xy[train_idx].to(DEVICE)
+    E_train   = E_pred[train_idx].to(DEVICE)
+    T_train   = T_pred[train_idx].to(DEVICE)
     tgt_train = target[train_idx].to(DEVICE)
-    inp_all  = build_recon_input(xy_train, E_train, T_train)
-    inp_all_n = (inp_all - in_mean) / in_std
-    del xy_train, E_train, T_train, inp_all  # free intermediates
+    inp_all   = build_recon_input(xy_train, E_train, T_train)
+    del xy_train, E_train, T_train  # free intermediates
     print(f"[lbfgs] full train batch on {DEVICE}: {tgt_train.shape[0]} samples")
 
     lbfgs_optimizer = torch.optim.LBFGS(
@@ -476,7 +476,7 @@ def main():
 
     def closure():
         lbfgs_optimizer.zero_grad()
-        pred = recon(inp_all_n)
+        pred = recon(inp_all)
         l_dx = F.mse_loss(pred[:, 0], tgt_train[:, 0])
         l_dy = F.mse_loss(pred[:, 1], tgt_train[:, 1])
         l_dz = F.mse_loss(pred[:, 2], tgt_train[:, 2])
@@ -492,7 +492,6 @@ def main():
                 T_b   = T_b.to(DEVICE,  non_blocking=True)
                 tgt_b = tgt_b.to(DEVICE, non_blocking=True)
                 inp  = build_recon_input(xy_b, E_b, T_b)
-                inp  = (inp - in_mean) / in_std
                 v_pred = recon(inp)
                 v_dx = F.mse_loss(v_pred[:, 0], tgt_b[:, 0])
                 v_dy = F.mse_loss(v_pred[:, 1], tgt_b[:, 1])
@@ -528,7 +527,7 @@ def main():
     final_loss = lbfgs_optimizer.step(closure)
 
     # Free GPU memory
-    del inp_all_n, tgt_train
+    del inp_all, tgt_train
 
     dt_lbfgs = time.time() - t_lbfgs
     n_iters = len(lbfgs_iter_log)
@@ -581,7 +580,7 @@ def main():
                 "target_mean": tgt_mean.detach().cpu(),
                 "target_std":  tgt_std.detach().cpu(),
                 "config": dict(
-                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=4,
+                    hidden=512, n_hidden_layers=3, dropout=0.1, output_dim=4,
                 ),
             }, os.path.join(RECON_FOLDER, "recon.pt"))
             print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")

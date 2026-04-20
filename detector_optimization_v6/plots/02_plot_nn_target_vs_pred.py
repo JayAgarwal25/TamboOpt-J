@@ -6,9 +6,10 @@ shower-level validation split, and saves scatter plots of target vs
 prediction with a 1:1 reference line.
 
 FNN plot        : flattened (E, T) over all detectors in the val split.
-Recon plot      : normalized (E, theta, phi) over the val split. The recon
-                  runs on FNN-predicted (E, T) rather than ground truth, so
-                  the scatter reflects the end-to-end FNN -> recon error.
+Recon plot      : raw primary encoding (dir_x, dir_y, dir_z, log_e_norm) over
+                  the val split. The recon runs on FNN-predicted (E, T) rather
+                  than ground truth, so the scatter reflects the end-to-end
+                  FNN -> recon error.
 
 Artifacts:
     outputs/fnn_target_vs_pred.png
@@ -19,7 +20,6 @@ Run from the v6 folder:
     cd TambOpt/detector_optimization_v6
     python plots/02_plot_nn_target_vs_pred.py
 """
-import math
 import os
 import sys
 
@@ -37,9 +37,9 @@ import modules_v6  # noqa: F401 — triggers sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate import FNNSurrogate
 from modules_v6.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
-    N_DETECTORS, PRIMARY_DIM, LOG_E_MIN, LOG_E_MAX,
+    N_DETECTORS, PRIMARY_DIM,
 )
-from modules.reconstruction import Reconstruction, NormalizeLabels
+from modules_v6.reconstruction import Reconstruction
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,22 +70,6 @@ def shower_level_val_idx(strategy_ids: torch.Tensor,
     shower_of_pair = all_idx - strategy_ids * n_showers
     val_mask = is_val[shower_of_pair]
     return torch.nonzero(val_mask).squeeze(-1)
-
-
-def primary_to_physical_labels(primary: torch.Tensor):
-    """Same mapping as 03_train_recon.py so NormalizeLabels receives the
-    physical (E_GeV, theta, phi) that the recon was trained against."""
-    dir_x = primary[:, 0]
-    dir_y = primary[:, 1]
-    dir_z = primary[:, 2].clamp(-1.0, 1.0)
-    log_e_norm = primary[:, 3]
-    log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
-    E_gev = torch.pow(10.0, log_e)
-    theta = torch.arccos(dir_z)
-    phi = torch.atan2(dir_y, dir_x)
-    two_pi = 2.0 * math.pi
-    phi = torch.where(phi < 0, phi + two_pi, phi)
-    return E_gev, theta, phi
 
 
 def _scatter(ax, x, y, title: str):
@@ -152,17 +136,20 @@ def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
     recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
     cfg = recon_ckpt.get("config", {})
     recon = Reconstruction(
+        n_det=int(recon_ckpt["num_detectors"]),
         input_features=int(recon_ckpt["input_features"]),
-        num_detectors=int(recon_ckpt["num_detectors"]),
-        hidden_lay1=cfg.get("hidden_lay1", 256),
-        hidden_lay2=cfg.get("hidden_lay2", 128),
-        hidden_lay3=cfg.get("hidden_lay3", 32),
-        output_dim=cfg.get("output_dim", 3),
+        output_dim=int(cfg.get("output_dim", 4)),
+        hidden=int(cfg.get("hidden", 512)),
+        dropout=float(cfg.get("dropout", 0.1)),
     ).to(DEVICE)
     recon.load_state_dict(recon_ckpt["state_dict"])
+    recon.set_normalization(
+        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
+        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
+        out_mean = recon_ckpt["target_mean"].to(DEVICE),
+        out_std  = recon_ckpt["target_std" ].to(DEVICE),
+    )
     recon.eval()
-    in_mean = recon_ckpt["input_mean"].to(DEVICE)
-    in_std  = recon_ckpt["input_std"].to(DEVICE)
     print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
           f"val={recon_ckpt.get('val_total','?')}")
 
@@ -172,11 +159,11 @@ def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
     # Recon sees FNN predictions, not ground-truth (E, T) — same as 04_optimize.
     E_pred, T_pred = fnn_predict(fnn, p, x)
 
-    E_gev, theta, phi = primary_to_physical_labels(p)
-    E_n_t, th_n_t, ph_n_t = NormalizeLabels(E_gev, theta, phi)
+    # Target = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw units.
+    target = p[:, :4].float()
 
     N = p.shape[0]
-    pred_n = torch.empty((N, 3), dtype=torch.float32)
+    pred = torch.empty((N, 4), dtype=torch.float32)
     with torch.no_grad():
         for lo in range(0, N, BATCH):
             hi = min(lo + BATCH, N)
@@ -185,13 +172,12 @@ def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
             T_b  = T_pred[lo:hi].to(DEVICE)
             feats = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
             flat  = feats.reshape(feats.shape[0], -1)
-            flat  = (flat - in_mean) / in_std
-            pred_n[lo:hi] = recon(flat).cpu()
+            pred[lo:hi] = recon(flat).cpu()
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.8))
-    _scatter(axes[0], E_n_t.numpy(),  pred_n[:, 0].numpy(), "Recon  E  (normalized)")
-    _scatter(axes[1], th_n_t.numpy(), pred_n[:, 1].numpy(), "Recon  \u03b8  (normalized)")
-    _scatter(axes[2], ph_n_t.numpy(), pred_n[:, 2].numpy(), "Recon  \u03c6  (normalized)")
+    labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
+    for i, name in enumerate(labels):
+        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}")
     fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
