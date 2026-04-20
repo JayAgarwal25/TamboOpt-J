@@ -86,9 +86,9 @@ def main():
     print(f"  T       : {tuple(T.shape)}        dtype={T.dtype}")
     print(f"  strat   : {tuple(strat.shape)}    unique={sorted(strat.unique().tolist())}")
 
-    # Log-scale E and T for better FNN training (compresses heavy right tail)
+    # Log-scale E for better FNN training (compresses heavy right tail)
     E = torch.log1p(E)
-    T = torch.log1p(T)
+
     print(f"[log1p] E range [{E.min():.4g}, {E.max():.4g}]  "
           f"T range [{T.min():.4g}, {T.max():.4g}]")
 

@@ -76,11 +76,11 @@ def layout_rings(mountain, n_det: int = N_DETECTORS,
 
 # Five layout strategies; `args` threaded in below.
 _STRATEGIES = [
-    ("grid_jit20",        "layout_grid",            dict(jitter_sigma=20.0)),
+    ("grid_jit20",        "layout_grid",            dict(jitter_sigma=200.0)),
     ("center_gauss200",   "layout_center_gaussian", dict(sigma=200.0)),
-    ("rings_R300",        "layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=15.0)),
-    ("rings_R800",        "layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=20.0)),
-    ("rings_R1800",       "layout_rings",           dict(outer_radius=1800.0, n_rings=6, jitter_sigma=20.0)),
+    ("rings_R300",        "layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=200.0)),
+    ("rings_R800",        "layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=200.0)),
+    ("rings_R1800",       "layout_rings",           dict(outer_radius=1800.0, n_rings=6, jitter_sigma=200.0)),
 ]
 
 _STRATEGY_FNS = {
