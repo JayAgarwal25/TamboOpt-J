@@ -5,18 +5,18 @@ Pipeline (step 3 of the v6 plan):
     fnn (frozen)                                          recon targets
        │                                                         │
        ▼                                                         ▼
-  primary → FNN(primary, xy) → (E_pred, T_pred)                 (E_GeV, θ, φ)
-                                    │                           normalized to (0, 1)
-                                    ▼                           via v3 NormalizeLabels
-  recon input per detector = (x, y, E_pred, T_pred)               │
-                                    │                             │
-                                    └─────────────────────────────┘
+  primary → FNN(primary, xy) → (E_pred, T_pred)          primary[:, :4] =
+                                    │                    [dir_x, dir_y, dir_z, log_e_norm]
+                                    │                    z-scored via norm_stats[:4]
+  recon input per detector = (x, y, E_pred, T_pred)              │
+                                    │                            │
+                                    └────────────────────────────┘
                                          v3 Reconstruction
-                                       (input_features=4)
+                                      (input_features=4, output_dim=4)
 
 Permutation augmentation is applied to the recon input on every batch: a
 random per-sample permutation of the 100 detectors (with xy, E, T permuted
-together; the target is a scalar 3-vector that stays fixed). This teaches
+together; the target is a scalar 4-vector that stays fixed). This teaches
 the flat MLP recon to be approximately permutation-invariant in its output.
 
 Shower-level 90/10 split (matches 02_train_fnn.py). Reuses the trained FNN
@@ -33,7 +33,6 @@ Artifacts in `outputs/v6_run_01/`:
     recon_train_curves.png
 """
 import json
-import math
 import os
 import sys
 import time
@@ -49,10 +48,10 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate import FNNSurrogate
-from modules.reconstruction   import Reconstruction, NormalizeLabels
+from modules.reconstruction   import Reconstruction
 from modules_v6.constants import (
     RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
-    N_DETECTORS, PRIMARY_DIM, LOG_E_MIN, LOG_E_MAX,
+    N_DETECTORS, PRIMARY_DIM,
     )
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -96,30 +95,6 @@ def shower_level_split(strategy_ids: torch.Tensor,
             torch.nonzero(val_mask).squeeze(-1))
 
 
-def primary_to_physical_labels(primary: torch.Tensor
-                               ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Convert 5-D primary encoding to (E_GeV, theta_rad, phi_rad).
-
-    primary columns: [dir_x, dir_y, dir_z, log_e_norm, pdg]
-        dir is (sin θ cos φ, sin θ sin φ, cos θ)
-        log_e_norm = (log10(E) - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN)
-    """
-    dir_x = primary[:, 0]
-    dir_y = primary[:, 1]
-    dir_z = primary[:, 2].clamp(-1.0, 1.0)
-    log_e_norm = primary[:, 3]
-
-    log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
-    E_gev = torch.pow(10.0, log_e)
-    theta = torch.arccos(dir_z)
-
-    phi = torch.atan2(dir_y, dir_x)
-    # atan2 returns [-pi, pi]; wrap to [0, 2pi] to match v3's NormalizeLabels
-    two_pi = 2.0 * math.pi
-    phi = torch.where(phi < 0, phi + two_pi, phi)
-    return E_gev, theta, phi
-
-
 @torch.no_grad()
 def compute_fnn_predictions(model: FNNSurrogate,
                             primary: torch.Tensor,
@@ -151,7 +126,8 @@ def permute_detectors_recon(xy: torch.Tensor,
                             ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Independent per-sample random permutation of the 100 detectors.
 
-    The recon target is a scalar 3-vector (E, θ, φ) — invariant — so we do NOT
+    The recon target is a scalar 4-vector (dir_x, dir_y, dir_z, log_e_norm) —
+    invariant under detector permutations — so we do NOT
     permute the target. The network learns to produce the same output for any
     ordering of its per-detector features.
     """
@@ -205,23 +181,26 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
         axes[0].plot(ep, [e["train"] for e in adam_log], label="train")
         axes[0].plot(ep, [e["val"]   for e in adam_log], label="val")
-        axes[1].plot(ep, [e["val_E"]  for e in adam_log], label="val E")
-        axes[1].plot(ep, [e["val_th"] for e in adam_log], label="val \u03b8")
-        axes[1].plot(ep, [e["val_ph"] for e in adam_log], label="val \u03c6")
+        axes[1].plot(ep, [e["val_dx"]   for e in adam_log], label="val dx")
+        axes[1].plot(ep, [e["val_dy"]   for e in adam_log], label="val dy")
+        axes[1].plot(ep, [e["val_dz"]   for e in adam_log], label="val dz")
+        axes[1].plot(ep, [e["val_logE"] for e in adam_log], label="val logE")
 
         # L-BFGS iterations
         if lbfgs_iter_log:
             lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
-            axes[0].plot(lb_ep, [e["loss"]   for e in lbfgs_iter_log],
+            axes[0].plot(lb_ep, [e["loss"]     for e in lbfgs_iter_log],
                          label="L-BFGS train", alpha=0.7)
-            axes[0].plot(lb_ep, [e["val"]    for e in lbfgs_iter_log],
+            axes[0].plot(lb_ep, [e["val"]      for e in lbfgs_iter_log],
                          label="L-BFGS val", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_E"]  for e in lbfgs_iter_log],
-                         label="L-BFGS val E", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_th"] for e in lbfgs_iter_log],
-                         label="L-BFGS val \u03b8", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_ph"] for e in lbfgs_iter_log],
-                         label="L-BFGS val \u03c6", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_dx"]   for e in lbfgs_iter_log],
+                         label="L-BFGS val dx", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_dy"]   for e in lbfgs_iter_log],
+                         label="L-BFGS val dy", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_dz"]   for e in lbfgs_iter_log],
+                         label="L-BFGS val dz", alpha=0.7)
+            axes[1].plot(lb_ep, [e["val_logE"] for e in lbfgs_iter_log],
+                         label="L-BFGS val logE", alpha=0.7)
             axes[0].set_yscale("log"); axes[1].set_yscale("log")
 
 
@@ -284,13 +263,24 @@ def main():
           f"E mean={E_pred.mean():.3g} std={E_pred.std():.3g}  "
           f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
 
-    # Build normalized recon targets
-    E_gev, theta, phi = primary_to_physical_labels(primary)
-    E_n, theta_n, phi_n = NormalizeLabels(E_gev, theta, phi)
-    target = torch.stack([E_n, theta_n, phi_n], dim=1)   # (N, 3)
-    print(f"[target] E_n in [{E_n.min():.3f}, {E_n.max():.3f}]  "
-          f"θ_n in [{theta_n.min():.3f}, {theta_n.max():.3f}]  "
-          f"φ_n in [{phi_n.min():.3f}, {phi_n.max():.3f}]")
+    # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm],
+    # z-scored with the FNN's per-feature primary stats (slots 0..4 of norm_stats
+    # are the per-feature primary stats; slot 4 = pdg is dropped).
+    target_raw = primary[:, :4].clone().float()                              # (N, 4)
+    tgt_mean   = norm_stats["in_mean"][:4].float()                           # (4,)
+    tgt_std    = norm_stats["in_std" ][:4].float().clamp(min=1e-8)           # (4,)
+    target     = (target_raw - tgt_mean) / tgt_std                           # (N, 4)
+    print(f"[target raw] "
+          f"dx in [{target_raw[:,0].min():.3f}, {target_raw[:,0].max():.3f}]  "
+          f"dy in [{target_raw[:,1].min():.3f}, {target_raw[:,1].max():.3f}]  "
+          f"dz in [{target_raw[:,2].min():.3f}, {target_raw[:,2].max():.3f}]  "
+          f"logE in [{target_raw[:,3].min():.3f}, {target_raw[:,3].max():.3f}]")
+    print(f"[target z  ] "
+          f"dx in [{target[:,0].min():.3f}, {target[:,0].max():.3f}]  "
+          f"dy in [{target[:,1].min():.3f}, {target[:,1].max():.3f}]  "
+          f"dz in [{target[:,2].min():.3f}, {target[:,2].max():.3f}]  "
+          f"logE in [{target[:,3].min():.3f}, {target[:,3].max():.3f}]")
+    print(f"[target stats] mean={tgt_mean.tolist()}  std={tgt_std.tolist()}")
 
     # Shower-level split
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
@@ -303,8 +293,10 @@ def main():
     )
     print(f"[norm] recon in_mean[:4] = {in_mean[:4].tolist()}  "
           f"in_std[:4] = {in_std[:4].tolist()}")
-    in_mean = in_mean.to(DEVICE)
-    in_std  = in_std.to(DEVICE)
+    in_mean  = in_mean.to(DEVICE)
+    in_std   = in_std.to(DEVICE)
+    tgt_mean = tgt_mean.to(DEVICE)
+    tgt_std  = tgt_std.to(DEVICE)
 
     full_ds  = TensorDataset(xy, E_pred, T_pred, target)
     train_ds = Subset(full_ds, train_idx.tolist())
@@ -321,7 +313,7 @@ def main():
         input_features=RECON_INPUT_FEATURES,
         num_detectors=N_DETECTORS,
         hidden_lay1=256, hidden_lay2=128, hidden_lay3=32,
-        output_dim=3,
+        output_dim=4,
     ).to(DEVICE)
     n_params = sum(p.numel() for p in recon.parameters() if p.requires_grad)
     print(f"[model] recon params={n_params:,}")
@@ -335,7 +327,7 @@ def main():
     for epoch in range(N_EPOCHS):
         t_epoch = time.time()
         recon.train()
-        tr_tot, tr_E, tr_th, tr_ph, n_tr = 0.0, 0.0, 0.0, 0.0, 0
+        tr_tot, tr_dx, tr_dy, tr_dz, tr_lE, n_tr = 0.0, 0.0, 0.0, 0.0, 0.0, 0
         for xy_b, E_b, T_b, tgt_b in train_loader:
             xy_b  = xy_b.to(DEVICE, non_blocking=True)
             E_b   = E_b.to(DEVICE,  non_blocking=True)
@@ -347,11 +339,12 @@ def main():
 
             inp  = build_recon_input(xy_b, E_b, T_b)   # (B, 400)
             inp  = (inp - in_mean) / in_std             # frozen z-score
-            pred = recon(inp)                           # (B, 3) tanh
-            l_E  = F.mse_loss(pred[:, 0], tgt_b[:, 0])
-            l_th = F.mse_loss(pred[:, 1], tgt_b[:, 1])
-            l_ph = F.mse_loss(pred[:, 2], tgt_b[:, 2])
-            loss = l_E + l_th + l_ph
+            pred = recon(inp)                           # (B, 4) tanh
+            l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
+            l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
+            l_dz = F.mse_loss(pred[:, 2], tgt_b[:, 2])
+            l_lE = F.mse_loss(pred[:, 3], tgt_b[:, 3])
+            loss = l_dx + l_dy + l_dz + l_lE
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -360,17 +353,19 @@ def main():
 
             B = xy_b.shape[0]
             tr_tot += loss.item() * B
-            tr_E   += l_E.item()  * B
-            tr_th  += l_th.item() * B
-            tr_ph  += l_ph.item() * B
+            tr_dx  += l_dx.item() * B
+            tr_dy  += l_dy.item() * B
+            tr_dz  += l_dz.item() * B
+            tr_lE  += l_lE.item() * B
             n_tr   += B
         tr_tot /= max(n_tr, 1)
-        tr_E   /= max(n_tr, 1)
-        tr_th  /= max(n_tr, 1)
-        tr_ph  /= max(n_tr, 1)
+        tr_dx  /= max(n_tr, 1)
+        tr_dy  /= max(n_tr, 1)
+        tr_dz  /= max(n_tr, 1)
+        tr_lE  /= max(n_tr, 1)
 
         recon.eval()
-        va_tot, va_E, va_th, va_ph, n_va = 0.0, 0.0, 0.0, 0.0, 0
+        va_tot, va_dx, va_dy, va_dz, va_lE, n_va = 0.0, 0.0, 0.0, 0.0, 0.0, 0
         with torch.no_grad():
             for xy_b, E_b, T_b, tgt_b in val_loader:
                 xy_b  = xy_b.to(DEVICE, non_blocking=True)
@@ -380,29 +375,34 @@ def main():
                 inp  = build_recon_input(xy_b, E_b, T_b)
                 inp  = (inp - in_mean) / in_std
                 pred = recon(inp)
-                l_E  = F.mse_loss(pred[:, 0], tgt_b[:, 0])
-                l_th = F.mse_loss(pred[:, 1], tgt_b[:, 1])
-                l_ph = F.mse_loss(pred[:, 2], tgt_b[:, 2])
-                l    = l_E + l_th + l_ph
+                l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
+                l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
+                l_dz = F.mse_loss(pred[:, 2], tgt_b[:, 2])
+                l_lE = F.mse_loss(pred[:, 3], tgt_b[:, 3])
+                l    = l_dx + l_dy + l_dz + l_lE
                 B = xy_b.shape[0]
                 va_tot += l.item()    * B
-                va_E   += l_E.item()  * B
-                va_th  += l_th.item() * B
-                va_ph  += l_ph.item() * B
+                va_dx  += l_dx.item() * B
+                va_dy  += l_dy.item() * B
+                va_dz  += l_dz.item() * B
+                va_lE  += l_lE.item() * B
                 n_va   += B
         va_tot /= max(n_va, 1)
-        va_E   /= max(n_va, 1)
-        va_th  /= max(n_va, 1)
-        va_ph  /= max(n_va, 1)
+        va_dx  /= max(n_va, 1)
+        va_dy  /= max(n_va, 1)
+        va_dz  /= max(n_va, 1)
+        va_lE  /= max(n_va, 1)
 
         dt = time.time() - t_epoch
         print(f"[epoch {epoch+1:3d}/{N_EPOCHS}] "
               f"train={tr_tot:.4f} val={va_tot:.4f} "
-              f"(E={va_E:.4f} θ={va_th:.4f} φ={va_ph:.4f})  {dt:.1f}s")
+              f"(dx={va_dx:.4f} dy={va_dy:.4f} dz={va_dz:.4f} logE={va_lE:.4f})  {dt:.1f}s")
         log.append(dict(
             epoch=epoch + 1,
-            train=tr_tot, train_E=tr_E, train_th=tr_th, train_ph=tr_ph,
-            val=va_tot,   val_E=va_E,   val_th=va_th,   val_ph=va_ph,
+            train=tr_tot,
+            train_dx=tr_dx, train_dy=tr_dy, train_dz=tr_dz, train_logE=tr_lE,
+            val=va_tot,
+            val_dx=va_dx,   val_dy=va_dy,   val_dz=va_dz,   val_logE=va_lE,
             dt=dt,
         ))
 
@@ -413,13 +413,15 @@ def main():
                 "state_dict": recon.state_dict(),
                 "epoch": epoch + 1,
                 "val_total": va_tot,
-                "val_E": va_E, "val_th": va_th, "val_ph": va_ph,
+                "val_dx": va_dx, "val_dy": va_dy, "val_dz": va_dz, "val_logE": va_lE,
                 "input_features": RECON_INPUT_FEATURES,
                 "num_detectors": N_DETECTORS,
-                "input_mean": in_mean.detach().cpu(),
-                "input_std":  in_std.detach().cpu(),
+                "input_mean":  in_mean.detach().cpu(),
+                "input_std":   in_std.detach().cpu(),
+                "target_mean": tgt_mean.detach().cpu(),
+                "target_std":  tgt_std.detach().cpu(),
                 "config": dict(
-                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=3,
+                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=4,
                 ),
             }, os.path.join(RECON_FOLDER, "recon.pt"))
 
@@ -475,14 +477,15 @@ def main():
     def closure():
         lbfgs_optimizer.zero_grad()
         pred = recon(inp_all_n)
-        l_E  = F.mse_loss(pred[:, 0], tgt_train[:, 0])
-        l_th = F.mse_loss(pred[:, 1], tgt_train[:, 1])
-        l_ph = F.mse_loss(pred[:, 2], tgt_train[:, 2])
-        loss = l_E + l_th + l_ph
+        l_dx = F.mse_loss(pred[:, 0], tgt_train[:, 0])
+        l_dy = F.mse_loss(pred[:, 1], tgt_train[:, 1])
+        l_dz = F.mse_loss(pred[:, 2], tgt_train[:, 2])
+        l_lE = F.mse_loss(pred[:, 3], tgt_train[:, 3])
+        loss = l_dx + l_dy + l_dz + l_lE
         loss.backward()
         # Validation (no_grad — does not affect L-BFGS gradients)
         with torch.no_grad():
-            va_tot, va_E, va_th, va_ph, n_va = 0.0, 0.0, 0.0, 0.0, 0
+            va_tot, va_dx, va_dy, va_dz, va_lE, n_va = 0.0, 0.0, 0.0, 0.0, 0.0, 0
             for xy_b, E_b, T_b, tgt_b in val_loader:
                 xy_b  = xy_b.to(DEVICE, non_blocking=True)
                 E_b   = E_b.to(DEVICE,  non_blocking=True)
@@ -491,28 +494,34 @@ def main():
                 inp  = build_recon_input(xy_b, E_b, T_b)
                 inp  = (inp - in_mean) / in_std
                 v_pred = recon(inp)
-                v_E  = F.mse_loss(v_pred[:, 0], tgt_b[:, 0])
-                v_th = F.mse_loss(v_pred[:, 1], tgt_b[:, 1])
-                v_ph = F.mse_loss(v_pred[:, 2], tgt_b[:, 2])
-                v_l  = v_E + v_th + v_ph
+                v_dx = F.mse_loss(v_pred[:, 0], tgt_b[:, 0])
+                v_dy = F.mse_loss(v_pred[:, 1], tgt_b[:, 1])
+                v_dz = F.mse_loss(v_pred[:, 2], tgt_b[:, 2])
+                v_lE = F.mse_loss(v_pred[:, 3], tgt_b[:, 3])
+                v_l  = v_dx + v_dy + v_dz + v_lE
                 B = xy_b.shape[0]
                 va_tot += v_l.item()   * B
-                va_E   += v_E.item()   * B
-                va_th  += v_th.item()  * B
-                va_ph  += v_ph.item()  * B
+                va_dx  += v_dx.item()  * B
+                va_dy  += v_dy.item()  * B
+                va_dz  += v_dz.item()  * B
+                va_lE  += v_lE.item()  * B
                 n_va   += B
             va_tot /= max(n_va, 1)
-            va_E   /= max(n_va, 1)
-            va_th  /= max(n_va, 1)
-            va_ph  /= max(n_va, 1)
+            va_dx  /= max(n_va, 1)
+            va_dy  /= max(n_va, 1)
+            va_dz  /= max(n_va, 1)
+            va_lE  /= max(n_va, 1)
         it = len(lbfgs_iter_log)
         lbfgs_iter_log.append(dict(
             iter=it, loss=loss.item(),
-            mse_E=l_E.item(), mse_th=l_th.item(), mse_ph=l_ph.item(),
-            val=va_tot, val_E=va_E, val_th=va_th, val_ph=va_ph,
+            mse_dx=l_dx.item(), mse_dy=l_dy.item(),
+            mse_dz=l_dz.item(), mse_logE=l_lE.item(),
+            val=va_tot,
+            val_dx=va_dx, val_dy=va_dy, val_dz=va_dz, val_logE=va_lE,
         ))
         print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
-              f"(E={l_E.item():.6f} \u03b8={l_th.item():.6f} \u03c6={l_ph.item():.6f})  "
+              f"(dx={l_dx.item():.6f} dy={l_dy.item():.6f} "
+              f"dz={l_dz.item():.6f} logE={l_lE.item():.6f})  "
               f"val={va_tot:.6f}")
         return loss
 
@@ -538,16 +547,19 @@ def main():
     if not lbfgs_abort:
         last = lbfgs_iter_log[-1]
         va_tot = last["val"]
-        va_E, va_th, va_ph = last["val_E"], last["val_th"], last["val_ph"]
+        va_dx, va_dy = last["val_dx"], last["val_dy"]
+        va_dz, va_lE = last["val_dz"], last["val_logE"]
 
         print(f"[lbfgs val] val={va_tot:.6f} "
-              f"(E={va_E:.6f} \u03b8={va_th:.6f} \u03c6={va_ph:.6f})")
+              f"(dx={va_dx:.6f} dy={va_dy:.6f} dz={va_dz:.6f} logE={va_lE:.6f})")
 
         lbfgs_log.append(dict(
             epoch=N_EPOCHS + 1, phase="lbfgs",
             train=last["loss"],
-            train_E=last["mse_E"], train_th=last["mse_th"], train_ph=last["mse_ph"],
-            val=va_tot, val_E=va_E, val_th=va_th, val_ph=va_ph,
+            train_dx=last["mse_dx"], train_dy=last["mse_dy"],
+            train_dz=last["mse_dz"], train_logE=last["mse_logE"],
+            val=va_tot,
+            val_dx=va_dx, val_dy=va_dy, val_dz=va_dz, val_logE=va_lE,
             dt=dt_lbfgs,
         ))
 
@@ -561,13 +573,15 @@ def main():
                 "epoch": N_EPOCHS + 1,
                 "phase": "lbfgs",
                 "val_total": va_tot,
-                "val_E": va_E, "val_th": va_th, "val_ph": va_ph,
+                "val_dx": va_dx, "val_dy": va_dy, "val_dz": va_dz, "val_logE": va_lE,
                 "input_features": RECON_INPUT_FEATURES,
                 "num_detectors": N_DETECTORS,
-                "input_mean": in_mean.detach().cpu(),
-                "input_std":  in_std.detach().cpu(),
+                "input_mean":  in_mean.detach().cpu(),
+                "input_std":   in_std.detach().cpu(),
+                "target_mean": tgt_mean.detach().cpu(),
+                "target_std":  tgt_std.detach().cpu(),
                 "config": dict(
-                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=3,
+                    hidden_lay1=256, hidden_lay2=128, hidden_lay3=32, output_dim=4,
                 ),
             }, os.path.join(RECON_FOLDER, "recon.pt"))
             print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")
