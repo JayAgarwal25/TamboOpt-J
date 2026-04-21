@@ -51,7 +51,7 @@ The East coordinate encodes the detector's **depth into the shower** via a conti
 
 $$z_{\text{cont},i} = \frac{E_\text{entry} - E_i}{\Delta E_\text{layer}}$$
 
-where $E_\text{entry} = 1500$ m is the East coordinate at AllShowers layer 0 and $\Delta E_\text{layer} = 150$ m is the layer spacing. Only detectors with $E_i < E_\text{entry}$ (i.e., $z_\text{cont} > 0$) can observe shower particles.
+where $E_\text{entry} = 1500$ m is the East coordinate at AllShowers layer 0 and $\Delta E_\text{layer} = 150$ m is the layer spacing. Only detectors with $E_i < E_\text{entry}$ (i.e., $z_\text{cont} > 0$) can observe shower particles. $E_\text{entry}$ and $\Delta E_\text{layer}$ are manually selected for this version, such that the predefined 24 z output values span within the preselected mountain slope. Those are not real coordinates, rather adapted for development purposes.
 
 ### 3.2 Shower Point Clouds
 
@@ -67,7 +67,7 @@ Each primary particle is encoded as a 5-dimensional vector:
 
 $$\mathbf{q} = \bigl(\sin\theta\cos\phi,\;\sin\theta\sin\phi,\;\cos\theta,\;\tilde E,\;\text{pdg}\bigr)$$
 
-where $\tilde E = (\log_{10} E - 5) / 3$ normalises the log-energy to $[0, 1]$ and pdg is a particle-type identifier.
+where $\tilde E = (\log_{10} E - 5) / 3$ normalises the log-energy to $[0, 1]$ and pdg is a particle-type identifier. $\sin\theta\cos\phi,\;\sin\theta\sin\phi,\;\cos\theta$ are the normalized unit vectors $\hat{n}_x, \hat{n}_y, \hat{n}_z$, respectively.
 
 ### 3.4 Detector Response Kernel
 
