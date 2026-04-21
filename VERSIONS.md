@@ -15,8 +15,13 @@ SWGOLO7.ipynb         modular v3-        flat 2D → 3D         full 3D Colca   
  diffusion + FNN      (images + bbox),   diffusion model      + differentiable     gradient on           recon → optimize
  bbox surrogate,      bilinear           (filter_plane=20)    plane kernel         positions             (DeepSets-free,
  bilinear grid_       grid_sample                             (v3-style SGD on     + DeepSets NN         two frozen NN
- sample               response                                 (N, Up))                                  surrogates)
+ sample               response                                 (N, Up))                                  surrogates,
+                                                                                                         recon outputs
+                                                                                                         unit direction
+                                                                                                         vector, not θ,φ)
 ```
+
+**Output parameterisation across versions.** v3, v4, and v5 all predict the primary as a 3-tuple of min-max-normalised scalars `(Ê_norm, θ̂_norm, φ̂_norm)` with a final `Tanh` squash (v5 uses `DeepSetsReconstruction`; v3/v4 use the flat `Reconstruction` MLP). v6 breaks this pattern: the recon network outputs a 4-vector `(n̂_x, n̂_y, n̂_z, log_e_norm)` — the shower direction as a unit vector in Cartesian form plus a z-scored log-energy — with no `Tanh`. `(E, θ, φ)` are recovered analytically downstream. This removes the `φ` branch cut at `0/2π` and the pole degeneracy at `θ ≈ 0/π`, so the loss stays geometrically well-behaved everywhere on the sphere.
 
 Each version reused the previous version's modules via `sys.path` injection rather than copying files — see each `modules_v*/`__init__.py`.
 
@@ -28,7 +33,7 @@ All work in `detector_optimization/`. Monolithic, exploratory. Everything — sh
 
 **What's in it**
 
-- `SWGOLO7.ipynb` — first end-to-end notebook, uses the 2D `TamboDiffusionGenerator` `(3, 32, 32)` pathway.
+- `SWGOLO7.ipynb` — first end-to-end notebook, taken from the SWGOLO project, uses the 2D `TamboDiffusionGenerator` `(3, 32, 32)` pathway.
 - `SWGOLO7_optimization.ipynb` — the modern v1 path: already 24-plane diffusion + FNN bbox + bilinear `grid_sample`, but in notebook form.
 - `diffusion_model/` — first-generation generators: `TamboDiffusionGenerator`, `PlaneDiffusionEvaluator`, `PlaneFNNGenerator`. These became the starting point for v2's `shower_generation.GenerateShowers`.
 - `simple_simulator_class/` — experimental prototype modeling detectors as circles on a 2D mountain plane (superseded by the differentiable response in v2).
@@ -114,7 +119,7 @@ All work in `detector_optimization_v4/`. Focus: move detectors from a flat 2D pl
 **Held constant vs. explicitly varied across v4 experiments**
 
 - *Constant*: 90 detectors; 24 plane layers; Colca-Valley HDF5 geometry; `GetCounts_planeaware` (σ=200 m spatial Gaussian × triangular plane weight); differentiable surface map; `project_to_mountain` post-step.
-- *Varied*: initial layout scheme (`grid` vs `center`); NN input size (5 features `[x, y, z_cont, N, T]` vs 7 features with `x0, y0`); utility composition (`U_θ + U_φ` vs `… + U_E` vs `… + U_E + U_PR`, with weights 1e2/1e3/5e5 in various combinations, and a "mean_u" variant); optimizer (`SGD(lr=0.5, mom=0.3)` vs `Adam(lr=0.3/1/3)`); shower batch size (10 vs 300 vs 20k vs 200k); `EAST_ENTRY` / `LAYER_EAST_DX` constants (two calibrations — see below).
+- *Varied*: initial layout scheme (`grid` vs `center`); NN input size (5 features `[x, y, z_cont, N, T]` vs 7 features with `x0, y0`); utility composition (`U_θ + U_φ` vs `… + U_E` vs `… + U_E + U_PR`, with weights drawn from `1e2` / `1e3` / `1e8` / `5e5` in various combinations — v4's README pseudocode settles on `1e2·U_θ + 1e2·U_φ + 1e8·U_E + 5e5·U_PR` as the active-script weights — plus a "mean_u" variant); optimizer (`SGD(lr=0.5, mom=0.3)` vs `Adam(lr=0.3/1/3)`); shower batch size (10 vs 300 vs 20k vs 200k); `EAST_ENTRY` / `LAYER_EAST_DX` constants (two calibrations — see below).
 
 **Documented finding — `gradient_path_analysis.md` (Apr 13)**
 
@@ -126,13 +131,13 @@ The autograd chain from `xy_module.x/.y` through `SurfaceEastMap` → `GetCounts
 4. The NN fine-tune branch is a **silent no-op**: `DataLoader(ft_dataset, batch_size=32, …, drop_last=True)` on `Nfinetune=10` → zero batches per epoch.
 5. Over 2000 epochs, mean per-detector displacement is 5.3 m, max 13.2 m; `z_cont` range never leaves `[11, 12.4]`. Detectors move tangent to the surface, not across it.
 
-**EAST calibration note.** The CLAUDE.md in that folder says the empirical AllShowers layer-East calibration is `EAST_ENTRY=−212, LAYER_EAST_DX=307`. The script in the last commit uses `1500, 150`. Per the user (2026-04-14), the `1500/150` values are the correct ones — with the old `−212/307` values "all data was sampled from the last plane and the mountain was mismatched". v4's CLAUDE.md is out of date on this point.
+**EAST calibration note.** Two calibrations coexisted during v4: the initial `EAST_ENTRY=−212, LAYER_EAST_DX=307` (from the original CLAUDE.md design doc) and `1500, 150` (used by the Apr 13+ active scripts). Per the user (2026-04-14), the `1500/150` values are the correct ones — with the old `−212/307` values "all data was sampled from the last plane and the mountain was mismatched". v4's CLAUDE.md has since been retired; the current `detector_optimization_v4/README.md` documents `1500/150` as the active-script calibration and notes only layers 0–6 are reachable under the old `−212/307` values while all 24 layers are reachable under `1500/150`.
 
 ---
 
 ## Phase 4 — v5: evolutionary pruning + DeepSets NN (Apr 14)
 
-Committed as `4c25ef4` "v5 boilerplate". Scaffolding only — no run results yet.
+Committed as `4c25ef4` "v5 boilerplate". Per v5's own README: "**None of this code has ever been used, it was generated as LLM boilerplate to enable a parallel approach.**" Scaffolding only — no run results.
 
 **Concept.** Replace SGD-on-positions with a **mask-based evolutionary pruning algorithm**:
 
@@ -166,18 +171,21 @@ All work in `detector_optimization_v6/`. Replaces the "train-NN-online-during-op
 ```
 00_generate_data.py ──▶ 01_build_dataset.py ──▶ 02_train_fnn.py ──▶ 03_train_recon.py ──▶ 04_optimize.py
     AllShowers           layout × kernel          (primary, layout)    (x,y,E_det,T_det)     gradient on
-    point clouds         labelling                → (E_det, T_det)     → (Ê, θ̂, φ̂)           layout
-    (cached)             (cached)                 (frozen fnn.pt)      (frozen recon.pt)     (backprop
-                                                                                              through both)
+    point clouds         labelling                → (E_det, T_det)     → (n̂_x, n̂_y, n̂_z,    layout
+    (cached)             (cached)                 (frozen fnn.pt)         log_e_norm)        (backprop
+                                                                       (frozen recon.pt)     through both)
+                                                                       decode → (Ê, θ̂, φ̂)
 ```
 
 **Key ideas**
 
 - **Surrogate FNN** (`modules_v6/fnn_surrogate.py`) learns `(primary_features, layout) → (E_det, T_det)` per detector. Ground-truth labels come from applying v4's `GetCounts_planeaware` to the cached AllShowers point clouds. Once trained, replaces the expensive kernel at optimization time.
-- **Reconstruction NN** (`modules_v6/reconstruction.py`) maps flattened `(x, y, E_pred, T_pred)` per detector to the primary encoding `[dir_x, dir_y, dir_z, log_e_norm]`.
+- **Reconstruction NN** (`modules_v6/reconstruction.py`) maps flattened `(x, y, E_pred, T_pred)` per detector to the 4-D primary encoding `(n̂_x, n̂_y, n̂_z, log_e_norm)` in raw units — no final `Tanh`, output z-score de-normalisation baked into `forward()` via registered buffers.
 - **Primary encoding** is 5-D: `(sin θ cos φ, sin θ sin φ, cos θ, (log10 E − 5)/3, pdg)` — unit direction vector + normalized log-energy + particle-type id.
+- **Output change vs v3/v4/v5 (angles → normalised xyz).** All earlier versions predict `(Ê_norm, θ̂_norm, φ̂_norm)` — three min-max-scaled scalars on `[−1, 1]` coming out of a `Tanh`. v6 predicts the shower direction directly as a **unit vector in Cartesian form** `(n̂_x, n̂_y, n̂_z)` plus `log_e_norm`, and decodes `(E, θ, φ)` analytically for the utility terms. This kills two pathologies of the angle parameterisation: the `φ` branch cut at `0/2π` (which made `U_φ` oscillate 1k → 30k → 1k in the v4 Apr 13 sweep) and the near-pole degeneracy at `θ ≈ 0/π` where a tiny shift in `n̂` maps to a huge shift in `φ`. The Cartesian loss is a smooth quadratic in $\mathbb{R}^4$, so gradients behave the same everywhere on the sphere. A dedicated optimisation run with this change lives at `outputs/v6_run_04_optimize_unit_vector/`.
 - **Constants** calibrated to `EAST_ENTRY = 1500 m`, `LAYER_EAST_DX = 150 m` (the post-v4 corrected values).
-- **Detector strategies** (`modules_v6/detector_strategies.py`) covers layout initialisation schemes without ring geometry.
+- **Detector strategies** (`modules_v6/detector_strategies.py`) covers 5 layout-initialisation schemes used in `01_build_dataset.py` to force the FNN to learn layout-dependence: `grid_jit20` (regular grid + σ = 20 m jitter), `center_gauss200` (centre cluster, σ = 200 m), `rings_R300`, `rings_R800`, `rings_R1800` (concentric rings at three radii). v3's `geometry.Layouts` helper is not used, but ring geometry returns here at the dataset-generation stage.
+- **Detector count** is **100** (v6), up from 90 in v4/v5. 100 detectors × 5 layout strategies × 100k showers = 500k training pairs for both surrogates.
 
 **Theory documented.** `detector_optimization_v6/THEORY.md` is the authoritative design doc — differentiable surrogate architecture, per-detector kernel formula, composite utility definition, and gradient pathways.
 
@@ -238,7 +246,7 @@ Interpretation: the Apr 13–14 campaign is a systematic sweep over **utility su
 - **v3** — last version with provably-moving gradient-based optimization. Still imported by v4, v5 and v6 for shower generation, reconstruction, utility, normalization, and early-stopping utilities.
 - **v4** — gradient path confirmed alive but **objective-shape issues keep detectors nearly static** even on the working 10-shower fixture: saturated `U_PR`, numerically-dead `U_E`, silent-no-op fine-tune branch, NN over-fit to 10 shower instances. The Apr 13–14 sweep tried different utility formulations ("angle_error", "theta_error", "phi_error", "angle_energy", "mean_u") and optimizers (Adam lr ∈ {0.3, 1, 3}) to find one that actually drives the positions.
 - **v5** — boilerplate only. Not yet run. Rethinks the whole optimizer as evolutionary pruning with DeepSets, removing gradient-based position updates entirely.
-- **v6** — staged pipeline with two frozen NN surrogates. Current focus.
+- **v6** — staged pipeline with two frozen NN surrogates. Reconstruction NN output switched from angle-normalised `(Ê_norm, θ̂_norm, φ̂_norm)` (v3–v5) to a raw 4-D unit-vector + log-energy encoding `(n̂_x, n̂_y, n̂_z, log_e_norm)` to remove the `φ` branch cut and pole degeneracy. Current focus.
 
 ---
 
@@ -249,5 +257,5 @@ Interpretation: the Apr 13–14 campaign is a systematic sweep over **utility su
 3. **`DataLoader(ft_dataset, …, drop_last=True)` on `Nfinetune=10`** yields zero batches — NN fine-tune never runs. Set `drop_last=False` or `batch_size=min(32, Nfinetune)`.
 4. **NN over-fits to 10 shower instances**. Grow `Nevents`/`Nbatch` past 10 before drawing conclusions about optimizer behaviour. v6 addresses this by training both NNs offline on large caches before the layout optimizer starts.
 5. **v4 script uses 5 features** `[x, y, z_cont, N, T]`; the 7-feature version with `(x0, y0)` is commented out. The April 9 `200k_retrain` run used 7.
-6. **CLAUDE.md files are stale** in two places: (a) v4's EAST calibration `−212/307` is wrong per the user; (b) v5's CLAUDE.md still cites the same wrong values. v6 uses `1500/150`.
+6. **v5's CLAUDE.md and `SWGOLO7_optimization_ev.ipynb` still cite the wrong `EAST_ENTRY=−212, LAYER_EAST_DX=307`** — update to `1500/150` before any real v5 run (v4's README and v6 already use `1500/150`; v4's CLAUDE.md has been retired).
 7. **`gradient_path_analysis.md`** in `detector_optimization_v4/` is the authoritative note on the v4 stall — keep it up to date as the utility is rewritten.
