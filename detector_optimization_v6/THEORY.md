@@ -327,7 +327,7 @@ If the recon network were trained on ground-truth kernel outputs, it would learn
 Pure reconstruction MSE would ignore whether a layout is even viable — a layout where no detectors trigger would have undefined reconstruction quality. The composite utility:
 - $U_\text{PR}$ directly rewards layouts that trigger enough detectors.
 - $U_E$, $U_\theta$, $U_\phi$ reward reconstruction accuracy but only for reconstructable events.
-- The weighting ($5 \times 10^5$ for PR vs. $10^2$–$10^3$ for accuracy) prioritises detector coverage first, then accuracy refinement.
+- The weighting has been manually selected during the testing runns to balance the separate utility fractions. Further work is needed.
 
 ### 5.5 Why Project to the Mountain?
 
