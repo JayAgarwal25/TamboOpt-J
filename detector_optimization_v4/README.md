@@ -1,279 +1,233 @@
-# TambOpt detector-optimization — one-month history (2026-03-18 → 2026-04-14)
+# detector_optimization_v4
 
-Chronological record of what was built, what was tested, and what was observed
-across `detector_optimization_v2` → `v3` → `v4` → `v5` during this window. Not
-a roadmap; a log. All file paths are relative to the `TambOpt/` root unless
-stated otherwise.
+Fourth iteration of the TAMBO detector-layout optimization pipeline. The big shift from v3 is **geometry**: detectors move from a flat 2D plane to the full 3D Colca Valley **mountain surface**, staying on the wall via a differentiable surface map. The shower surrogate (AllShowers point clouds) and most of the pipeline plumbing are reused from v3 via `sys.path` injection.
 
----
+Three structural additions carry the mountain:
 
-## Summary of the four-week arc
+- `SurfaceEastMap` — differentiable `East = f(North, Up)` by bilinear sampling of an interpolated 256×256 grid.
+- `z_cont = (EAST_ENTRY − East) / LAYER_EAST_DX` — a **continuous AllShowers layer index** ∈ ℝ, replacing v3's hard `filter_plane=20`.
+- `GetCounts_planeaware` — v3's spatial Gaussian kernel × a **triangular plane weight** `relu(1 − |layer_p − z_cont|)`, so points at the layer nearest `z_cont` dominate the sum.
 
-```
-v2 (extant)    ──►  v3 (Apr 3)    ──►  v4 (Apr 8)   ──►  v5 (Apr 14)
-flat 2D        tune utility +     full 3D Colca    evolutionary
-+ TAMBO        swap to            mountain surf.   pruning, no
-physics        point-cloud        + differentiable gradient on
-(legacy)       diffusion model    plane kernel     positions
-               + single-plane     (v3 style of     + DeepSets NN
-               filter_plane=20    SGD on (N,Up))
-```
-
-Each step reused the previous version's modules via `sys.path` injection —
-no verbatim copies.
-
----
-
-## Phase 1 — v2 tuning and NN-input plumbing (Mar 18 → Apr 2)
-
-All work in `detector_optimization_v2/`. Focus: get a working, stable gradient
-pipeline before migrating to the point-cloud shower generator.
-
-**Concepts tested**
-
-| Date   | Commit(s)       | What was tried |
-|--------|-----------------|----------------|
-| Mar 18 | `853c4c0` `cfa56c4` `996a5df` `fb42485` | Enable label denormalization; border padding on the detector response; runs with shifted normalized data (0–1 range) at 20k and 200k; plots added. Marked "runs successful". |
-| Mar 19 | `cc6b155` `982f8f5` `8381530` `de68dfb` `6936875` `f1f69fe` `2dd28a7` `459ca74` `1e1e24f` `e636488` | Raise `reconstruct_threshold`; reduce random-noise amplitude; custom offset for initial detector array; shrink the initial array; updated hyperparams for 20k; review old runs; refactor + README. |
-| Mar 20 | `0bb581b` `111da02` | Hyperparameter sweep; remove `torch.no_grad` from the validation pass (so validation forward could produce gradients when wanted). |
-| Mar 22 | `90b1204` `5bd4fb4` `b97a599` `343a211` | Conditional logging; `torch.pi`; remove `torch.no_grad` in shower generation; reconstruction parameter tweaks. |
-| Mar 25 | `c2f8e2f` `5850052` | **Restructure NN input**: move `x0, y0` (energy-weighted shower core) into the per-detector feature vector, normalized inputs, compute NN on device. Outputs notebooks for "full gradients across network", "xy in inputs", "remove density", "normalized input", "new coeff". |
-| Mar 27 | `8d77d00`       | Big refactor: everything on GPU, remove per-detector smearing, generate detector layouts with torch, conditional data generation, utility-function update. |
-| Mar 30 | `ac4e996`       | New coefficients + renormalization, extensive 100k output notebooks (new coeff, small steps, smaller LR, no push-apart, from-center init). First experiments contrasting ring vs center init and with/without `push_apart`. |
-| Apr 2  | `53cd4f4` `ec6b91a` `0096b88` `25ffc18` `aecc8d3` | **Shower cache**; side-by-side plots of raw showers vs diffusion-model showers; NN training without `push_apart` and with fewer detectors; "optimize only for most particles detected" variant; bash job scripts. |
-
-**Observable outcomes from v2**
-- A working gradient-based optimizer on the flat 2D plane geometry existed at
-  this stage, iterated through ~20 distinct output notebooks. The last known
-  v2 outputs (Apr 1–2) vary detector count, push-apart on/off, and NN
-  capacity.
-- The utility function was unstable: multiple commits "update hyperparameters",
-  "new coefficients", "renormalization". Magnitudes of `U_angle`, `U_E`, `U_PR`
-  were repeatedly rescaled.
-
----
-
-## Phase 2 — v3: swap to point-cloud flow-matching, single plane (Apr 3 → Apr 6)
-
-All work in `detector_optimization_v3/`. Focus: migrate the shower generator
-from v2's legacy TAMBO-physics sampler to the AllShowers **point-cloud
-flow-matching model**, then tune the NN and kernel to work with point clouds.
-
-**Concepts tested**
-
-| Date  | Commit(s)       | What was tried |
-|-------|-----------------|----------------|
-| Apr 3 | `a8b7269` `ff2f821` | Create `detector_optimization_v3/` folder. Move scripts to operate on point-cloud `(B, max_points, 5)` tensors `[x, y, layer_index, energy, time]`. First tests of a **Gaussian kernel over the point cloud** (no layer filtering yet). Remove unused files from v2. |
-| Apr 5 | `cdae855` `fae3138` | Fix energy normalization; finalize full utility function and tests; first-run outputs `20260404_040000_first_run` and `20260404_0430000_small_radius_init`. |
-| Apr 6 | `9604fb7` `cb91b57` `d821b8f` `e930395` | Clean up pylance errors; clear notebook; **add `filter_plane=20`** so all shower points outside the target plane have their energy zeroed before the kernel — effectively reduces the point-cloud kernel to a 2D spatial Gaussian over one layer. "Single plane, start small" output: `20260406_080000_plane_20_small_start.ipynb`. |
-
-**Outcome**
-- v3 is the **last known-good** gradient-based position optimizer. Detectors
-  move meaningfully, utility climbs. Feature vector: 6 features
-  `[x, y, N_int, T_int, x0, y0]`; `SGD(lr=10, momentum=0.3)`; utility weights
-  `(1e2·Uθ + 1e2·Uφ + 1e3·U_E + 5e5·U_PR)/1e3`.
-- Stable because `filter_plane=20` ensures every detector integrates over the
-  same (dense) plane-20 point cloud — the kernel is never starved of points.
-
----
-
-## Phase 3 — v4: full 3D Colca mountain surface with a plane-aware kernel (Apr 8 → Apr 14)
-
-All work in `detector_optimization_v4/`. Focus: move detectors from a flat 2D
-plane onto the curved Colca Valley wall, keep gradients flowing through a
-differentiable surface map and a plane-aware kernel.
-
-**Structural additions**
-
-- `modules_v4/tr_geometry.py` — HDF5 loader for `basic_geometry.h5`, ECEF→ENU
-  rotation, `MountainData` dataclass, `sample_initial_layout(scheme="grid"|"random"|"center")`,
-  `project_to_mountain`. `z_cont = (EAST_ENTRY − East) / LAYER_EAST_DX`.
-- `modules_v4/tr_surface_map.py` — `SurfaceEastMap`: `LinearNDInterpolator` on
-  2161 centroid scatter → 256×256 regular grid → `F.grid_sample(bilinear,
-  padding_mode="border")`. Differentiable `East = f(N, Up)`.
-- `modules_v4/tr_plane_kernel.py` — `GetCounts_planeaware`: the v3 spatial
-  Gaussian × a new **triangular plane weight** `relu(1 − |layer_p − z_cont|)`.
-  Differentiable in `z_cont`, reduces to v3 when `z_cont ≡ 20`.
-
-**Commits and experiments**
-
-| Date    | Commit(s)       | What was tried |
-|---------|-----------------|----------------|
-| Apr 8   | `2900943`       | Initial v4 import: geometry loader, surface map, plane-aware kernel, CLAUDE.md, test notebook, main optimization notebook. |
-| Apr 8   | `6952dd6`       | First v4 run: `SWGOLO7_optimization_tr_output_20260408_160000.ipynb`. |
-| Apr 8   | `31ef49d`       | Save clamped-space run: `…_20260408_080000_clamped_detector_space.ipynb` — explored whether clamping positions into a rectangular bbox helps stability. |
-| Apr 8   | `1e64fc6`       | Save the v3→v4 migration plan (`stateful-beaming-pie.md`) — 1090-line detailed plan document. |
-| Apr 8   | `dc5fd7f`       | Refactor; rename `output_notebooks/` → `outputs_notebooks/`. |
-| Apr 8   | `2141e32`       | Add SLURM batch scripts and `auto_run_notebook.py` for overnight 200k runs. |
-| Apr 13  | `f3e3838`       | First utility update. |
-| Apr 13  | `0af17aa`       | Per-event energy output. |
-| Apr 13  | `23b1e5d`       | Add **`scheme="center"`** initial layout (cluster of 90 detectors around the mountain centroid). |
-| Apr 13  | `01901f5`       | Decrease LR; save utility more often. |
-| Apr 13  | `d0d425a`       | 200k results with performance plots. |
-| Apr 13  | `4fcecaf`       | Re-run 200k training data generation. |
-| Apr 13  | `cd7581f`       | **Test different utility functions on 10 showers**: `angle_error`, `theta_error`, `phi_error`, `angle_energy`, at Adam lr=0.3 and lr=1. Nine output notebooks in a single commit. Also adds `gradient_path_analysis.md`. |
-| Apr 14  | `9798033`       | Save new notebook version + Python export (`SWGOLO7_optimization_tr_same_300_center_init.py`). |
-| Apr 14  | `53da42d`       | Update utility (`detector_optimization_v3/modules/utility_functions.py`) and run "mean_u" variants of the 10-shower and 300-shower notebooks at Adam lr=1 and lr=3. |
-
-**Things held constant vs. explicitly varied across v4 experiments**
-
-- *Constant*: 90 detectors; 24 plane layers; Colca-Valley HDF5 geometry;
-  `GetCounts_planeaware` (σ=200 m spatial Gaussian × triangular plane weight);
-  differentiable surface map; `project_to_mountain` post-step.
-- *Varied*: initial layout scheme (`grid` vs `center`); NN input size
-  (5 features `[x, y, z_cont, N, T]` vs 7 features with `x0, y0`); utility
-  composition (`U_θ + U_φ` vs `… + U_E` vs `… + U_E + U_PR`, with weights
-  1e2/1e3/5e5 in various combinations, and a "mean_u" variant); optimizer
-  (`SGD(lr=0.5, mom=0.3)` vs `Adam(lr=0.3/1/3)`); shower batch size (10 vs 300
-  vs 20k vs 200k); `EAST_ENTRY` / `LAYER_EAST_DX` constants (two calibrations —
-  see below).
-
-**Documented finding — `gradient_path_analysis.md` (Apr 13)**
-
-The autograd chain from `xy_module.x/.y` through `SurfaceEastMap` →
-`GetCounts_planeaware` → NN → utility → loss is verified intact. `grad_norm`
-is finite and non-zero every epoch. But the run stalls because of
-*objective-shape* problems, not wiring:
-
-1. `U_PR` is saturated: `reconstructability = sigmoid(5·(n − 10))` with
-   `n ≈ 90` evaluates to ~1 for every event, so `U_PR = sqrt(90) ≈ 3.16`.
-   Weight 5e5 makes it ~82% of `U_total` as a frozen constant; its derivative
-   is ~0. **It adds no gradient.**
-2. `U_E = Σ r / ((E_pred − E_true)² + 0.01)` is numerically zero because
-   `DenormalizeLabels` returns GeV (1e5–1e8), so each term is ~1e-10 and the
-   sum is rounded to 0 in the logs. **No gradient contribution.**
-3. Only `U_θ` and `U_φ` drive learning. `U_θ` gains ~29% in the first 100
-   epochs, then plateaus. `U_φ` swings wildly (1k → 30k → 1k) — SGD
-   oscillation in a narrow, non-convex basin.
-4. The NN fine-tune branch is a **silent no-op**: `DataLoader(ft_dataset,
-   batch_size=32, …, drop_last=True)` on `Nfinetune=10` → zero batches per
-   epoch.
-5. Over 2000 epochs, mean per-detector displacement is 5.3 m, max 13.2 m;
-   `z_cont` range never leaves `[11, 12.4]`. Detectors move tangent to the
-   surface, not across it.
-
-**EAST calibration note.** The CLAUDE.md in this folder says the empirical
-AllShowers layer-East calibration is `EAST_ENTRY=−212, LAYER_EAST_DX=307`.
-The script in the last commit uses `1500, 150`. Per the user (2026-04-14),
-the `1500/150` values are the correct ones — with the old `−212/307` values
-"all data was sampled from the last plane and the mountain was mismatched".
-CLAUDE.md is out of date on this point.
-
----
-
-## Phase 4 — v5: evolutionary pruning + DeepSets NN (Apr 14)
-
-Committed as `4c25ef4` "v5 boilerplate". Scaffolding only — no run results yet.
-
-**Concept.** Replace SGD-on-positions with a **mask-based evolutionary
-pruning algorithm**:
-
-- Start with 10,000 candidate detectors dense-sampled on the mountain surface.
-- Train a **permutation-invariant DeepSets NN** (`phi: per-det MLP → sum
-  pool → rho: readout MLP`) that handles variable detector counts natively.
-- Each generation: compute per-detector fitness via `∂U/∂mask` (gradient
-  saliency on a per-detector gate), prune the weakest, Gaussian-mutate the
-  survivors, reproject to mountain surface, optionally fine-tune the NN.
-- Geometric schedule: 10000 → 90 over ~30 generations.
-- Train DeepSets with **random mask-dropout** so saliency is meaningful
-  across the full 10k→90 range.
-
-**Files added** (`detector_optimization_v5/`):
-- `CLAUDE.md` (241 lines) — full design doc.
-- `SWGOLO7_optimization_ev.ipynb` (869 lines) — main evolutionary notebook.
-- `modules_v5/ev_deepsets.py` (113 lines) — `DeepSetsReconstruction`.
-- `modules_v5/ev_population.py` (176 lines) — `Population` dataclass +
-  `build_input_batch`.
-- `modules_v5/ev_selection.py` (241 lines) — `compute_detector_fitness`,
-  `prune_weakest`, `mutate_positions`.
-- `tests/test_v5_modules.ipynb` (232 lines) — module sanity tests.
-
-`modules_v5/__init__.py` injects `detector_optimization_v3` and `v4` into
-`sys.path`, so v5 imports `Population`, `GetCounts_planeaware`,
-`SurfaceEastMap`, `load_tr_mountain`, `NormalizeLabels`, `reconstructability`,
-`U_PR`, `U_E`, `U_angle` directly from v3/v4 without copying.
-
-**Note.** v5's CLAUDE.md still lists `EAST_ENTRY=−212, LAYER_EAST_DX=307` —
-the older (and per the user, wrong) calibration. This should be updated to
-`1500/150` before any v5 runs.
-
----
-
-## Running list of experiments by filename pattern
-
-Output notebooks in `detector_optimization_v4/outputs_notebooks/` decode as:
+End-to-end flow:
 
 ```
-SWGOLO7_optimization_tr_<variant>_<timestamp>_<parameters>.ipynb
+sample primary particles  ──▶  AllShowers point cloud  ──▶  spatial Gaussian × triangular plane weight
+     (E, zenith, azimuth)           (B, max_points, 5)             (B, max_points, n_det)
+                                                                              │
+   ┌──────────────────────────┐                                               ▼
+   │ LearnableXY (N, Up)      │──▶ SurfaceEastMap ──▶ z_cont ──▶ per-detector kernel → (N_int, T_int)
+   │  differentiable positions│                                                │
+   └──────────────────────────┘                                                ▼
+                                                    Reconstruction MLP (5 feats, active) → [Ê, θ̂, φ̂]
+                                                                              │
+                                                                              ▼
+                                               Utility U = 1e2·U_θ + 1e2·U_φ + 1e8·U_E + 5e5·U_PR
+                                                    backprop → (N, Up) via the full chain
 ```
 
-The April 13–14 variants encode (utility, optimizer, LR, shower count) in
-their filenames:
+Gradient path confirmed alive end-to-end (see `gradient_path_analysis.md`), but open objective-shape issues keep detectors nearly static — see **Known Issues** below.
 
-| Filename fragment                | Meaning |
-|---------------------------------|---------|
-| `output_20260407_160000`        | First v4 run |
-| `output_20260408_074341`        | (early iteration) |
-| `output_20260408_080000_clamped_detector_space` | positions clamped to bbox |
-| `output_20260408_081022_200k_data_generation_and_pretraining` | 200k-shower NN pretrain |
-| `output_20260409_030000_200k_data_plots`         | plots of pretrain outputs |
-| `output_20260409_030000_200k_retrain`            | 200k retrain; grad_norm printouts visible |
-| `same_10_outputs_20260413_070000`                | 10-shower baseline |
-| `same_10_center_init_20260413_100000`            | center init, 10 showers, baseline |
-| `same_10_center_init_…_120000_angle_error_adam_lr1`   | only `U_angle` objective, Adam lr=1 |
-| `same_10_center_init_…_120000_theta_error`       | only `U_θ` objective |
-| `same_10_center_init_…_120000_phi_error`         | only `U_φ` objective |
-| `same_10_center_init_…_123000_angle_error_adam_lr03` | `U_angle` only, Adam lr=0.3 |
-| `same_10_center_init_…_123000_angle_energy_adam_lr03` | `U_angle + U_E`, Adam lr=0.3 |
-| `same_300_center_init_…_123000_angle_energy_adam_lr03` | as above, 300 showers |
-| `same_10_center_init_…_20260414_023000_angle_energy_adam_lr1_mean_u` | "mean_u" utility reformulation, Adam lr=1 |
-| `same_10_center_init_…_030000_angle_energy_adam_lr3_mean_u` | as above, lr=3 |
-| `same_300_center_init_…_20260414_023000_angle_energy_adam_lr1_mean_u` | 300-shower version |
-| `same_300_center_init_…_030000_angle_energy_adam_lr3_mean_u` | 300-shower, lr=3 |
-
-Interpretation: the Apr 13–14 campaign is a systematic sweep over
-**utility subsets × optimizer LR × shower-batch size**, built on the "same
-10/300 showers" cached fixture so gradients are deterministic given positions.
+For the broader v1→v6 history, see `../VERSIONS.md`.
 
 ---
 
-## Current state (2026-04-14)
+## Modules (`modules_v4/`)
 
-- **v2** — frozen, superseded.
-- **v3** — last version with provably-moving gradient-based optimization.
-  Still imported by v4 and v5 for shower generation, reconstruction,
-  utility, normalization, and early-stopping utilities.
-- **v4** — gradient path confirmed alive but **objective-shape issues keep
-  detectors nearly static** even on the working 10-shower fixture:
-  saturated `U_PR`, numerically-dead `U_E`, silent-no-op fine-tune branch,
-  NN over-fit to 10 shower instances. The Apr 13–14 sweep is trying
-  different utility formulations ("angle_error", "theta_error", "phi_error",
-  "angle_energy", "mean_u") and optimizers (Adam lr ∈ {0.3, 1, 3}) to find
-  one that actually drives the positions.
-- **v5** — boilerplate only. Not yet run. Rethinks the whole optimizer as
-  evolutionary pruning with DeepSets, removing gradient-based position
-  updates entirely.
+v4 only ships three new modules. Everything else is imported from v3 via `sys.path` injection in `modules_v4/__init__.py`.
+
+| File | Public API | Purpose |
+|------|-----------|---------|
+| `tr_geometry.py` | `load_tr_mountain`, `MountainData`, `sample_initial_layout`, `project_to_mountain` | Loads `basic_geometry.h5` (group `colca_valley_30000`), rotates ECEF → ENU, returns `MountainData` with 2161 triangle centroids in local `(N, Up, East)` plus bbox / plane constants. Handles the Julia 1-indexed `faces` / `detector1` arrays |
+| `tr_surface_map.py` | `SurfaceEastMap` | `nn.Module` wrapping `LinearNDInterpolator(2161 centroids) → 256×256 regular grid → F.grid_sample(bilinear, padding_mode="border")`. Differentiable `East = f(N, Up)`, border-clamped so wanderers don't NaN |
+| `tr_plane_kernel.py` | `GetCounts_planeaware` | Extends v3's spatial Gaussian kernel with a **triangular plane weight** `relu(1 − \|layer_p − z_cont\|)`. Reduces exactly to v3 (`filter_plane=20`) when `z_cont ≡ 20`. Differentiable in `z_cont` |
+
+**Inherited from v3** (imported via `modules_v4.__init__` injecting `../detector_optimization_v3` on `sys.path`):
+
+| v3 Module | Usage in v4 |
+|-----------|-------------|
+| `modules.generate_showers.GenerateShowers` | Unchanged |
+| `modules.shower_computation.ComputeShowerDetection` | Called with `filter_plane=None` (kernel handles plane selection now) |
+| `modules.detector_response.{SmearN, TimeAverage_vectorized}` | Interface-compatible callables; `GetCounts_planeaware` does not invoke them (same pattern as v3's `GetCounts_differentiable`) |
+| `modules.reconstruction.{Reconstruction, NormalizeLabels, DenormalizeLabels, EarlyStopping}` | `Reconstruction(input_features=NUM_FEATURES, num_detectors=Nunits)` — active scripts use `NUM_FEATURES=5`, `Nunits=90` |
+| `modules.layout_optimization.LearnableXY` | Unchanged — now carries `(N, Up)` instead of `(x, y)` |
+| `modules.utility_functions.{reconstructability, U_PR, U_E, U_angle}` | Unchanged |
+| `modules.geometry.Layouts` | **Not used** — ring layout doesn't apply to a curved mountain |
 
 ---
 
-## Known issues / action items surfaced by the past month's work
+## Contents
 
-1. **`U_PR` saturates at `n ≫ reconstruct_threshold`.** Raise the threshold
-   or drop the `5e5` coefficient. Currently contributes ~82% of `U_total`
-   with zero gradient.
-2. **`U_E` is numerically zero** at GeV scale. Use `(log10(E_pred) −
-   log10(E_true))²` or normalize energies to O(1) before the reciprocal.
-3. **`DataLoader(ft_dataset, …, drop_last=True)` on `Nfinetune=10`** yields
-   zero batches — NN fine-tune never runs. Set `drop_last=False` or
-   `batch_size=min(32, Nfinetune)`.
-4. **NN over-fits to 10 shower instances**. Grow `Nevents`/`Nbatch` past 10
-   before drawing conclusions about optimizer behaviour.
-5. **v4 script uses 5 features** `[x, y, z_cont, N, T]`; the 7-feature
-   version with `(x0, y0)` is commented out. The April 9 `200k_retrain`
-   run used 7.
-6. **CLAUDE.md files are stale** in two places: (a) v4's EAST calibration
-   `−212/307` is wrong per the user; (b) v5's CLAUDE.md still cites the
-   same wrong values.
-7. **`gradient_path_analysis.md`** in `detector_optimization_v4/` is the
-   authoritative note on the v4 stall — keep it up to date as the utility
-   is rewritten.
+```
+detector_optimization_v4/
+├── CLAUDE.md                                           # Session memory: design, gotchas, coord convention
+├── modules_v4/                                         # v4-only modules
+│   ├── __init__.py                                     #   Injects v3 into sys.path
+│   ├── tr_geometry.py                                  #   HDF5 loader, ECEF→ENU, MountainData
+│   ├── tr_surface_map.py                               #   Differentiable East = f(N, Up)
+│   └── tr_plane_kernel.py                              #   Spatial Gaussian × triangular plane weight
+│
+├── SWGOLO7_optimization_tr.ipynb                       # Main optimization notebook
+├── SWGOLO7_optimization_tr_same_10.ipynb               # Fixed 10-shower fixture (deterministic gradients)
+├── SWGOLO7_optimization_tr_20k_center_init_...ipynb    # 20k showers, center init, angle+energy, Adam lr=1
+├── SWGOLO7_optimization_tr_same_10_center_init_*.py    # Python exports of the notebook variants
+├── SWGOLO7_optimization_tr_same_300_center_init.py     # 300-shower Python export
+│
+├── auto_run_notebook.py                                # Papermill runner (timestamped outputs)
+├── common_gpu_auto_run_notebook_batch.sh               # SLURM batch script
+│
+├── stateful-beaming-pie.md                             # 1090-line v3→v4 migration plan
+├── gradient_path_analysis.md                           # Authoritative v4-stall diagnosis
+│
+├── tests/
+│   └── test_v4_modules.ipynb                           # 6-cell sanity suite (no GPU)
+│
+└── outputs_notebooks/                                  # Timestamped papermill outputs
+```
+
+---
+
+## Coordinate Convention
+
+| Symbol | Meaning | Learnable? |
+|--------|---------|-----------|
+| `x` | ENU North [m] | **yes** |
+| `y` | ENU Up / elevation [m] | **yes** |
+| `z_cont` | `(EAST_ENTRY − East(x, y)) / LAYER_EAST_DX`, continuous AllShowers layer index | **no** (derived) |
+
+AllShowers layer-East calibration: manual selection of `EAST_ENTRY = 1500 m`, `LAYER_EAST_DX = 150 m` via `load_tr_mountain(east_entry=…, layer_east_dx=…)`. Per user (2026-04-14) these are the correct values — runs using the `−212 / 307` defaults sampled all energy from the last plane and the mountain geometry was mismatched.
+
+Only detectors with `East < EAST_ENTRY` have `z_cont > 0` and can see shower particles.
+
+---
+
+## v3 → v4 Differences
+
+| Aspect | v3 | v4 |
+|--------|----|----|
+| Detector positions | 2D `(x, y)` on a flat plane | 2D `(x = N, y = Up)` on the mountain surface |
+| Initial layout | Concentric rings (`Layouts()`) | Grid / random / center on the `(N, Up)` bbox of mountain centroids |
+| East coordinate | Fixed (plane 20 hardcoded) | Derived: `East = SurfaceEastMap(N, Up)` — differentiable |
+| Plane index | Hard: `filter_plane=20` zeros non-20 energy | Continuous: `z_cont ∈ ℝ` |
+| Shower layers used | Only plane 20 | Plane weight picks the layers near each detector's `z_cont`. How many layers are reachable depends on the EAST calibration (see Coordinate Convention): `1500/150` reaches all 24 layers; `−212/307` reaches only layers 0–6. |
+| Kernel | Spatial Gaussian only | Spatial Gaussian × triangular plane weight |
+| NN features | 6: `[x, y, N_int, T_int, x0, y0]` | 5 (active): `[x, y, z_cont, N_int, T_int]`; 7-feature variant `[…, x0, y0]` is commented out in the active script |
+| `reconstructability` N-index | `inputs_batch[:, :, 2]` | `inputs_batch[:, :, 3]` (N is at index 3 under both 5- and 7-feature layouts) |
+| Layout save format | 2-col `(x, y)` | 3-col `(N, Up, z_cont)` |
+| Visualization | 2D scatter | 2D top-down + 3D mountain scatter + 3D GIF animation |
+| `push_apart` / `symmetry_loss` | Used | Dropped (not applicable on curved surface) |
+| NN re-training | Not needed (same geometry) | **Required** (new `z_cont` feature, new count distribution) |
+
+---
+
+## NN Feature Vector
+
+Active scripts use **5 features** per detector; the 7-feature variant (adding `x0, y0`) is present but commented out.
+
+| Index | Feature | Description |
+|-------|---------|-------------|
+| 0 | `x = N` | Detector North coordinate [m] |
+| 1 | `y = Up` | Detector Up (elevation) coordinate [m] |
+| 2 | `z_cont` | Continuous plane index (derived from `SurfaceEastMap(N, Up)`) |
+| 3 | `N_int` | Energy-weighted kernel integral from `GetCounts_planeaware` (no `SmearN` applied — kernel accepts `SmearN_fn` but doesn't invoke it) |
+| 4 | `T_int` | Plane-weighted arrival time from `GetCounts_planeaware` (`(point_t · kernel).mean(dim=1)` in the current implementation) |
+| 5 | `x0` *(commented out)* | Energy-weighted shower core North / 5000 |
+| 6 | `y0` *(commented out)* | Energy-weighted shower core Up / 5000 |
+
+`Reconstruction(input_features=NUM_FEATURES, num_detectors=Nunits)` — `NUM_FEATURES = 5` in the active scripts. **`reconstructability` reads `N_int` at feature index 3** (`inputs_batch[:, :, 3]`), whereas v3 had N at index 2.
+
+---
+
+## Geometry Source
+
+File: `TAMBOSim/resources/basic_geometry.h5`, group `colca_valley_30000`.
+
+| Dataset | Shape | Notes |
+|---------|-------|-------|
+| `vertices` | `(3, 90000)` float64 | ECEF metres |
+| `faces` | `(3, 179996)` int64 | **Julia 1-indexed** — subtract 1 |
+| `detector1` | `(2161,)` int64 | **Julia 1-indexed** — subtract 1 |
+| `location` | `(2,)` | `[lon_deg, lat_deg]` of site |
+
+Site: lon = −72.279397°, lat = −15.622267°. Detector region in local ENU: East [−2019, +1182] m, North [−2497, +2474] m, Up [2442, 3886] m.
+
+---
+
+## Optimization Loop (per-epoch pseudocode)
+
+```python
+x_det, y_det  = xy_module()                                                 # LearnableXY: (N, Up)
+east_det      = surface(x_det, y_det)                                       # differentiable East
+z_cont        = (mountain.east_entry - east_det) / mountain.layer_east_dx   # continuous layer
+
+N_int, T_int, X0, Y0, energy, ... = generate_showers(
+    x_det, y_det, z_cont, number_of_showers=Nbatch, use_cache=True
+)
+
+# Active layout: 5 features; the 7-feature variant with (x0, y0) is commented out.
+inputs_batch = torch.stack(
+    [x_exp, y_exp, z_cont_exp, N_int, T_int], dim=2
+).float()
+
+r_score = reconstructability(inputs_batch[:, :, 3], reconstruct_threshold=10)   # N at idx 3
+U = (1e2 * U_angle(preds_th, th, r_score)
+     + 1e2 * U_angle(preds_phi, ph, r_score)
+     + 1e8 * U_E(preds_e, energy, r_score)
+     + 5e5 * U_PR(r_score))
+Loss = -U
+Loss.backward()          # gradients: z_cont → East → (N, Up)
+optimizer.step()         # active script: SGD(lr=0.5, momentum=0.3)
+                         # Apr 13–14 sweep variants: Adam(lr ∈ {0.3, 1, 3})
+```
+
+Layout is saved every epoch as `Python_Layout/Layout_{epoch}.txt` (3 cols: `North, Up, z_cont`). Final animation: `layout_evolution_3d.gif`.
+
+---
+
+## Running on the Cluster
+
+```bash
+# Overnight 200k run:
+sbatch common_gpu_auto_run_notebook_batch.sh
+```
+
+`auto_run_notebook.py` uses papermill, writes timestamped copies into `outputs_notebooks/`.
+
+---
+
+## Key Gotchas
+
+1. **Julia 1-indexing** on `faces` / `detector1` — subtract 1 before Python indexing.
+2. **ECEF → ENU rotation** required before using HDF5 vertices (rotation is implemented in `_ecef_to_enu` using a mean-Earth-radius sphere of 6 371 000 m).
+3. **`z_cont` gradient path**: `relu(1 − |layer − z_cont|)` is the only thing coupling `z_cont` to the loss. Detaching `z_cont` kills the surface-map gradient.
+4. **`reconstructability` index**: `N_int` is at feature index 3 in v4 (index 2 in v3).
+5. **Never pass `filter_plane=20`** to `ComputeShowerDetection` in v4 — it would zero all non-plane-20 energies before the kernel runs.
+6. **Layer accessibility is calibration-dependent.** With the active-script calibration (`EAST_ENTRY = 1500, LAYER_EAST_DX = 150`), `z_cont` spans ~[2.1, 23.5] across the mountain — **all 24 layers are reachable**. With the module-default calibration (`−212 / 307`), `z_cont` spans ~[−4.5, +5.9] and only layers 0–6 are accessible (layers 7–23 fall off the surface).
+7. **NN retraining required** after switching from v3 — new `z_cont` feature and redefined `N_int` / `T_int` (plane-weighted via the triangular kernel) mean the v3 checkpoint is not reusable.
+8. **Module directory is `modules_v4/`, not `modules/`** — intentional so `from modules.X import Y` still resolves to v3.
+9. **Padding rows in point clouds** carry `energy = 0` — they contribute nothing to kernel sums, no special handling needed.
+10. **`GetCounts_planeaware` returns raw `(local_intensity, et)`** — `SmearN_fn` and `TimeAverage_vectorized_fn` are accepted as kwargs for v3-interface compatibility but are **not invoked** inside the kernel. The returned `local_intensity` is a Gaussian-plus-triangular-weighted energy sum (not a "smeared particle count"); `et` is `(point_t · kernel).mean(dim=1)` (an unweighted per-kernel mean — note this is *not* energy-weighted; the energy-weighted form is commented out).
+
+---
+
+## Known Issues (from `gradient_path_analysis.md`)
+
+The autograd chain `xy_module.x/.y → SurfaceEastMap → GetCounts_planeaware → NN → utility → loss` is verified intact — `grad_norm` is finite and non-zero every epoch. But runs stall because of *objective shape*, not wiring:
+
+1. **`U_PR` saturates** — `sigmoid(5·(n − 10))` at `n ≈ 90` ≈ 1 for every event, so `U_PR ≈ √90 ≈ 3.16` with weight `5e5` becomes a ~82%-of-total frozen constant. Zero gradient contribution.
+2. **`U_E` is numerically zero** — `DenormalizeLabels` returns GeV (1e5–1e8), so `r / ((Ê − E)² + 0.01) ≈ 1e-10` per term, summed to zero in the logs.
+3. **Only `U_θ` and `U_φ` drive learning.** `U_θ` gains ~29% in the first 100 epochs then plateaus; `U_φ` oscillates (1k → 30k → 1k) — SGD chatter in a narrow basin.
+4. **NN fine-tune is a silent no-op** — `DataLoader(ft_dataset, batch_size=32, drop_last=True)` on `Nfinetune = 10` yields zero batches per epoch.
+5. **Tangential-only motion** — over 2000 epochs, mean per-detector displacement is 5.3 m (max 13.2 m); `z_cont` never leaves `[11, 12.4]`.
+
+The Apr 13–14 experiment sweep (see `outputs_notebooks/` filenames) tries `angle_error`, `theta_error`, `phi_error`, `angle_energy`, `mean_u` utility variants at Adam lr ∈ {0.3, 1, 3} on 10 / 300 / 20k / 200k shower batches looking for an objective that actually drives the positions. v6 abandons this approach in favour of two frozen NN surrogates; see `../VERSIONS.md`.
+
+---
+
+## Relation to Other Pipelines
+
+- `../detector_optimization/` — v1, monolithic.
+- `../detector_optimization_v2/` — modular refactor, flat 2D, diffusion-image surrogate.
+- `../detector_optimization_v3/` — AllShowers point-cloud surrogate, single plane. Imported wholesale by v4.
+- `../detector_optimization_v5/` — evolutionary pruning + DeepSets, scaffolding only (Apr 14).
+- `../detector_optimization_v6/` — staged pipeline with two frozen NN surrogates (data-gen → FNN → recon → optimize).
+- `../VERSIONS.md` — cross-version history and known issues.

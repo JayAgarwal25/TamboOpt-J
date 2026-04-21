@@ -1,254 +1,241 @@
-# Tambo Diffusion Generator - Refactored Class
+# diffusion_model (v1)
 
-This refactoring converts your original script into a reusable, importable class structure.
+First-generation diffusion-based shower generators for the TAMBO/SWGO detector optimization pipeline. Archival — superseded by `detector_optimization_v2/diffusion_model/`.
 
-## Files Created
+Three class-based generators live here, each wrapping a trained checkpoint behind a reusable interface:
 
-1. **tambo_diffusion_generator.py** - Main class file
-2. **example_usage.py** - Usage examples
-3. **README.md** - This documentation
+| Class | File | Output | Sampler |
+|-------|------|--------|---------|
+| `TamboDiffusionGenerator` | `tambo_diffusion_generator.py` | 2D shower images `(3, 32, 32)` | DDIM |
+| `PlaneDiffusionEvaluator` | `tambo_3D_diffusion_generator.py` | 3D multi-plane shower volumes | DDIM (planes) |
+| `PlaneFNNGenerator` | `tambo_3D_fnn_scaler.py` | Per-plane bounding boxes (direct regression) | FNN (no sampling) |
 
-## Key Improvements
+---
 
-### 1. **Reusability**
-- Import and use from any script
-- No code duplication
-- Easy to maintain
+## Notebooks
 
-### 2. **Configurability**
-All parameters are now configurable via constructor:
-- Checkpoint path
-- Output directory
-- Device selection
-- DDIM parameters (steps, eta)
-- Data splitting ratios
-- Batch size and workers
-- Random seed
+| Notebook | Purpose |
+|----------|---------|
+| `01_validate.ipynb` | Validation of `TamboDiffusionGenerator` against ground truth |
+| `02_reduce_runtime.ipynb` | Runtime profiling / tuning of `TamboDiffusionGenerator` |
+| `03_3D_generator_update.ipynb` | Validation of `PlaneDiffusionEvaluator` |
+| `04_3D_generator_scaled.ipynb` | Scaled outputs of `PlaneDiffusionEvaluator` |
 
-### 3. **Modularity**
-Separate methods for each task:
-- `load_model()` - Load checkpoint and sampler
-- `setup_data()` - Initialize data module
-- `extract_test_samples()` - Get test conditions
-- `generate_samples()` - Generate images
-- `save_results()` - Save to disk
-- `plot_results()` - Create visualizations
+`example_usage.py` — copy-pasteable snippets for `TamboDiffusionGenerator`.
 
-### 4. **Flexibility**
-Two usage modes:
-- **Full pipeline**: One call does everything
-- **Step-by-step**: Fine-grained control
+---
 
-### 5. **Better Error Handling**
-- Validates state before operations
-- Clear error messages
-- Automatic directory creation
+## TamboDiffusionGenerator
 
-## Quick Start
+2D DDIM sampler over shower images, conditioned on 5-element feature vectors.
 
-### Simple Usage (One-Liner Pipeline)
+### Quick start
 
 ```python
 from tambo_diffusion_generator import TamboDiffusionGenerator
 
 generator = TamboDiffusionGenerator(
-    checkpoint_path="/path/to/checkpoint.ckpt",
+    checkpoint_path="/path/to/ckpt_epoch=1999.ckpt",
     output_dir="output/run_1",
-    tambo_optimization_path="/path/to/tambo_optimization"
+    tambo_optimization_path="/path/to/tambo_optimization",
 )
 
 generator.run_full_pipeline(
-    num_samples=1000,
-    num_conditions=10,
-    chunk_size=200
+    num_samples=1000,   # per condition
+    num_conditions=10,  # number of test conditions
+    chunk_size=200,     # batch size for generation (OOM control)
 )
 ```
 
-### Advanced Usage (Step-by-Step)
+### Step-by-step
 
 ```python
-from tambo_diffusion_generator import TamboDiffusionGenerator
-
-# Initialize with custom parameters
-generator = TamboDiffusionGenerator(
-    checkpoint_path="/path/to/checkpoint.ckpt",
-    output_dir="output/run_2",
-    tambo_optimization_path="/path/to/tambo_optimization",
-    device="cuda:0",
-    ddim_steps=100,
-    ddim_eta=0.0,
-    batch_size=64,
-    seed=42
-)
-
-# Run each step manually
 generator.load_model()
 generator.setup_data()
 generator.extract_test_samples(num_conditions=20)
-generator.generate_samples(num_samples=500, num_conditions=10, chunk_size=100)
+generated_sets = generator.generate_samples(num_samples=500, num_conditions=10, chunk_size=100)
 generator.save_results()
 generator.plot_results(num_conditions=10, dpi=300)
 ```
 
-## Constructor Parameters
+### `generate_samples` return value
+
+Returns (and caches on `generator.generated_sets`) a list of per-condition dicts. Each entry:
+
+```python
+{
+    "condition": torch.Tensor,  # shape (5,),                  on CPU
+    "images":    torch.Tensor,  # shape (num_samples, 3, 32, 32), on CPU, float
+}
+```
+
+Length of the list equals `num_conditions` (or all extracted conditions if `num_conditions=None`). Tensors are moved to CPU inside the loop so the GPU is free between conditions — move to `.to(device)` before downstream use.
+
+**Custom conditions** — `extract_test_samples()` is optional. You can skip `setup_data()` / `extract_test_samples()` entirely and assign `test_conditions` directly (e.g. for targeted energy/angle sweeps or out-of-distribution probes):
+
+```python
+generator.load_model()
+generator.test_conditions = [
+    torch.tensor([energy, sin_z, cos_z, sin_a, cos_a]),
+    # ... one (5,) tensor per condition
+]
+generator.generate_samples(num_samples=500, chunk_size=100)
+```
+
+`generate_samples` only requires that `self.test_conditions` be a non-empty iterable of `(5,)` tensors.
+
+### Constructor parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `checkpoint_path` | str | Required | Path to trained model checkpoint |
-| `output_dir` | str | Required | Directory for outputs |
-| `device` | str | Auto | Device ('cuda:0', 'cpu', etc.) |
+| `checkpoint_path` | str | required | Path to trained model checkpoint |
+| `output_dir` | str | required | Output directory (auto-created) |
+| `device` | str | auto | `"cuda:0"`, `"cpu"`, etc. |
 | `ddim_steps` | int | 100 | DDIM sampling steps |
-| `ddim_eta` | float | 0.0 | DDIM eta (0=deterministic) |
-| `batch_size` | int | 64 | Data loading batch size |
-| `train_ratio` | float | 0.85 | Training data ratio |
-| `val_ratio` | float | 0.10 | Validation data ratio |
-| `test_ratio` | float | 0.05 | Test data ratio |
-| `num_workers` | int | 4 | Data loading workers |
+| `ddim_eta` | float | 0.0 | DDIM eta (0 = deterministic) |
+| `batch_size` | int | 64 | Dataloader batch size |
+| `train_ratio` / `val_ratio` / `test_ratio` | float | 0.85 / 0.10 / 0.05 | Data split |
+| `num_workers` | int | 4 | Dataloader workers |
 | `seed` | int | 42 | Random seed |
-| `tambo_optimization_path` | str | None | Path to add to sys.path |
+| `tambo_optimization_path` | str | None | Path appended to `sys.path` to locate `diffusion_train` / `models.DiffusionCondition` |
 
-## Methods
-
-### `load_model()`
-Loads the checkpoint and creates the DDIM sampler.
-
-### `setup_data()`
-Initializes the data module and test dataloader.
-
-### `extract_test_samples(num_conditions=10)`
-Extracts test images and their conditioning vectors.
-
-**Parameters:**
-- `num_conditions` (int): Number of test samples to extract
-
-### `generate_samples(num_samples=1000, num_conditions=None, chunk_size=200)`
-Generates samples for each extracted condition.
-
-**Parameters:**
-- `num_samples` (int): Samples per condition
-- `num_conditions` (int): Number of conditions to process (None = all)
-- `chunk_size` (int): Batch size for generation (prevents OOM)
-
-### `save_results()`
-Saves generated images and conditions as compressed numpy bundles.
-
-**Output files:**
-- `condition_1.npz`, `condition_2.npz`, ... - Per-condition bundles
-- `summary.npz` - Summary of all conditions
-
-### `plot_results(num_conditions=None, dpi=300)`
-Creates comparison plots for ground truth vs generated samples.
-
-**Parameters:**
-- `num_conditions` (int): Number of plots to create (None = all)
-- `dpi` (int): Plot resolution
-
-### `run_full_pipeline(num_samples=1000, num_conditions=10, chunk_size=200, plot_dpi=300)`
-Executes the complete workflow in one call.
-
-## Output Structure
+### Output layout from save_results
 
 ```
 output_dir/
-├── condition_1.npz      # Bundle for condition 1
-│   ├── input           # Condition vector (5,)
-│   ├── target          # Ground truth image (3,32,32)
-│   ├── output          # Generated images (N,3,32,32)
-│   └── meta            # Metadata dict
+├── condition_1.npz       # bundle per condition
+│   ├── input             #   (5,) condition vector
+│   ├── target            #   (3, 32, 32) ground-truth image
+│   ├── output            #   (N, 3, 32, 32) generated images
+│   └── meta              #   metadata dict
 ├── condition_2.npz
 ├── ...
-├── summary.npz          # Summary file
-│   └── summary
-│       ├── all_conditions
-│       ├── total_images
-│       └── num_conditions
-├── condition_1.png      # Comparison plot
-├── condition_2.png
+├── summary.npz           # { all_conditions, total_images, num_conditions }
+├── condition_1.png       # GT vs generated comparison plot
 └── ...
 ```
 
-## Loading Saved Results
+### Loading saved results
 
 ```python
 import numpy as np
 
-# Load a specific condition bundle
 data = np.load("output_dir/condition_1.npz", allow_pickle=True)
-bundle = data['bundle'].item()
+bundle = data["bundle"].item()
 
-condition = bundle['input']        # (5,) condition vector
-ground_truth = bundle['target']    # (3,32,32) GT image
-generated = bundle['output']       # (N,3,32,32) generated images
-metadata = bundle['meta']          # Dict with info
-
-# Load summary
-summary_data = np.load("output_dir/summary.npz", allow_pickle=True)
-summary = summary_data['summary'].item()
-
-all_conditions = summary['all_conditions']
-total_images = summary['total_images']
+condition    = bundle["input"]    # (5,)
+ground_truth = bundle["target"]   # (3, 32, 32)
+generated    = bundle["output"]   # (N, 3, 32, 32)
+metadata     = bundle["meta"]     # dict
 ```
 
-## Migration from Original Script
+### Chunk-size guidance
 
-### Before (Original Script)
-```python
-# Hard-coded paths and parameters
-ckpt_path = "/n/holylfs05/.../ckpt_epoch=1999.ckpt"
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# ... 200+ lines of procedural code ...
-```
+`chunk_size` controls how many samples are diffused in parallel. Tune to GPU memory:
 
-### After (Class-Based)
+- 4 GB GPU → 50–100
+- 8 GB GPU → 100–200
+- 16 GB+ GPU → 200–500
+
+---
+
+## PlaneDiffusionEvaluator (3D)
+
+DDIM sampler over stacked detector planes. Generates 24-plane shower volumes **autoregressively** — each plane is denoised conditioned on the previously generated plane. Supports classifier-free guidance.
+
 ```python
-# Configurable and reusable
-generator = TamboDiffusionGenerator(
+from tambo_3D_diffusion_generator import PlaneDiffusionEvaluator
+
+evaluator = PlaneDiffusionEvaluator(
+    data_dir="/path/to/data",
     checkpoint_path="/path/to/ckpt.ckpt",
-    output_dir="my_output",
-    device="cuda:0"
+    device="cuda:0",
+    ddim_steps=50,
+    eta=0.0,
+    guidance_w=0.0,      # classifier-free guidance weight
+    imports_path="/path/to/tambo_optimization",
 )
-generator.run_full_pipeline(num_samples=1000, num_conditions=10)
+evaluator.run_full_pipeline(num_samples=10, ddim_steps=50)
 ```
 
-## Tips
+Depends on `lightning_training.PlaneDataset`, `lightning_training.PlaneDiffusionModule`, and `diffusion.DDIMSamplerPlanes` from the parent project.
 
-1. **Memory Management**: Adjust `chunk_size` based on GPU memory
-   - 4GB GPU: chunk_size=50-100
-   - 8GB GPU: chunk_size=100-200
-   - 16GB+ GPU: chunk_size=200-500
+### `load_model`
 
-2. **Quick Testing**: Use small values first
-   ```python
-   generator.run_full_pipeline(
-       num_samples=50,
-       num_conditions=2,
-       chunk_size=25
-   )
-   ```
+Loads the checkpoint as a `PlaneDiffusionModule` (via `load_from_checkpoint`), puts it in `eval()` on the configured device, extracts the underlying net, and builds a `DDIMSamplerPlanes` using the constructor values for `beta_1`, `beta_T`, `T`, `eta`, `ddim_steps`, and `guidance_w`. After this call the evaluator is ready to sample — `self.net` and `self.sampler` are populated.
 
-3. **Production Runs**: Increase after testing
-   ```python
-   generator.run_full_pipeline(
-       num_samples=10000,
-       num_conditions=100,
-       chunk_size=500
-   )
-   ```
+```python
+evaluator.load_model()
+```
 
-4. **Debugging**: Use step-by-step mode to inspect intermediate results
+### `generate_samples`
+
+Runs the autoregressive sampler across all 24 planes for each test condition, chunked by `batch_size` to control memory. Requires `load_model()` and `extract_test_samples()` to have run first.
+
+```python
+gen = evaluator.generate_samples(
+    num_conditions=None,  # None = all extracted conditions
+    batch_size=100,       # conditions processed per chunk
+)
+```
+
+Returns (and caches on `evaluator.generated_sets`) a single dict containing tensors for **all** conditions (not a per-condition list like `TamboDiffusionGenerator`):
+
+```python
+{
+    "conditions": torch.Tensor,  # (N, 6), on CPU — [energy, class_id, sin_z, cos_z, sin_a, cos_a]
+    "images":     torch.Tensor,  # (N, 24, 3, 32, 32), on CPU, float — 24 stacked RGB planes per shower
+}
+```
+
+where `N = num_conditions` (or the full set if `None`).
+
+**Custom conditions** — as with `TamboDiffusionGenerator`, `extract_test_samples()` is optional. Assign `test_conditions` directly to sample at arbitrary points in condition space:
+
+```python
+evaluator.load_model()
+evaluator.test_conditions = torch.tensor([
+    [energy, class_id, sin_z, cos_z, sin_a, cos_a],
+    # ... one row per condition
+])
+evaluator.generate_samples(batch_size=100)
+```
+
+`generate_samples` only requires that `self.test_conditions` be a non-empty `(N, 6)` tensor.
+
+---
+
+## PlaneFNNGenerator
+
+Feedforward bbox regressor — no diffusion sampling, just a direct forward pass conditioned on `[energy, class_id, sin_z, cos_z, sin_a, cos_a]`. Used as a fast per-plane bounding-box predictor in the 3D pipeline.
+
+```python
+from tambo_3D_fnn_scaler import PlaneFNNGenerator
+
+generator = PlaneFNNGenerator(
+    data_dir="/path/to/data",
+    checkpoint_path="/path/to/fnn_ckpt.ckpt",
+    device="cuda:0",
+    imports_path="/path/to/tambo_optimization",
+)
+generator.load_model()
+generator.test_conditions = torch.tensor([[energy, class_id, sin_z, cos_z, sin_a, cos_a]])
+outputs = generator.generate_samples(num_samples=100)
+```
+
+Depends on `lightning_training_fnn.PlaneDataset` and `lightning_training_fnn.PlaneFNNModule`. Bbox standardization stats are loaded from `data_dir`.
+
+---
 
 ## Requirements
 
-Same as original script:
-- PyTorch
-- NumPy
-- Matplotlib
-- Your `diffusion_train` module
-- Your `models.DiffusionCondition` module
+- PyTorch, PyTorch Lightning
+- NumPy, Matplotlib
+- Project-local modules: `diffusion_train`, `models.DiffusionCondition`, `lightning_training(_fnn)`, `diffusion.DDIMSamplerPlanes`
+  (add their parent dir via `tambo_optimization_path` / `imports_path`)
 
-## Support
+---
 
-For issues or questions, refer to:
-- `example_usage.py` for practical examples
-- Original script comments for algorithm details
-- Class docstrings for method documentation
+## Status
+
+Archival v1 generators — kept for reproducibility of the earlier SWGOLO7 runs. Current work uses the refactored generators under `detector_optimization_v2/diffusion_model/` (`PlaneDiffusionEvaluator`, `PlaneFNNGenerator` there have been integrated into the differentiable shower-generation step).
