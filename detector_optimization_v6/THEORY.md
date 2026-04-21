@@ -31,7 +31,7 @@ The pipeline comprises five sequential stages:
 | **Step 0** | Energy/angle sampling ranges | Point-cloud showers $(\mathbf{r}, E, t)$ | Generate synthetic shower library |
 | **Step 1** | Shower library + mountain geometry | $(primary, xy, E, T)$ training tensors | Pair showers with diverse layouts; compute detector responses |
 | **Step 2** | Training tensors | Frozen `fnn.pt` checkpoint | Train surrogate: $(primary, layout) \to (E_\text{det}, T_\text{det})$ |
-| **Step 3** | Training tensors + frozen FNN | Frozen `recon.pt` checkpoint | Train reconstruction: $(x, y, E_\text{det}, T_\text{det}) \to (\hat E, \hat\theta, \hat\phi)$ |
+| **Step 3** | Training tensors + frozen FNN | Frozen `recon.pt` checkpoint | Train reconstruction: $(x, y, E_\text{det}, T_\text{det}) \to (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E})$ |
 | **Step 4** | Frozen FNN + frozen recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ | Maximise composite utility via backpropagation through both NNs |
 
 
@@ -143,37 +143,38 @@ $$\mathcal{L}_\text{FNN} = \frac{1}{2}\bigl(\text{MSE}_E + \text{MSE}_T\bigr) \q
 
 ### 4.4 Step 3 — Reconstruction Network Training (`03_train_recon.py`)
 
-**Purpose**: Learn to invert the detection process:
+**Purpose**: Learn to invert the detection process directly into the v6 primary encoding:
 
-$$f_\text{recon}: (x_i, y_i, \hat E_i, \hat T_i)_{i=1}^{100} \;\longmapsto\; (\hat E, \hat\theta, \hat\phi)$$
+$$f_\text{recon}: (x_i, y_i, \hat E_i, \hat T_i)_{i=1}^{100} \;\longmapsto\; (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E}) \in \mathbb{R}^4$$
 
-Given the per-detector positions and the FNN-predicted responses, reconstruct the primary particle's physical properties.
+Given the per-detector positions and the FNN-predicted responses, reconstruct the primary's **direction unit vector** $\hat{\mathbf n} = (\sin\theta\cos\phi, \sin\theta\sin\phi, \cos\theta)$ and **normalised log-energy** $\widetilde{\log E} = (\log_{10} E - 5)/3$. The network predicts the same 4-D encoding as the first four columns of the primary vector $\mathbf{q}$ (Section 3.3); $(E, \theta, \phi)$ are recovered analytically downstream (Section 4.5). Predicting a unit vector instead of $(\theta, \phi)$ avoids the $\phi$ branch cut at $0/2\pi$ and keeps the loss geometrically well-behaved near the poles.
 
 **Training data generation**: The frozen FNN from Step 2 is run in eval mode on the entire training corpus to produce predicted $(\hat E_i, \hat T_i)$. The reconstruction network is trained on FNN *predictions* (not ground-truth kernel outputs) — this is critical because at optimisation time the reconstruction network will only ever see FNN outputs, so it must be robust to FNN-specific prediction patterns and artefacts.
 
-**Targets**: Physical labels $(E_\text{GeV}, \theta_\text{rad}, \phi_\text{rad})$ are extracted from the primary encoding and normalised to $[0, 1]$ via:
+**Targets**: The recon target is `primary[:, :4]` — i.e. the raw 4-D primary encoding $(n_x, n_y, n_z, \widetilde{\log E})$ — used in raw units. Per-channel z-score stats are taken from the FNN's `norm_stats.pt` (slots 0–3 of the primary input stats) and baked into the model as output denormalisation buffers so that both training loss and inference live in the same raw units.
 
-$$\tilde E = \frac{E - E_\text{min}}{E_\text{max} - E_\text{min}}, \quad \tilde\theta = \frac{\theta - \theta_\text{min}}{\theta_\text{max} - \theta_\text{min}}, \quad \tilde\phi = \frac{\phi}{2\pi}$$
-
-**Architecture**: A 3-layer MLP (v3 Reconstruction):
+**Architecture**: The v6 `Reconstruction` module (`modules_v6/reconstruction.py`) mirrors `FNNSurrogate` one-for-one:
 
 ```
-Input:  [x, y, E_pred, T_pred] × 100 = 400 features
-        ↓ z-score normalisation (frozen training-time stats)
-Linear(400, 256) → ReLU → Dropout(0.1)
-Linear(256, 128) → ReLU
-Linear(128,  32) → ReLU
-Linear( 32,   3) → Tanh
-Output: (E_norm, θ_norm, φ_norm) ∈ [-1, 1]³
+Input:  [x, y, E_pred, T_pred] × 100 = 400 features (raw units)
+        ↓ z-score normalisation (frozen buffers)
+Linear(400, 512) → ReLU → Dropout(0.1)
+Linear(512, 512) → ReLU → Dropout(0.1)
+Linear(512, 512) → ReLU
+Linear(512,   4)
+        ↓ z-score denormalisation (frozen buffers)
+Output: (n_x, n_y, n_z, log_e_norm) in raw primary-encoding units
 ```
 
-The frozen z-score normalisation of the input is essential: raw mountain-scale coordinates (thousands of metres) would saturate the Tanh output without it.
+Both the input z-score and the output de-z-score are registered buffers populated via `set_normalization(...)`, so the caller feeds raw detector features and reads raw primary-encoding units — no external pre-/post-processing, and no Tanh squashing.
 
-**Loss**: Sum of per-axis MSE in the normalised label space:
+**Shared normalisation with the FNN**: The recon input stats are reused directly from `norm_stats.pt` (rather than recomputed over the train subset). The per-detector stats `(x, y, E, T)` are broadcast to all 100 slots so that a permutation of the detectors leaves the normalisation invariant. This guarantees that training, validation, and `04_optimize.py` all see one identical z-score.
 
-$$\mathcal{L}_\text{recon} = \text{MSE}_E + \text{MSE}_\theta + \text{MSE}_\phi$$
+**Loss**: Sum of per-axis MSE in the raw primary-encoding space:
 
-**Permutation Augmentation**: Same random-permutation scheme as Step 2, but now the *target* is a scalar 3-vector (primary properties) that is invariant to detector ordering — only the input features are permuted. This teaches the MLP to be approximately **permutation-invariant** in its output.
+$$\mathcal{L}_\text{recon} = \text{MSE}_{n_x} + \text{MSE}_{n_y} + \text{MSE}_{n_z} + \text{MSE}_{\widetilde{\log E}}$$
+
+**Permutation Augmentation**: Same random-permutation scheme as Step 2. The target is a scalar 4-vector (primary encoding) that is invariant to detector ordering — only the input features are permuted. This teaches the MLP to be approximately **permutation-invariant** in its output.
 
 **Optimiser**: Adam at $3 \times 10^{-5}$, gradient clipping at 10.0.
 
@@ -210,14 +211,16 @@ $$\mathcal{L}_\text{recon} = \text{MSE}_E + \text{MSE}_\theta + \text{MSE}_\phi$
                                     ┌──────────────────────┐
                                     │  Build recon input   │
                                     │  (x, y, E, T) flat   │
-                                    │  → z-score norm      │
+                                    │  (raw units)         │
                                     └──────────┬───────────┘
                                                │
                                                ▼
                                     ┌──────────────────────┐
                                     │  Recon NN (frozen)   │
-                                    │  → (Ê, θ̂, φ̂)        │
-                                    │  → Denormalize       │
+                                    │  z-score in/out baked │
+                                    │  → (n̂_x, n̂_y, n̂_z,  │
+                                    │     log_e_norm)     │
+                                    │  decode → (Ê, θ̂, φ̂) │
                                     └──────────┬───────────┘
                                                │
                               ┌────────────────┼────────────────┐
@@ -312,6 +315,8 @@ Training them separately allows:
 - The recon network to be trained on FNN *predictions* (not ground truth), making it robust to the surrogate's systematic biases.
 - Either network to be retrained independently if the architecture or training data changes.
 
+Both networks share the same architecture (3×512 hidden, dropout 0.1) and the same normalisation contract (per-feature z-score baked into the forward pass via registered buffers, with stats drawn from `norm_stats.pt`). The only difference is the input/output signature and the direction of the physics.
+
 ### 5.2 Why Permutation Augmentation?
 
 Both networks use flat MLPs, which are inherently order-dependent. A principled solution would be a set-equivariant architecture (e.g., DeepSets, Set Transformer), but MLPs are simpler, faster, and sufficient when combined with permutation augmentation during training. The augmentation ensures:
@@ -336,14 +341,14 @@ The mountain surface is a non-convex 2D manifold embedded in 3D. Unconstrained g
 
 ## 6. Normalisation Strategy
 
-The pipeline uses three distinct normalisation schemes, each for a specific purpose:
+The pipeline normalises both surrogates through the **same z-score pipeline**, sourced from a single `norm_stats.pt`:
 
 | Where | What | Why |
 |-------|------|-----|
 | **FNN input/output** | Z-score (mean/std from training corpus, baked into forward pass buffers) | Ensures all features contribute equally to MSE; mountain-scale coordinates and small energy counts are on comparable scales |
-| **Recon targets** | Min-max to $[0, 1]$ via NormalizeLabels | Tanh output head naturally matches $[-1, 1]$; physical range is known a priori |
-| **Recon input** | Z-score (frozen training-time stats) | Mountain-scale $(x, y)$ values (thousands of metres) would saturate Tanh without normalisation |
-| **FNN training labels** | $\log(1 + x)$ before z-score | Compresses heavy right tail of energy/time distributions |
+| **Recon input** | Z-score reusing the FNN's per-feature primary/xy/E/T stats (broadcast per-detector, baked into forward pass buffers) | Mountain-scale $(x, y)$ values and FNN output scales need normalisation; sharing stats with the FNN keeps train / val / optimisation on one identical scale |
+| **Recon output** | Z-score denormalisation with stats from FNN primary slots 0–3 (baked into forward pass buffers) | The 4-D primary encoding lives in known raw units; baking de-z-score into `forward()` lets losses and downstream decoding work directly in raw primary units, with no min-max/Tanh squash |
+| **FNN training labels (E)** | $\log(1 + x)$ before z-score | Compresses heavy right tail of the energy distribution. $T$ is z-scored in its raw (ns) units since removing the log-scale |
 
 
 ## 7. Data Layout and Storage
@@ -402,6 +407,6 @@ subject to $\;(x_i, y_i) \in \mathcal{M}\;$ for all $i$, where $\mathcal{M}$ is 
 
 The expectation is approximated by mini-batches of 256 primaries sampled uniformly from the training corpus each epoch. Gradients flow from the scalar utility $U$ through:
 
-$$U \;\xleftarrow{\text{utility}}\; (\hat E, \hat\theta, \hat\phi, r) \;\xleftarrow{f_\text{recon}}\; (x_i, y_i, \hat E_i, \hat T_i) \;\xleftarrow{f_\text{FNN}}\; (\mathbf{q}, x_i, y_i)$$
+$$U \;\xleftarrow{\text{utility}}\; (\hat E, \hat\theta, \hat\phi, r) \;\xleftarrow{\text{decode}}\; (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E}) \;\xleftarrow{f_\text{recon}}\; (x_i, y_i, \hat E_i, \hat T_i) \;\xleftarrow{f_\text{FNN}}\; (\mathbf{q}, x_i, y_i)$$
 
 back to the learnable parameters $(x_i, y_i)$. Both $f_\text{FNN}$ and $f_\text{recon}$ are frozen (no weight updates); only the detector positions receive gradient updates.
