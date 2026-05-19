@@ -633,6 +633,29 @@ def main():
                  adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
     print(f"[done] best recon val {overall_best_val:.4f}  -> {RECON_FOLDER}")
 
+    # Auto-render the end-to-end (FNN -> recon) target-vs-prediction scatter
+    # next to recon.pt using the tensors + models we already have in memory.
+    # Refresh recon's state_dict from recon.pt so we plot the best-val
+    # iterate, not the last L-BFGS step. Failures shouldn't tank the run.
+    try:
+        _best = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
+        recon.load_state_dict(_best["state_dict"])
+        recon.eval()
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location(
+            "_plot_tvp",
+            os.path.join(_HERE, "plots", "02_plot_nn_target_vs_pred.py"),
+        )
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.plot_recon_only(
+            fnn=fnn, recon=recon,
+            primary=primary, xy=xy,
+            val_idx=val_idx,
+        )
+    except Exception as exc:
+        print(f"[plot-tvp] skipped ({exc!r})")
+
 
 if __name__ == "__main__":
     main()

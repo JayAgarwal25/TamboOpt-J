@@ -130,27 +130,9 @@ def fnn_predict(fnn: FNNSurrogate,
     return E_pred, T_pred
 
 
-def plot_fnn(primary, xy, E_true, T_true, val_idx, output_path):
-    fnn = load_fnn()
-    p = primary[val_idx]
-    x = xy[val_idx]
-    E_t = E_true[val_idx]
-    T_t = T_true[val_idx]
-    E_p, T_p = fnn_predict(fnn, p, x)
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
-    _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
-             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)")
-    _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
-             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)")
-    fig.suptitle("FNN target vs prediction — val split", fontsize=13)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=130)
-    plt.close(fig)
-    print(f"[save] {output_path}")
-
-
-def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
+def load_recon() -> Reconstruction:
+    """Mirror of load_fnn() for the recon checkpoint. Used by the standalone
+    CLI path; training scripts pass an already-trained Reconstruction in."""
     recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
     cfg = recon_ckpt.get("config", {})
     recon = Reconstruction(
@@ -170,7 +152,34 @@ def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
     recon.eval()
     print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
           f"val={recon_ckpt.get('val_total','?')}")
+    return recon
 
+
+def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
+    """Pure rendering — no I/O for models or corpus. Caller supplies a loaded
+    FNN in eval mode plus the in-memory tensors. T_true must already be
+    log1p(T*1e8)-transformed (matching what the FNN was trained against)."""
+    p   = primary[val_idx]
+    x   = xy[val_idx]
+    E_t = E_true[val_idx]
+    T_t = T_true[val_idx]
+    E_p, T_p = fnn_predict(fnn, p, x)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
+    _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
+             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)")
+    _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
+             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)")
+    fig.suptitle("FNN target vs prediction — val split", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=130)
+    plt.close(fig)
+    print(f"[save] {output_path}")
+
+
+def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
+    """Pure rendering — caller supplies both nets (eval mode) and the
+    in-memory primary/xy tensors. Recon target is `primary[val_idx, :4]`."""
     p = primary[val_idx]
     x = xy[val_idx]
 
@@ -203,46 +212,86 @@ def plot_recon(primary, xy, val_idx, output_path, fnn: FNNSurrogate):
     print(f"[save] {output_path}")
 
 
-def main():
-    print("=" * 72)
-    print("v6/plots/02_plot_nn_target_vs_pred.py")
-    print("=" * 72)
+def _load_corpus():
+    """Load shared tensors + strategy ids. Applies log1p(T*1e8) so T_true
+    matches the FNN's training target space (see 02_train_fnn.py).
 
+    Only used by the standalone CLI / when training scripts call into the
+    plotters without providing their already-loaded tensors."""
     primary   = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
     xy        = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "xy.pt")).float()
     E_true    = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
     T_true    = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
     strat_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
-    print(f"[load] primary={tuple(primary.shape)}  xy={tuple(xy.shape)}")
-
-    # E on disk is log1p(raw E) per 01_build_dataset.py:90, so the FNN's E
-    # output and E_true already share units. T on disk is raw seconds; the
-    # FNN was trained on log1p(T*1e8), so match its target space here.
     T_true = torch.log1p(T_true * T_LOG_SCALE)
-    print(f"[log1p-T] applied log1p(T * {T_LOG_SCALE:.0e}); "
-          f"T_true range now [{float(T_true.min()):.3f}, {float(T_true.max()):.3f}]")
+    return primary, xy, E_true, T_true, strat_ids
 
-    fnn_val_idx   = shower_level_val_idx(strat_ids, VAL_FRAC, FNN_VAL_SEED)
-    recon_val_idx = shower_level_val_idx(strat_ids, VAL_FRAC, RECON_VAL_SEED)
-    print(f"[split] fnn val pairs={len(fnn_val_idx):,}  "
-          f"recon val pairs={len(recon_val_idx):,}")
 
-    # Save each scatter next to its corresponding checkpoint so the plot
-    # lives in the same folder as the artifacts it summarizes.
-    os.makedirs(FNN_FOLDER, exist_ok=True)
-    os.makedirs(RECON_FOLDER, exist_ok=True)
+def plot_fnn_only(*, fnn=None,
+                  primary=None, xy=None,
+                  E_true=None, T_true=None,
+                  val_idx=None,
+                  output_path=None):
+    """Render fnn_target_vs_pred.png. Every argument is optional: anything
+    left as None gets loaded from disk so the standalone CLI still works.
 
-    plot_fnn(
-        primary, xy, E_true, T_true, fnn_val_idx,
-        os.path.join(FNN_FOLDER, "fnn_target_vs_pred.png"),
-    )
+    Training-script callers (02_train_fnn.py) pass everything they already
+    have in memory — fnn (with best weights reloaded), primary, xy, E_all,
+    T_all (already log1p-transformed in 02), val_idx — and no disk I/O for
+    the corpus is performed. T_true MUST be in log-T space if provided.
+    """
+    if primary is None or xy is None or E_true is None or T_true is None:
+        primary, xy, E_true, T_true, strat_ids_disk = _load_corpus()
+    else:
+        strat_ids_disk = None
+    if val_idx is None:
+        if strat_ids_disk is None:
+            strat_ids_disk = torch.load(
+                os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")
+            ).long()
+        val_idx = shower_level_val_idx(strat_ids_disk, VAL_FRAC, FNN_VAL_SEED)
+    if fnn is None:
+        fnn = load_fnn()
+    if output_path is None:
+        os.makedirs(FNN_FOLDER, exist_ok=True)
+        output_path = os.path.join(FNN_FOLDER, "fnn_target_vs_pred.png")
+    _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path)
 
-    fnn = load_fnn()
-    plot_recon(
-        primary, xy, recon_val_idx,
-        os.path.join(RECON_FOLDER, "recon_target_vs_pred.png"),
-        fnn,
-    )
+
+def plot_recon_only(*, fnn=None, recon=None,
+                    primary=None, xy=None,
+                    val_idx=None,
+                    output_path=None):
+    """Render recon_target_vs_pred.png. Like `plot_fnn_only`, every argument
+    is optional. Training-script callers (03_train_recon.py) pass fnn +
+    recon (best weights reloaded) + primary + xy + val_idx; no disk I/O for
+    those is then performed."""
+    if primary is None or xy is None:
+        primary, xy, _E, _T, strat_ids_disk = _load_corpus()
+    else:
+        strat_ids_disk = None
+    if val_idx is None:
+        if strat_ids_disk is None:
+            strat_ids_disk = torch.load(
+                os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")
+            ).long()
+        val_idx = shower_level_val_idx(strat_ids_disk, VAL_FRAC, RECON_VAL_SEED)
+    if fnn is None:
+        fnn = load_fnn()
+    if recon is None:
+        recon = load_recon()
+    if output_path is None:
+        os.makedirs(RECON_FOLDER, exist_ok=True)
+        output_path = os.path.join(RECON_FOLDER, "recon_target_vs_pred.png")
+    _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path)
+
+
+def main():
+    print("=" * 72)
+    print("v6/plots/02_plot_nn_target_vs_pred.py")
+    print("=" * 72)
+    plot_fnn_only()
+    plot_recon_only()
 
 
 if __name__ == "__main__":

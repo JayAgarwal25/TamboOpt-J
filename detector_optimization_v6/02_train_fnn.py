@@ -562,6 +562,33 @@ def main():
                  adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
     print(f"[done] best val {overall_best_val:.4f}  -> {FNN_FOLDER}")
 
+    # Auto-render the target-vs-prediction scatter alongside fnn.pt using the
+    # tensors + model we already have in memory — no extra corpus reload, no
+    # fresh FNN instantiation. We DO refresh the state_dict from fnn.pt
+    # because the in-memory `model` is at the LAST L-BFGS iter, while fnn.pt
+    # holds the best-val iterate (the closure saves whenever val improves).
+    # Failures here shouldn't tank the training run.
+    try:
+        _best = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
+        model.load_state_dict(_best["state_dict"])
+        model.eval()
+        # Module filename starts with a digit, can't be regular-imported; use importlib.
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location(
+            "_plot_tvp",
+            os.path.join(_HERE, "plots", "02_plot_nn_target_vs_pred.py"),
+        )
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.plot_fnn_only(
+            fnn=model,
+            primary=primary, xy=xy,
+            E_true=E_all, T_true=T_all,  # both already in log-space (T_all log1p'd in-place above)
+            val_idx=val_idx,
+        )
+    except Exception as exc:
+        print(f"[plot-tvp] skipped ({exc!r})")
+
 
 if __name__ == "__main__":
     main()
