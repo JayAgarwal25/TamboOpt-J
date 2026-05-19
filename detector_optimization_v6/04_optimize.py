@@ -51,7 +51,7 @@ from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
+    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
 )
 from modules_v6.reconstruction   import Reconstruction
@@ -61,13 +61,17 @@ from modules_v4.tr_geometry      import load_tr_mountain
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-OPT_DIR = os.path.join(_HERE, "outputs", "v6_run_04_optimize")
+# Each entry in INIT_SCHEMES is a separate optimization run; outputs go to
+# `<OPT_FOLDER>_{scheme}` (one sibling dir per init) on the run-storage
+# filesystem so they sit alongside the v6_run_01..03 artifacts. Set to a
+# single-element tuple (e.g. ("center",)) to run only one scheme.
+INIT_SCHEMES = ("grid", "center")
+OPT_DIR_TEMPLATE = OPT_FOLDER + "_{scheme}"
 
 N_OPT_EPOCHS       = 10000
 PRIMARIES_PER_STEP = 256
 LR                 = 1              # v3/v4 use lr=10; MLP Jacobian is larger
 GRAD_CLIP          = 100.0
-LAYOUT_INIT_SCHEME = "center"           # grid | center | random
 
 # Utility composite weights (match v4: (1e2·U_θ + 1e2·U_φ + 1e3·U_E + 5e5·U_PR) / 1e3)
 W_THETA = 1e2
@@ -147,77 +151,32 @@ def _plot_layout(x_final, y_final, N_init, U_init, mountain, path: str) -> None:
         print(f"[plot] skipped ({exc!r})")
 
 
-def main():
-    os.makedirs(OPT_DIR, exist_ok=True)
-    torch.manual_seed(SEED)
-    np.random.seed(SEED)
+def _run_optimization(*,
+                      init_scheme: str,
+                      opt_dir: str,
+                      n_epochs: int,
+                      primaries_per_step: int,
+                      primary_source,           # callable(batch_size) -> (B, 5) tensor on DEVICE
+                      mountain,
+                      fnn,
+                      recon,
+                      log_every: int = LOG_EVERY,
+                      save_every: int = SAVE_EVERY):
+    """Run one optimization cycle and save artifacts to `opt_dir`.
 
-    print("=" * 72)
-    print("v6/04_optimize.py")
-    print("=" * 72)
-    print(f"geometry         : {GEOMETRY_PATH}")
-    print(f"training dataset : {TRAINING_DATASET_FOLDER}")
-    print(f"fnn checkpoint   : {FNN_FOLDER}")
-    print(f"recon checkpoint : {RECON_FOLDER}")
+    Returns (best_U, best_epoch). Setup (FNN/recon/mountain/corpus) is done
+    once by the caller and shared across runs.
+    """
+    os.makedirs(opt_dir, exist_ok=True)
 
-    print(f"opt dir         : {OPT_DIR}")
-    print(f"device          : {DEVICE}")
-    print(f"epochs          : {N_OPT_EPOCHS}")
-    print(f"primaries/step  : {PRIMARIES_PER_STEP}")
-    print(f"grad clip       : {GRAD_CLIP}")
-    print(f"layout init     : {LAYOUT_INIT_SCHEME}")
+    print("-" * 72)
+    print(f"[run] init_scheme={init_scheme}  epochs={n_epochs}  "
+          f"primaries/step={primaries_per_step}")
+    print(f"[run] opt_dir={opt_dir}")
 
-    # Load corpus (primaries only — we sample batches each epoch)
-    primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
-    norm_stats  = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
-    n_total_primaries = int(primary_all.shape[0])
-    print(f"[load] {n_total_primaries} primaries")
-
-    # Frozen FNN
-    fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
-    fnn = FNNSurrogate(n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                       hidden=512, dropout=0.1).to(DEVICE)
-    fnn.load_state_dict(fnn_ckpt["state_dict"])
-    fnn.set_normalization(norm_stats)
-    fnn.eval()
-    for p in fnn.parameters():
-        p.requires_grad_(False)
-    print(f"[load] fnn.pt    epoch={fnn_ckpt.get('epoch','?')}  "
-          f"val={fnn_ckpt.get('val_total', fnn_ckpt.get('val','?'))}")
-
-    # Frozen reconstruction
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
-    recon_feat = int(recon_ckpt.get("input_features", 4))
-    recon_nd   = int(recon_ckpt.get("num_detectors", N_DETECTORS))
-    cfg = recon_ckpt.get("config", {})
-    recon = Reconstruction(
-        n_det=recon_nd,
-        input_features=recon_feat,
-        output_dim=int(cfg.get("output_dim", 4)),
-        hidden=int(cfg.get("hidden", 512)),
-        dropout=float(cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    recon.load_state_dict(recon_ckpt["state_dict"])
-    recon.set_normalization(
-        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
-        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
-        out_mean = recon_ckpt["target_mean"].to(DEVICE),
-        out_std  = recon_ckpt["target_std" ].to(DEVICE),
-    )
-    recon.eval()
-    for p in recon.parameters():
-        p.requires_grad_(False)
-    print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
-          f"val={recon_ckpt.get('val_total', recon_ckpt.get('val','?'))}  "
-          f"feats/det={recon_feat}")
-
-    # Mountain + initial layout
-    mountain = load_tr_mountain(
-        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-        east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
-    )
+    # Initial layout for this run
     N_init_np, U_init_np = mountain.sample_initial_layout(
-        n_units=N_DETECTORS, scheme=LAYOUT_INIT_SCHEME,
+        n_units=N_DETECTORS, scheme=init_scheme,
     )
     N_init = torch.as_tensor(N_init_np, dtype=torch.float32)
     U_init = torch.as_tensor(U_init_np, dtype=torch.float32)
@@ -239,18 +198,17 @@ def main():
     best_epoch = -1
     traj = []                                   # (epoch, (100, 2)) snapshots
 
-    for epoch in range(N_OPT_EPOCHS):
+    for epoch in range(n_epochs):
         t_epoch = time.time()
 
-        # Sample a random primary batch from the corpus
-        idx = torch.randint(0, n_total_primaries, (PRIMARIES_PER_STEP,))
-        primary_batch = primary_all[idx].to(DEVICE)
+        # Primary batch (random sample in normal mode, fixed shower in test mode)
+        primary_batch = primary_source(primaries_per_step)
         E_true, theta_true, phi_true = primary_to_physical_labels(primary_batch)
 
         # Current layout (differentiable)
         x_det, y_det = xy_module()
         xy_per_det = torch.stack([x_det, y_det], dim=-1)                     # (100, 2)
-        xy_batch   = xy_per_det.unsqueeze(0).expand(PRIMARIES_PER_STEP, -1, -1)  # (B, 100, 2)
+        xy_batch   = xy_per_det.unsqueeze(0).expand(primaries_per_step, -1, -1)  # (B, 100, 2)
 
         # FNN forward (frozen)
         pred_ET = fnn(primary_batch, xy_batch)                                # (B, 100, 2)
@@ -262,10 +220,8 @@ def main():
             [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
             dim=-1,
         )                                                                    # (B, 100, 4)
-        recon_input = recon_feats.reshape(PRIMARIES_PER_STEP, -1)             # (B, 400) raw
+        recon_input = recon_feats.reshape(primaries_per_step, -1)             # (B, 400) raw
         pred = recon(recon_input)                                             # (B, 4) raw primary encoding
-        # pred columns: [dir_x, dir_y, dir_z, log_e_norm] — same layout as
-        # primary[:, :4], so primary_to_physical_labels decodes it directly.
         E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
         E_pred_phys = E_pred_phys.clamp(min=1.0)
 
@@ -309,8 +265,8 @@ def main():
             r_mean=r_mean, grad_norm=gn, dt=dt,
         ))
 
-        if epoch % LOG_EVERY == 0 or epoch == N_OPT_EPOCHS - 1:
-            print(f"[epoch {epoch+1:4d}/{N_OPT_EPOCHS}] "
+        if epoch % log_every == 0 or epoch == n_epochs - 1:
+            print(f"[epoch {epoch+1:4d}/{n_epochs}] "
                   f"U={u_val:+.3f} (θ={u_theta.item():.2f} φ={u_phi.item():.2f} "
                   f"E={u_e.item():.2f} PR={u_pr.item():.2f})  "
                   f"r={r_mean:.3f}  |g|={gn:.2f}  {dt:.2f}s")
@@ -323,9 +279,9 @@ def main():
                 "y": xy_module.y.detach().cpu(),
                 "epoch": epoch + 1,
                 "U": u_val,
-            }, os.path.join(OPT_DIR, "layout_best.pt"))
+            }, os.path.join(opt_dir, "layout_best.pt"))
 
-        if (epoch + 1) % SAVE_EVERY == 0 or epoch == N_OPT_EPOCHS - 1:
+        if (epoch + 1) % save_every == 0 or epoch == n_epochs - 1:
             snap = torch.stack([
                 xy_module.x.detach().cpu(),
                 xy_module.y.detach().cpu(),
@@ -338,26 +294,26 @@ def main():
     torch.save({
         "x": torch.as_tensor(x_final),
         "y": torch.as_tensor(y_final),
-        "epoch": N_OPT_EPOCHS,
+        "epoch": n_epochs,
         "U_final": log[-1]["U"] if log else None,
-    }, os.path.join(OPT_DIR, "layout_final.pt"))
+    }, os.path.join(opt_dir, "layout_final.pt"))
 
     if traj:
         snaps = torch.stack([s for _, s in traj], dim=0)                      # (K, 100, 2)
         epochs = torch.tensor([e for e, _ in traj], dtype=torch.long)
         torch.save({"epochs": epochs, "xy": snaps},
-                   os.path.join(OPT_DIR, "xy_trajectory.pt"))
+                   os.path.join(opt_dir, "xy_trajectory.pt"))
 
-    with open(os.path.join(OPT_DIR, "optimize_log.json"), "w") as f:
+    with open(os.path.join(opt_dir, "optimize_log.json"), "w") as f:
         json.dump({
             "log": log,
             "best_U": best_u,
             "best_epoch": best_epoch,
             "config": dict(
-                n_opt_epochs=N_OPT_EPOCHS,
-                primaries_per_step=PRIMARIES_PER_STEP,
+                n_opt_epochs=n_epochs,
+                primaries_per_step=primaries_per_step,
                 lr=LR, grad_clip=GRAD_CLIP,
-                layout_init_scheme=LAYOUT_INIT_SCHEME,
+                layout_init_scheme=init_scheme,
                 w_theta=W_THETA, w_phi=W_PHI, w_e=W_E, w_pr=W_PR, w_div=W_DIV,
                 layout_threshold=LAYOUT_THRESHOLD,
                 reconstruct_threshold=RECONSTRUCT_THRESHOLD,
@@ -365,13 +321,121 @@ def main():
             ),
         }, f, indent=2)
 
-    _plot_curves(log, os.path.join(OPT_DIR, "optimize_curves.png"))
+    _plot_curves(log, os.path.join(opt_dir, "optimize_curves.png"))
     _plot_layout(
         x_final, y_final, N_init_plot, U_init_plot, mountain,
-        os.path.join(OPT_DIR, "layout_before_after.png"),
+        os.path.join(opt_dir, "layout_before_after.png"),
     )
 
-    print(f"[done] best U {best_u:+.3f} at epoch {best_epoch}  -> {OPT_DIR}")
+    print(f"[done] best U {best_u:+.3f} at epoch {best_epoch}  -> {opt_dir}")
+    return best_u, best_epoch
+
+
+def main():
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
+
+    print("=" * 72)
+    print("v6/04_optimize.py")
+    print("=" * 72)
+    print(f"geometry         : {GEOMETRY_PATH}")
+    print(f"training dataset : {TRAINING_DATASET_FOLDER}")
+    print(f"fnn checkpoint   : {FNN_FOLDER}")
+    print(f"recon checkpoint : {RECON_FOLDER}")
+    print(f"device           : {DEVICE}")
+    print(f"grad clip        : {GRAD_CLIP}")
+    print(f"init schemes     : {INIT_SCHEMES}")
+    print(f"epochs/run       : {N_OPT_EPOCHS}")
+    print(f"primaries/step   : {PRIMARIES_PER_STEP}")
+
+    # Load corpus (primaries only — we sample batches each epoch)
+    primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
+    n_total_primaries = int(primary_all.shape[0])
+    print(f"[load] {n_total_primaries} primaries")
+
+    # Frozen FNN — read width + dropout from the ckpt config and prefer the
+    # ckpt's norm_stats over the disk file (02_train_fnn.py modifies T stats
+    # in-memory for log-T training and saves them inside fnn.pt; the on-disk
+    # norm_stats.pt still has raw-T values, which would mismatch the trained
+    # model's denormalization).
+    fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
+    fnn_cfg  = fnn_ckpt.get("config", {})
+    fnn_hidden  = int(fnn_cfg.get("hidden", 512))
+    fnn_dropout = float(fnn_cfg.get("dropout", 0.1))
+    fnn = FNNSurrogate(n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
+                       hidden=fnn_hidden, dropout=fnn_dropout).to(DEVICE)
+    fnn.load_state_dict(fnn_ckpt["state_dict"])
+    norm_stats = fnn_ckpt.get(
+        "norm_stats",
+        torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt")),
+    )
+    fnn.set_normalization(norm_stats)
+    fnn.eval()
+    for p in fnn.parameters():
+        p.requires_grad_(False)
+    print(f"[load] fnn.pt    epoch={fnn_ckpt.get('epoch','?')}  "
+          f"val={fnn_ckpt.get('val_total', fnn_ckpt.get('val','?'))}  "
+          f"hidden={fnn_hidden}")
+
+    # Frozen reconstruction
+    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
+    recon_feat = int(recon_ckpt.get("input_features", 4))
+    recon_nd   = int(recon_ckpt.get("num_detectors", N_DETECTORS))
+    cfg = recon_ckpt.get("config", {})
+    recon = Reconstruction(
+        n_det=recon_nd,
+        input_features=recon_feat,
+        output_dim=int(cfg.get("output_dim", 4)),
+        hidden=int(cfg.get("hidden", 512)),
+        dropout=float(cfg.get("dropout", 0.1)),
+    ).to(DEVICE)
+    recon.load_state_dict(recon_ckpt["state_dict"])
+    recon.set_normalization(
+        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
+        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
+        out_mean = recon_ckpt["target_mean"].to(DEVICE),
+        out_std  = recon_ckpt["target_std" ].to(DEVICE),
+    )
+    recon.eval()
+    for p in recon.parameters():
+        p.requires_grad_(False)
+    print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
+          f"val={recon_ckpt.get('val_total', recon_ckpt.get('val','?'))}  "
+          f"feats/det={recon_feat}")
+
+    # Mountain (geometry) — built once, shared across runs
+    mountain = load_tr_mountain(
+        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+        east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
+    )
+
+    def random_batch_source(batch_size: int) -> torch.Tensor:
+        idx = torch.randint(0, n_total_primaries, (batch_size,))
+        return primary_all[idx].to(DEVICE)
+
+    # One full run per entry in INIT_SCHEMES, output dirs disambiguated by
+    # scheme name so grid/center trajectories can be compared side-by-side.
+    for scheme in INIT_SCHEMES:
+        # Re-seed before each scheme so the only difference between runs is
+        # the initial layout; sampled primaries and any other RNG draws are
+        # otherwise identical across runs.
+        torch.manual_seed(SEED)
+        np.random.seed(SEED)
+        opt_dir = OPT_DIR_TEMPLATE.format(scheme=scheme)
+        print()
+        print("=" * 72)
+        print(f"init scheme: {scheme}")
+        print("=" * 72)
+        _run_optimization(
+            init_scheme=scheme,
+            opt_dir=opt_dir,
+            n_epochs=N_OPT_EPOCHS,
+            primaries_per_step=PRIMARIES_PER_STEP,
+            primary_source=random_batch_source,
+            mountain=mountain,
+            fnn=fnn,
+            recon=recon,
+        )
 
 
 if __name__ == "__main__":

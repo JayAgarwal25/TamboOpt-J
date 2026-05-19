@@ -95,7 +95,8 @@ def build_training_pairs(mountain, surface,
                          max_showers:       int = 0,
                          seed:              int = 0,
                          device:            torch.device = torch.device("cpu"),
-                         verbose:           bool = True):
+                         verbose:           bool = True,
+                         recenter_to_mountain: bool = False):
     """Build (primary, xy, E, T) training tensors from the cached shower corpus.
 
     For every shower in the cache, one layout per strategy in `_STRATEGIES` is
@@ -104,6 +105,14 @@ def build_training_pairs(mountain, surface,
     this is what makes v4's non-batched kernel affordable in one pass.
 
     The kernel runs on `device` (GPU if available); outputs are returned on CPU.
+
+    If `recenter_to_mountain` is True, each shower's particle-cloud xy is
+    shifted so its energy-weighted centroid lands on the mountain bbox center.
+    The cache has most clouds at x in [-11k, 0], y in [-5k, 0] while the
+    mountain bbox is roughly (-2.5k..+2.5k, +2.4k..+3.9k), so ~77% of raw
+    showers don't trigger any detector. Recentering turns every shower into a
+    useful training signal at the cost of decoupling impact point from
+    primary direction.
 
     Returns:
         primaries : (N_pairs, 5)   float32
@@ -126,6 +135,28 @@ def build_training_pairs(mountain, surface,
         dirs   = dirs[:n_showers]
         energs = energs[:n_showers]
         pdg    = pdg[:n_showers]
+
+    if recenter_to_mountain:
+        # Energy-weighted centroid (ignore padded entries via the energy mask)
+        # so each shower's bulk lands at mountain center. Padded particles
+        # (all-zero rows) stay at (0, 0) — they're outside the detector
+        # neighborhood (mountain is at ~(0, 3164)) so the kernel ignores them.
+        mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
+        mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
+        mask    = (points[:, :, 3] > 0).float()                  # (N, P)
+        w_sum   = mask.sum(dim=1).clamp(min=1.0)                 # (N,)
+        cx = (points[:, :, 0] * mask).sum(dim=1) / w_sum         # (N,)
+        cy = (points[:, :, 1] * mask).sum(dim=1) / w_sum
+        dx = (mtn_cx - cx).view(-1, 1)                           # (N, 1)
+        dy = (mtn_cy - cy).view(-1, 1)
+        points = points.clone()
+        points[..., 0] = points[..., 0] + dx * mask
+        points[..., 1] = points[..., 1] + dy * mask
+        if verbose:
+            print(f"[recenter] shifted clouds to mountain center "
+                  f"({mtn_cx:.1f}, {mtn_cy:.1f}); "
+                  f"per-shower shift dx in [{float(dx.min()):.1f}, {float(dx.max()):.1f}]  "
+                  f"dy in [{float(dy.min()):.1f}, {float(dy.max()):.1f}]")
 
     primaries_all = encode_primary(dirs, energs, pdg)   # (N, 5)
 

@@ -1,5 +1,6 @@
 """Train the FNN surrogate on the v6_run_01 corpus.
 
+version 0030
 Loss is MSE in z-score-normalized output space so E and T channels get equal
 weight regardless of their physical scales. Every batch applies an independent
 random permutation to each sample's detector order (input xy and target
@@ -34,16 +35,18 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 import modules_v6  # triggers sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate import FNNSurrogate
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM, 
-    TRAINING_DATASET_FOLDER, FNN_FOLDER
+    N_DETECTORS, PRIMARY_DIM,
+    TRAINING_DATASET_FOLDER, FNN_FOLDER, TRAIN_FRACTION,
     )
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
 BATCH_SIZE          = 256
 N_EPOCHS            = 100
-LR                  = 1e-5
-LR_MIN              = 1e-7
+LR                  = 1e-5     # initial LR (OneCycleLR ramps from here up to LR_MAX)
+LR_MAX              = 1e-4     # OneCycleLR peak
+LR_MIN              = 1e-7     # OneCycleLR end (cosine anneal target)
+ONECYCLE_PCT_START  = 0.10     # 10% warmup, 90% cosine decay
 GRAD_CLIP           = 10.0
 VAL_FRAC            = 0.10
 SEED                = 0
@@ -53,7 +56,8 @@ DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
 LBFGS_MAX_ITER           = 500
-LBFGS_HISTORY_SIZE       = 20
+LBFGS_HISTORY_SIZE       = 5    # 0030: was 20 (cuts L-BFGS memory ~4x to unblock OOM on wider models)
+LBFGS_CHUNK_SIZE         = 4096 # 0030 (from 0010): chunked-closure forward to avoid full-batch OOM on wider Deep Sets
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -142,29 +146,30 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
         adam_log = [e for e in log if e.get("phase") != "lbfgs"]
         ep = [e["epoch"] for e in adam_log]
 
+        # Colors fixed: train -> C0 (matplotlib default 0), val -> C1.
+        # Per-channel plot separates E (solid) from T (dashed). L-BFGS uses
+        # the SAME colors+styles so each curve flows continuously across the
+        # dashed "Adam->L-BFGS" divider. No per-curve labels — the legend on
+        # axes[1] is built from proxy handles so it shows the SEMANTICS only
+        # (color = split, style = channel), not 4 redundant "train E / val E"
+        # entries.
+        from matplotlib.lines import Line2D
         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-        axes[0].plot(ep, [e["train"] for e in adam_log], label="train")
-        axes[0].plot(ep, [e["val"]   for e in adam_log], label="val")
-        axes[1].plot(ep, [e["train_E"] for e in adam_log], label="train E", linestyle="--")
-        axes[1].plot(ep, [e["val_E"]   for e in adam_log], label="val E")
-        axes[1].plot(ep, [e["train_T"] for e in adam_log], label="train T", linestyle="--")
-        axes[1].plot(ep, [e["val_T"]   for e in adam_log], label="val T")
+        axes[0].plot(ep, [e["train"] for e in adam_log], color="C0", label="train")
+        axes[0].plot(ep, [e["val"]   for e in adam_log], color="C1", label="val")
+        axes[1].plot(ep, [e["train_E"] for e in adam_log], color="C0")
+        axes[1].plot(ep, [e["val_E"]   for e in adam_log], color="C1")
+        axes[1].plot(ep, [e["train_T"] for e in adam_log], color="C0", linestyle="--")
+        axes[1].plot(ep, [e["val_T"]   for e in adam_log], color="C1", linestyle="--")
 
-        # L-BFGS iterations (train only — no per-iter val)
         if lbfgs_iter_log:
             lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
-            axes[0].plot(lb_ep, [e["loss"]  for e in lbfgs_iter_log],
-                         label="L-BFGS train", alpha=0.7)
-            axes[0].plot(lb_ep, [e["val"]   for e in lbfgs_iter_log],
-                         label="L-BFGS val", alpha=0.7)
-            axes[1].plot(lb_ep, [e["mse_E"] for e in lbfgs_iter_log],
-                         label="L-BFGS train E", linestyle="--", alpha=0.7)
-            axes[1].plot(lb_ep, [e["mse_T"] for e in lbfgs_iter_log],
-                         label="L-BFGS train T", linestyle="--", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_E"] for e in lbfgs_iter_log],
-                         label="L-BFGS val E", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_T"] for e in lbfgs_iter_log],
-                         label="L-BFGS val T", alpha=0.7)
+            axes[0].plot(lb_ep, [e["loss"]  for e in lbfgs_iter_log], color="C0")
+            axes[0].plot(lb_ep, [e["val"]   for e in lbfgs_iter_log], color="C1")
+            axes[1].plot(lb_ep, [e["mse_E"] for e in lbfgs_iter_log], color="C0")
+            axes[1].plot(lb_ep, [e["val_E"] for e in lbfgs_iter_log], color="C1")
+            axes[1].plot(lb_ep, [e["mse_T"] for e in lbfgs_iter_log], color="C0", linestyle="--")
+            axes[1].plot(lb_ep, [e["val_T"] for e in lbfgs_iter_log], color="C1", linestyle="--")
 
         if adam_epochs > 0:
             for ax in axes:
@@ -172,9 +177,16 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
                            label="Adam\u2192L-BFGS")
 
         axes[0].set_xlabel("epoch / iter"); axes[0].set_ylabel("MSE (z-scored)")
-        axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend()
+        axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend(fontsize=9)
         axes[1].set_xlabel("epoch / iter"); axes[1].set_ylabel("MSE (z-scored)")
-        axes[1].set_title("per-channel"); axes[1].grid(alpha=0.3); axes[1].legend()
+        axes[1].set_title("per-channel"); axes[1].grid(alpha=0.3)
+        # Proxy legend: 2 color entries (train/val) + 2 style entries (E/T).
+        axes[1].legend(handles=[
+            Line2D([], [], color="C0",                 label="train"),
+            Line2D([], [], color="C1",                 label="val"),
+            Line2D([], [], color="black",              label="E"),
+            Line2D([], [], color="black", linestyle="--", label="T"),
+        ], fontsize=9, loc="best")
         axes[0].set_yscale("log"); axes[1].set_yscale("log")
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -195,7 +207,7 @@ def main():
     print(f"device          : {DEVICE}")
     print(f"batch           : {BATCH_SIZE}")
     print(f"epochs          : {N_EPOCHS}")
-    print(f"lr              : {LR} -> {LR_MIN} cosine")
+    print(f"lr              : {LR} -> {LR_MAX} -> {LR_MIN} OneCycleLR (pct_start={ONECYCLE_PCT_START})")
     print(f"val frac        : {VAL_FRAC} (shower-level)")
     print(f"seed            : {SEED}")
 
@@ -211,9 +223,35 @@ def main():
           f"primary={tuple(primary.shape)}  xy={tuple(xy.shape)}  "
           f"E={tuple(E_all.shape)}  T={tuple(T_all.shape)}")
 
+    # Mirror the upstream `E = log1p(E)` treatment (01_build_dataset.py:90) for
+    # T. On-disk T is raw seconds (1e-12 .. 2.4e-6); log1p(T * 1e8) maps it to
+    # a workable 0..5.5 range, like E's post-log1p 0..19 range. After this,
+    # log-T is the canonical training target — no inverse at eval, val_mse_T
+    # is measured in z-scored log-T space (same convention E uses).
+    T_LOG_SCALE = 1.0e8
+    T_all = torch.log1p(T_all * T_LOG_SCALE)
+    _n_det_T = T_all.shape[1]
+    _T_mean_new = float(T_all.mean().item())
+    _T_std_new  = max(float(T_all.std().item()), 1e-6)
+    norm_stats['out_mean'][_n_det_T:] = _T_mean_new
+    norm_stats['out_std'][_n_det_T:]  = _T_std_new
+    print(f"[log1p-T] applied log1p(T * {T_LOG_SCALE:.0e}); "
+          f"new T mean={_T_mean_new:.4f} std={_T_std_new:.4f}  "
+          f"(canonical target is log-T; no inverse-transform at eval)")
+
     # Shower-level split
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
     print(f"[split] train pairs={len(train_idx)}  val pairs={len(val_idx)}")
+
+    # Optional training-set subsampling (keeps val full, scales Adam wall-time linearly).
+    # Edit TRAIN_FRACTION in modules_v6/constants.py to change.
+    if 0.0 < TRAIN_FRACTION < 1.0:
+        _n_orig = int(train_idx.shape[0])
+        _n_keep = max(1, int(round(TRAIN_FRACTION * _n_orig)))
+        _g_sub = torch.Generator().manual_seed(SEED)
+        _perm = torch.randperm(_n_orig, generator=_g_sub)
+        train_idx = train_idx[_perm[:_n_keep]]
+        print(f"[subsample] kept {_n_keep} of {_n_orig} train pairs (TRAIN_FRACTION={TRAIN_FRACTION})")
 
     full_ds  = TensorDataset(primary, xy, E_all, T_all)
     train_ds = Subset(full_ds, train_idx.tolist())
@@ -228,15 +266,25 @@ def main():
     torch.manual_seed(SEED)
     model = FNNSurrogate(
         n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-        hidden=512, dropout=0.1,
+        hidden=1024, dropout=0.1,
     ).to(DEVICE)
     model.set_normalization(norm_stats)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[model] params={n_params:,}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=N_EPOCHS, eta_min=LR_MIN,
+    # OneCycleLR (Smith & Topin 2017): warmup from LR -> LR_MAX over pct_start
+    # of total steps, then cosine-anneal to LR_MIN. Steps per-batch.
+    steps_per_epoch = len(train_loader)
+    total_steps = N_EPOCHS * steps_per_epoch
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=LR_MAX,
+        total_steps=total_steps,
+        pct_start=ONECYCLE_PCT_START,
+        anneal_strategy="cos",
+        div_factor=LR_MAX / LR,        # initial lr = max_lr / div_factor = LR
+        final_div_factor=LR_MAX / LR_MIN,  # end lr  = max_lr / final_div_factor = LR_MIN
     )
 
     log = []
@@ -265,13 +313,13 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
             optimizer.step()
+            scheduler.step()   # OneCycleLR steps per-batch
 
             B = p_b.shape[0]
             tr_tot += loss.item() * B
             tr_E   += mE.item()   * B
             tr_T   += mT.item()   * B
             n_tr   += B
-        scheduler.step()
         tr_tot /= max(n_tr, 1)
         tr_E   /= max(n_tr, 1)
         tr_T   /= max(n_tr, 1)
@@ -322,7 +370,7 @@ def main():
                 "norm_stats": norm_stats,
                 "config": dict(
                     n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                    hidden=512, dropout=0.1,
+                    hidden=1024, dropout=0.1,
                 ),
             }, os.path.join(FNN_FOLDER, "fnn.pt"))
 
@@ -370,14 +418,44 @@ def main():
 
     lbfgs_iter_log = []   # one entry per closure call
     t_lbfgs = time.time()
+    # 0030 (matches new baseline): track best L-BFGS val and save fnn.pt
+    # whenever it improves. Previously only the last iter was checked, so
+    # we threw away the L-BFGS minimum (siblings 0010/0023/0024 logged
+    # min < last by 0.003-0.006 absolute).
+    lbfgs_best_val = adam_best_val
+    lbfgs_best_iter = -1
+    n_total = int(p_all.shape[0])
 
     def closure():
+        # 0030: chunked forward+backward to avoid full-batch OOM on wider
+        # Deep Sets. zero grads once, then for each chunk run forward,
+        # weight loss by chunk_size/n_total, backward (accumulates grad),
+        # detach the loss scalar. Final scalar = mean over all samples,
+        # final grad = exact full-batch gradient (verified in 0010).
+        nonlocal lbfgs_best_val, lbfgs_best_iter
         lbfgs_optimizer.zero_grad()
-        pred = model(p_all, xy_all)
-        loss, mE, mT = mse_normalized(
-            pred, E_all_train, T_all_train, model.out_mean, model.out_std,
-        )
-        loss.backward()
+        sum_loss = 0.0
+        sum_E    = 0.0
+        sum_T    = 0.0
+        for start in range(0, n_total, LBFGS_CHUNK_SIZE):
+            end = min(start + LBFGS_CHUNK_SIZE, n_total)
+            chunk_size = end - start
+            p_c  = p_all[start:end]
+            xy_c = xy_all[start:end]
+            E_c  = E_all_train[start:end]
+            T_c  = T_all_train[start:end]
+            pred_c = model(p_c, xy_c)
+            chunk_loss, chunk_mE, chunk_mT = mse_normalized(
+                pred_c, E_c, T_c, model.out_mean, model.out_std,
+            )
+            weight = chunk_size / n_total
+            (chunk_loss * weight).backward()
+            sum_loss += chunk_loss.detach() * chunk_size
+            sum_E    += chunk_mE.detach()   * chunk_size
+            sum_T    += chunk_mT.detach()   * chunk_size
+        loss = sum_loss / n_total
+        mE   = sum_E    / n_total
+        mT   = sum_T    / n_total
         # Validation (no_grad — does not affect L-BFGS gradients)
         with torch.no_grad():
             va_tot, va_E, va_T, n_va = 0.0, 0.0, 0.0, 0
@@ -403,9 +481,29 @@ def main():
             iter=it, loss=loss.item(), mse_E=mE.item(), mse_T=mT.item(),
             val=va_tot, val_E=va_E, val_T=va_T,
         ))
+        if va_tot < lbfgs_best_val - 1e-5:
+            lbfgs_best_val = va_tot
+            lbfgs_best_iter = it
+            torch.save({
+                "state_dict": model.state_dict(),
+                "epoch": N_EPOCHS + 1,
+                "phase": "lbfgs",
+                "lbfgs_iter": it,
+                "val_total": va_tot,
+                "val_E": va_E,
+                "val_T": va_T,
+                "norm_stats": norm_stats,
+                "config": dict(
+                    n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
+                    hidden=1024, dropout=0.1,
+                ),
+            }, os.path.join(FNN_FOLDER, "fnn.pt"))
+            marker = "  <- NEW BEST (saved)"
+        else:
+            marker = ""
         print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
               f"(E={mE.item():.6f} T={mT.item():.6f})  "
-              f"val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f})")
+              f"val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f}){marker}")
         return loss
 
     final_loss = lbfgs_optimizer.step(closure)
@@ -423,43 +521,25 @@ def main():
 
     print(f"[lbfgs] {n_iters} iterations in {dt_lbfgs:.1f}s")
 
-    # Validation after L-BFGS
-    overall_best_val = adam_best_val
+    # Validation after L-BFGS: per-iter best save already happened inside
+    # the closure. fnn.pt holds the best-ever weights.
+    overall_best_val = lbfgs_best_val
     lbfgs_log = []
 
-    if not lbfgs_abort:
+    if not lbfgs_abort and lbfgs_iter_log:
         last = lbfgs_iter_log[-1]
-        va_tot, va_E, va_T = last["val"], last["val_E"], last["val_T"]
-
-        print(f"[lbfgs val] val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f})")
-
         lbfgs_log.append(dict(
             epoch=N_EPOCHS + 1, phase="lbfgs",
             train=last["loss"], train_E=last["mse_E"], train_T=last["mse_T"],
-            val=va_tot, val_E=va_E, val_T=va_T, dt=dt_lbfgs,
+            val=last["val"], val_E=last["val_E"], val_T=last["val_T"], dt=dt_lbfgs,
         ))
 
-        if va_tot > 2.0 * adam_best_val:
-            print(f"[lbfgs] ABORT — val {va_tot:.4f} > 2x Adam best {adam_best_val:.4f}")
-            model.load_state_dict(adam_ckpt["state_dict"])
-        elif va_tot < overall_best_val - 1e-5:
-            overall_best_val = va_tot
-            torch.save({
-                "state_dict": model.state_dict(),
-                "epoch": N_EPOCHS + 1,
-                "phase": "lbfgs",
-                "val_total": va_tot,
-                "val_E": va_E,
-                "val_T": va_T,
-                "norm_stats": norm_stats,
-                "config": dict(
-                    n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                    hidden=512, dropout=0.1,
-                ),
-            }, os.path.join(FNN_FOLDER, "fnn.pt"))
-            print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")
-        else:
-            print(f"[lbfgs] no improvement  val={va_tot:.6f} vs Adam {adam_best_val:.6f}")
+    if lbfgs_best_iter >= 0:
+        print(f"[lbfgs] best val={lbfgs_best_val:.6f} at iter {lbfgs_best_iter} "
+              f"(Adam was {adam_best_val:.6f}, gain={adam_best_val-lbfgs_best_val:.6f})")
+    else:
+        print(f"[lbfgs] no improvement over Adam best {adam_best_val:.6f}  "
+              f"(fnn.pt unchanged)")
 
     # Merge logs and re-save
     full_log = log + lbfgs_log

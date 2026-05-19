@@ -160,29 +160,33 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
         adam_log = [e for e in log if e.get("phase") != "lbfgs"]
         ep = [e["epoch"] for e in adam_log]
 
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-        axes[0].plot(ep, [e["train"] for e in adam_log], label="train")
-        axes[0].plot(ep, [e["val"]   for e in adam_log], label="val")
-        axes[1].plot(ep, [e["val_dx"]   for e in adam_log], label="val dx")
-        axes[1].plot(ep, [e["val_dy"]   for e in adam_log], label="val dy")
-        axes[1].plot(ep, [e["val_dz"]   for e in adam_log], label="val dz")
-        axes[1].plot(ep, [e["val_logE"] for e in adam_log], label="val logE")
+        # Colors fixed: train -> C0, val -> C1. Per-axis plot uses 4 line
+        # styles to distinguish the four axes (dx -, dy --, dz :, logE -.).
+        # L-BFGS reuses the same colors+styles. Per-curve labels are dropped
+        # — the legend is built from proxy handles so it shows SEMANTICS only
+        # (color = split, style = axis), not 8 redundant entries.
+        from matplotlib.lines import Line2D
+        AXIS_STYLES = [("dx", "-"), ("dy", "--"), ("dz", ":"), ("logE", "-.")]
 
-        # L-BFGS iterations
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].plot(ep, [e["train"] for e in adam_log], color="C0", label="train")
+        axes[0].plot(ep, [e["val"]   for e in adam_log], color="C1", label="val")
+        for name, ls in AXIS_STYLES:
+            axes[1].plot(ep, [e[f"train_{name}"] for e in adam_log],
+                         color="C0", linestyle=ls)
+            axes[1].plot(ep, [e[f"val_{name}"]   for e in adam_log],
+                         color="C1", linestyle=ls)
+
         if lbfgs_iter_log:
             lb_ep = [adam_epochs + 1 + e["iter"] for e in lbfgs_iter_log]
-            axes[0].plot(lb_ep, [e["loss"]     for e in lbfgs_iter_log],
-                         label="L-BFGS train", alpha=0.7)
-            axes[0].plot(lb_ep, [e["val"]      for e in lbfgs_iter_log],
-                         label="L-BFGS val", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_dx"]   for e in lbfgs_iter_log],
-                         label="L-BFGS val dx", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_dy"]   for e in lbfgs_iter_log],
-                         label="L-BFGS val dy", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_dz"]   for e in lbfgs_iter_log],
-                         label="L-BFGS val dz", alpha=0.7)
-            axes[1].plot(lb_ep, [e["val_logE"] for e in lbfgs_iter_log],
-                         label="L-BFGS val logE", alpha=0.7)
+            axes[0].plot(lb_ep, [e["loss"] for e in lbfgs_iter_log], color="C0")
+            axes[0].plot(lb_ep, [e["val"]  for e in lbfgs_iter_log], color="C1")
+            for name, ls in AXIS_STYLES:
+                # L-BFGS train per-axis = mse_{name}, val per-axis = val_{name}.
+                axes[1].plot(lb_ep, [e[f"mse_{name}"] for e in lbfgs_iter_log],
+                             color="C0", linestyle=ls)
+                axes[1].plot(lb_ep, [e[f"val_{name}"] for e in lbfgs_iter_log],
+                             color="C1", linestyle=ls)
             axes[0].set_yscale("log"); axes[1].set_yscale("log")
 
 
@@ -192,9 +196,18 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
                            label="Adam\u2192L-BFGS")
 
         axes[0].set_xlabel("epoch / iter"); axes[0].set_ylabel("MSE (normalized labels)")
-        axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend()
+        axes[0].set_title("total");  axes[0].grid(alpha=0.3); axes[0].legend(fontsize=9)
         axes[1].set_xlabel("epoch / iter"); axes[1].set_ylabel("MSE")
-        axes[1].set_title("per-axis val"); axes[1].grid(alpha=0.3); axes[1].legend()
+        axes[1].set_title("per-axis"); axes[1].grid(alpha=0.3)
+        # Proxy legend: 2 color entries (train/val) + 4 style entries (axes).
+        axes[1].legend(handles=[
+            Line2D([], [], color="C0",                          label="train"),
+            Line2D([], [], color="C1",                          label="val"),
+            Line2D([], [], color="black", linestyle="-",        label="dx"),
+            Line2D([], [], color="black", linestyle="--",       label="dy"),
+            Line2D([], [], color="black", linestyle=":",        label="dz"),
+            Line2D([], [], color="black", linestyle="-.",       label="logE"),
+        ], ncol=2, fontsize=9, loc="best")
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
@@ -223,20 +236,31 @@ def main():
     primary    = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
     xy         = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "xy.pt")).float()
     strat_ids  = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
-    norm_stats = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
     print(f"[load] corpus in {time.time() - t0:.1f}s  primary={tuple(primary.shape)}")
 
-    # Load frozen FNN
+    # Load frozen FNN. Read its width + dropout from the saved config and
+    # prefer the FNN's *own* norm_stats — when 02 applies log-T it updates the
+    # T slots in-memory and ships the modified stats inside fnn.pt, while the
+    # disk norm_stats.pt still holds the raw-T values. Using the ckpt copy
+    # keeps the FNN's E/T denormalization consistent with how it was trained.
     fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
+    fnn_cfg  = fnn_ckpt.get("config", {})
+    fnn_hidden  = int(fnn_cfg.get("hidden", 512))
+    fnn_dropout = float(fnn_cfg.get("dropout", 0.1))
     fnn = FNNSurrogate(n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                       hidden=512, dropout=0.1).to(DEVICE)
+                       hidden=fnn_hidden, dropout=fnn_dropout).to(DEVICE)
     fnn.load_state_dict(fnn_ckpt["state_dict"])
+    norm_stats = fnn_ckpt.get(
+        "norm_stats",
+        torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt")),
+    )
     fnn.set_normalization(norm_stats)
     fnn.eval()
     for p in fnn.parameters():
         p.requires_grad_(False)
     print(f"[load] fnn.pt  epoch={fnn_ckpt.get('epoch','?')}  "
-          f"val_total={fnn_ckpt.get('val_total', fnn_ckpt.get('val','?'))}")
+          f"val_total={fnn_ckpt.get('val_total', fnn_ckpt.get('val','?'))}  "
+          f"hidden={fnn_hidden}")
 
     # Predict (E, T) on the full corpus once (deterministic, FNN is in eval)
     t0 = time.time()

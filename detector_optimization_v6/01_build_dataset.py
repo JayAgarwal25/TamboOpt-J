@@ -30,7 +30,7 @@ from modules_v6.fnn_surrogate import (
 from modules_v6.constants import (
     SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
-    BATCH_SIZE_TRAIN, TRAINING_DATASET_FOLDER
+    BATCH_SIZE_TRAIN, TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
 )
 from modules_v4.tr_geometry    import load_tr_mountain
 from modules_v4.tr_surface_map import SurfaceEastMap
@@ -40,6 +40,7 @@ from modules_v4.tr_surface_map import SurfaceEastMap
 MAX_SHOWERS = NUM_SHOWERS
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# RECENTER_TO_MOUNTAIN is imported from modules_v6.constants — edit it there.
 
 
 def main():
@@ -54,6 +55,7 @@ def main():
     print(f"batch size   : {BATCH_SIZE_TRAIN}")
     print(f"max showers  : {MAX_SHOWERS}")
     print(f"device       : {DEVICE}")
+    print(f"recenter     : {RECENTER_TO_MOUNTAIN}")
 
     # Mountain + surface map (East = f(N, Up))
     t0 = time.time()
@@ -78,6 +80,7 @@ def main():
         seed=SEED,
         device=DEVICE,
         verbose=True,
+        recenter_to_mountain=RECENTER_TO_MOUNTAIN,
     )
     print(f"[build] training pairs in {time.time() - t0:.1f}s")
     print(f"  primary : {tuple(primary.shape)}  dtype={primary.dtype}")

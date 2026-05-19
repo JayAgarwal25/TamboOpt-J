@@ -50,6 +50,12 @@ RECON_VAL_SEED = 1
 VAL_FRAC       = 0.10
 BATCH          = 1024
 
+# Mirror the log-T transform applied inside 02_train_fnn.py — the FNN was
+# trained with log1p(T * 1e8) as its canonical T target, so the ground-truth
+# T tensor must be passed through the same transform before the FNN scatter
+# is apples-to-apples.
+T_LOG_SCALE = 1.0e8
+
 
 def shower_level_val_idx(strategy_ids: torch.Tensor,
                          val_frac: float,
@@ -85,15 +91,27 @@ def _scatter(ax, x, y, title: str):
 
 
 def load_fnn() -> FNNSurrogate:
+    # Read width + dropout from the saved config and prefer the FNN's own
+    # norm_stats (02_train_fnn.py updates the T slots in-memory for log-T
+    # training and ships the modified stats inside fnn.pt; disk norm_stats.pt
+    # still holds raw-T values).
     fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
-    norm_stats = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
-    fnn = FNNSurrogate(n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                       hidden=512, dropout=0.1).to(DEVICE)
+    cfg = fnn_ckpt.get("config", {})
+    fnn = FNNSurrogate(
+        n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
+        hidden=int(cfg.get("hidden", 512)),
+        dropout=float(cfg.get("dropout", 0.1)),
+    ).to(DEVICE)
     fnn.load_state_dict(fnn_ckpt["state_dict"])
+    norm_stats = fnn_ckpt.get(
+        "norm_stats",
+        torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt")),
+    )
     fnn.set_normalization(norm_stats)
     fnn.eval()
     print(f"[load] fnn.pt  epoch={fnn_ckpt.get('epoch','?')}  "
-          f"val={fnn_ckpt.get('val_total','?')}")
+          f"val={fnn_ckpt.get('val_total','?')}  "
+          f"hidden={int(cfg.get('hidden', 512))}")
     return fnn
 
 
@@ -122,9 +140,9 @@ def plot_fnn(primary, xy, E_true, T_true, val_idx, output_path):
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
-             f"FNN  E  (N={E_t.numel():,} detector-samples)")
+             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)")
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
-             f"FNN  T  (N={T_t.numel():,} detector-samples)")
+             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)")
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
@@ -197,23 +215,32 @@ def main():
     strat_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
     print(f"[load] primary={tuple(primary.shape)}  xy={tuple(xy.shape)}")
 
+    # E on disk is log1p(raw E) per 01_build_dataset.py:90, so the FNN's E
+    # output and E_true already share units. T on disk is raw seconds; the
+    # FNN was trained on log1p(T*1e8), so match its target space here.
+    T_true = torch.log1p(T_true * T_LOG_SCALE)
+    print(f"[log1p-T] applied log1p(T * {T_LOG_SCALE:.0e}); "
+          f"T_true range now [{float(T_true.min()):.3f}, {float(T_true.max()):.3f}]")
+
     fnn_val_idx   = shower_level_val_idx(strat_ids, VAL_FRAC, FNN_VAL_SEED)
     recon_val_idx = shower_level_val_idx(strat_ids, VAL_FRAC, RECON_VAL_SEED)
     print(f"[split] fnn val pairs={len(fnn_val_idx):,}  "
           f"recon val pairs={len(recon_val_idx):,}")
 
-    out_dir = os.path.join(_V6_DIR, "outputs")
-    os.makedirs(out_dir, exist_ok=True)
+    # Save each scatter next to its corresponding checkpoint so the plot
+    # lives in the same folder as the artifacts it summarizes.
+    os.makedirs(FNN_FOLDER, exist_ok=True)
+    os.makedirs(RECON_FOLDER, exist_ok=True)
 
     plot_fnn(
         primary, xy, E_true, T_true, fnn_val_idx,
-        os.path.join(out_dir, "fnn_target_vs_pred.png"),
+        os.path.join(FNN_FOLDER, "fnn_target_vs_pred.png"),
     )
 
     fnn = load_fnn()
     plot_recon(
         primary, xy, recon_val_idx,
-        os.path.join(out_dir, "recon_target_vs_pred.png"),
+        os.path.join(RECON_FOLDER, "recon_target_vs_pred.png"),
         fnn,
     )
 
