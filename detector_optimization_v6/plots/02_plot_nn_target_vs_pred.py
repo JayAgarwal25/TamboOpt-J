@@ -78,16 +78,26 @@ def shower_level_val_idx(strategy_ids: torch.Tensor,
     return torch.nonzero(val_mask).squeeze(-1)
 
 
-def _scatter(ax, x, y, title: str):
-    ax.scatter(x, y, s=2, alpha=0.25, linewidths=0)
+def _scatter(ax, x, y, title: str, vmin=None, vmax=None):
+    """Density-coloured target-vs-prediction panel.
+
+    Hexbin with a log-scale colour normalization so the heavy bulk near
+    (0, 0) doesn't wash out the rare high-value tail; `mincnt=1` leaves
+    empty bins blank so the y = x reference line stays readable. Pass
+    `vmin` / `vmax` (in raw counts) to pin the colour scale across plots."""
+    from matplotlib.colors import LogNorm
     lo = float(min(x.min(), y.min()))
     hi = float(max(x.max(), y.max()))
-    ax.plot([lo, hi], [lo, hi], "k--", linewidth=1, alpha=0.6, label="y = x")
-    ax.set_xlabel("target")
-    ax.set_ylabel("prediction")
+    norm = LogNorm(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else LogNorm()
+    hb = ax.hexbin(x, y, gridsize=80, cmap="viridis", norm=norm,
+                   mincnt=1, extent=(lo, hi, lo, hi))
+    plt.colorbar(hb, ax=ax, label="count (log scale)", pad=0.02, fraction=0.046)
+    ax.plot([lo, hi], [lo, hi], color="red", linestyle="--", linewidth=1.0,
+            alpha=0.85, label="y = x")
+    ax.set_xlabel("target"); ax.set_ylabel("prediction")
+    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
     ax.set_title(title)
-    ax.grid(alpha=0.3)
-    ax.legend(loc="best", fontsize=8)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
 
 
 def load_fnn() -> FNNSurrogate:
@@ -166,10 +176,14 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     E_p, T_p = fnn_predict(fnn, p, x)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
+    # Pin the FNN heatmap colour scale to [10, 10000] counts so both panels
+    # use the same scale and small ckpt changes are visually comparable.
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
-             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)")
+             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",
+             vmin=10, vmax=10000)
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
-             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)")
+             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",
+             vmin=10, vmax=10000)
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
