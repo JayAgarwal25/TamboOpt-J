@@ -58,7 +58,7 @@ from modules_v6.constants import (
 
 RECON_INPUT_FEATURES = 4   # (x, y, E, T) per detector
 BATCH_SIZE           = 256
-N_EPOCHS             = 300
+N_EPOCHS             = 300 
 LR                   = 3e-5
 GRAD_CLIP            = 10.0
 VAL_FRAC             = 0.10
@@ -68,8 +68,14 @@ DEVICE               = torch.device("cuda" if torch.cuda.is_available() else "cp
 
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 500
+LBFGS_MAX_ITER           = 1500
 LBFGS_HISTORY_SIZE       = 20
+# Gradient accumulation chunk for the L-BFGS closure. The full train set is
+# 3.15M rows × 400 features; running forward+backward on it all at once OOMs
+# the GPU (the activations of the 512-hidden MLP are the bottleneck, ~6+ GiB
+# per layer). Chunking the closure and accumulating gradients gives the same
+# full-batch gradient L-BFGS needs but caps peak memory at O(chunk_size).
+LBFGS_CHUNK              = 32_768
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -497,16 +503,33 @@ def main():
 
     lbfgs_iter_log = []   # one entry per closure call
     t_lbfgs = time.time()
+    N_train = inp_all.shape[0]
 
     def closure():
         lbfgs_optimizer.zero_grad()
-        pred = recon(inp_all)
-        l_dx = F.mse_loss(pred[:, 0], tgt_train[:, 0])
-        l_dy = F.mse_loss(pred[:, 1], tgt_train[:, 1])
-        l_dz = F.mse_loss(pred[:, 2], tgt_train[:, 2])
-        l_lE = F.mse_loss(pred[:, 3], tgt_train[:, 3])
-        loss = l_dx + l_dy + l_dz + l_lE
-        loss.backward()
+        # Chunked forward+backward — sum-reduction per chunk, divided by
+        # N_train so the accumulated gradient equals the mean-reduced gradient
+        # over the whole training set (matches what `mse_loss(..., reduction=
+        # "mean")` on the full batch would give).
+        tot, dx, dy, dz, lE = 0.0, 0.0, 0.0, 0.0, 0.0
+        for lo in range(0, N_train, LBFGS_CHUNK):
+            hi = min(lo + LBFGS_CHUNK, N_train)
+            pred_c = recon(inp_all[lo:hi])
+            tgt_c  = tgt_train[lo:hi]
+            l_dx_c = F.mse_loss(pred_c[:, 0], tgt_c[:, 0], reduction="sum")
+            l_dy_c = F.mse_loss(pred_c[:, 1], tgt_c[:, 1], reduction="sum")
+            l_dz_c = F.mse_loss(pred_c[:, 2], tgt_c[:, 2], reduction="sum")
+            l_lE_c = F.mse_loss(pred_c[:, 3], tgt_c[:, 3], reduction="sum")
+            loss_c = l_dx_c + l_dy_c + l_dz_c + l_lE_c
+            (loss_c / N_train).backward()
+            tot += loss_c.item()
+            dx  += l_dx_c.item(); dy += l_dy_c.item()
+            dz  += l_dz_c.item(); lE += l_lE_c.item()
+        loss_val = tot / N_train
+        l_dx_val = dx  / N_train
+        l_dy_val = dy  / N_train
+        l_dz_val = dz  / N_train
+        l_lE_val = lE  / N_train
         # Validation (no_grad — does not affect L-BFGS gradients)
         with torch.no_grad():
             va_tot, va_dx, va_dy, va_dz, va_lE, n_va = 0.0, 0.0, 0.0, 0.0, 0.0, 0
@@ -536,17 +559,20 @@ def main():
             va_lE  /= max(n_va, 1)
         it = len(lbfgs_iter_log)
         lbfgs_iter_log.append(dict(
-            iter=it, loss=loss.item(),
-            mse_dx=l_dx.item(), mse_dy=l_dy.item(),
-            mse_dz=l_dz.item(), mse_logE=l_lE.item(),
+            iter=it, loss=loss_val,
+            mse_dx=l_dx_val, mse_dy=l_dy_val,
+            mse_dz=l_dz_val, mse_logE=l_lE_val,
             val=va_tot,
             val_dx=va_dx, val_dy=va_dy, val_dz=va_dz, val_logE=va_lE,
         ))
-        print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
-              f"(dx={l_dx.item():.6f} dy={l_dy.item():.6f} "
-              f"dz={l_dz.item():.6f} logE={l_lE.item():.6f})  "
+        print(f"  [lbfgs iter {it:3d}] loss={loss_val:.6f} "
+              f"(dx={l_dx_val:.6f} dy={l_dy_val:.6f} "
+              f"dz={l_dz_val:.6f} logE={l_lE_val:.6f})  "
               f"val={va_tot:.6f}")
-        return loss
+        # Return a detached scalar — L-BFGS only calls .item()/float() on the
+        # returned value for line search comparisons; gradients are read from
+        # `param.grad`, which we populated above via chunked accumulation.
+        return torch.tensor(loss_val, device=DEVICE)
 
     final_loss = lbfgs_optimizer.step(closure)
 

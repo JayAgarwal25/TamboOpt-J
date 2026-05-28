@@ -55,7 +55,7 @@ DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu
 
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 500
+LBFGS_MAX_ITER           = 1500
 LBFGS_HISTORY_SIZE       = 5    # 0030: was 20 (cuts L-BFGS memory ~4x to unblock OOM on wider models)
 LBFGS_CHUNK_SIZE         = 4096 # 0030 (from 0010): chunked-closure forward to avoid full-batch OOM on wider Deep Sets
 
