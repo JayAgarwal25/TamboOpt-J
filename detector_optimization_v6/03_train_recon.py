@@ -46,7 +46,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
-import modules_v6   # sys.path injection for v3 + v4 (also used at import time)
+import modules_v6   # noqa: F401  (side-effect import: injects v3 + v4 into sys.path)
 from modules_v6.fnn_surrogate  import FNNSurrogate
 from modules_v6.reconstruction import Reconstruction
 from modules_v6.constants import (
@@ -68,7 +68,7 @@ DEVICE               = torch.device("cuda" if torch.cuda.is_available() else "cp
 
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 1500
+LBFGS_MAX_ITER           = 500 
 LBFGS_HISTORY_SIZE       = 20
 # Gradient accumulation chunk for the L-BFGS closure. The full train set is
 # 3.15M rows × 400 features; running forward+backward on it all at once OOMs
@@ -153,6 +153,68 @@ def build_recon_input(xy: torch.Tensor,
     """(B, 100, 2) xy + (B, 100) E + (B, 100) T -> (B, 400) flat unnormalized."""
     feats = torch.stack([xy[..., 0], xy[..., 1], E, T], dim=-1)  # (B, 100, 4)
     return feats.reshape(feats.shape[0], -1)
+
+
+# ── Loss / eval / checkpoint helpers ────────────────────────────────────────
+# All three reused by Adam train, Adam val, L-BFGS closure, and L-BFGS val.
+
+_AXIS_KEYS = ("tot", "dx", "dy", "dz", "logE")
+
+
+def _per_axis_loss(pred: torch.Tensor, tgt: torch.Tensor, reduction: str = "mean"):
+    """Per-axis MSE on the 4 output dims. Returns (total, dx, dy, dz, logE)."""
+    l_dx = F.mse_loss(pred[:, 0], tgt[:, 0], reduction=reduction)
+    l_dy = F.mse_loss(pred[:, 1], tgt[:, 1], reduction=reduction)
+    l_dz = F.mse_loss(pred[:, 2], tgt[:, 2], reduction=reduction)
+    l_lE = F.mse_loss(pred[:, 3], tgt[:, 3], reduction=reduction)
+    return l_dx + l_dy + l_dz + l_lE, l_dx, l_dy, l_dz, l_lE
+
+
+@torch.no_grad()
+def _validate(recon: Reconstruction,
+              loader: DataLoader,
+              device: torch.device) -> dict:
+    """Mean-MSE on `loader`. Returns dict keyed by _AXIS_KEYS."""
+    sums = [0.0] * 5
+    n = 0
+    for xy_b, E_b, T_b, tgt_b in loader:
+        xy_b  = xy_b .to(device, non_blocking=True)
+        E_b   = E_b  .to(device, non_blocking=True)
+        T_b   = T_b  .to(device, non_blocking=True)
+        tgt_b = tgt_b.to(device, non_blocking=True)
+        pred  = recon(build_recon_input(xy_b, E_b, T_b))
+        losses = _per_axis_loss(pred, tgt_b)
+        B = xy_b.shape[0]
+        for i, v in enumerate(losses):
+            sums[i] += v.item() * B
+        n += B
+    n = max(n, 1)
+    return {k: sums[i] / n for i, k in enumerate(_AXIS_KEYS)}
+
+
+def _save_ckpt(path: str,
+               recon: Reconstruction,
+               epoch: int,
+               val: dict,
+               in_mean: torch.Tensor, in_std: torch.Tensor,
+               tgt_mean: torch.Tensor, tgt_std: torch.Tensor,
+               **extra) -> None:
+    """Standard recon.pt payload — used by both Adam-best and L-BFGS-best saves."""
+    torch.save({
+        "state_dict": recon.state_dict(),
+        "epoch": epoch,
+        "val_total": val["tot"],
+        "val_dx":    val["dx"],   "val_dy":    val["dy"],
+        "val_dz":    val["dz"],   "val_logE":  val["logE"],
+        "input_features": RECON_INPUT_FEATURES,
+        "num_detectors":  N_DETECTORS,
+        "input_mean":  in_mean.detach().cpu(),
+        "input_std":   in_std .detach().cpu(),
+        "target_mean": tgt_mean.detach().cpu(),
+        "target_std":  tgt_std .detach().cpu(),
+        "config": dict(hidden=512, n_hidden_layers=3, dropout=0.1, output_dim=4),
+        **extra,
+    }, path)
 
 
 def _plot_curves(log, path: str, adam_epochs: int = 0,
@@ -360,23 +422,20 @@ def main():
     for epoch in range(N_EPOCHS):
         t_epoch = time.time()
         recon.train()
-        tr_tot, tr_dx, tr_dy, tr_dz, tr_lE, n_tr = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+        sums  = [0.0] * 5
+        n_tr  = 0
         for xy_b, E_b, T_b, tgt_b in train_loader:
-            xy_b  = xy_b.to(DEVICE, non_blocking=True)
-            E_b   = E_b.to(DEVICE,  non_blocking=True)
-            T_b   = T_b.to(DEVICE,  non_blocking=True)
+            xy_b  = xy_b .to(DEVICE, non_blocking=True)
+            E_b   = E_b  .to(DEVICE, non_blocking=True)
+            T_b   = T_b  .to(DEVICE, non_blocking=True)
             tgt_b = tgt_b.to(DEVICE, non_blocking=True)
 
-            # Permutation augmentation (input-only; target stays fixed)
+            # Permutation augmentation (input-only; target stays fixed).
             xy_b, E_b, T_b = permute_detectors_recon(xy_b, E_b, T_b)
 
-            inp  = build_recon_input(xy_b, E_b, T_b)   # (B, 400) raw
-            pred = recon(inp)                           # (B, 4) raw primary units
-            l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
-            l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
-            l_dz = F.mse_loss(pred[:, 2], tgt_b[:, 2])
-            l_lE = F.mse_loss(pred[:, 3], tgt_b[:, 3])
-            loss = l_dx + l_dy + l_dz + l_lE
+            pred = recon(build_recon_input(xy_b, E_b, T_b))   # (B, 4) raw
+            losses = _per_axis_loss(pred, tgt_b)              # (total, dx, dy, dz, logE)
+            loss = losses[0]
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -384,77 +443,36 @@ def main():
             optimizer.step()
 
             B = xy_b.shape[0]
-            tr_tot += loss.item() * B
-            tr_dx  += l_dx.item() * B
-            tr_dy  += l_dy.item() * B
-            tr_dz  += l_dz.item() * B
-            tr_lE  += l_lE.item() * B
-            n_tr   += B
-        tr_tot /= max(n_tr, 1)
-        tr_dx  /= max(n_tr, 1)
-        tr_dy  /= max(n_tr, 1)
-        tr_dz  /= max(n_tr, 1)
-        tr_lE  /= max(n_tr, 1)
+            for i, v in enumerate(losses):
+                sums[i] += v.item() * B
+            n_tr += B
+        n_tr = max(n_tr, 1)
+        tr = {k: sums[i] / n_tr for i, k in enumerate(_AXIS_KEYS)}
 
         recon.eval()
-        va_tot, va_dx, va_dy, va_dz, va_lE, n_va = 0.0, 0.0, 0.0, 0.0, 0.0, 0
-        with torch.no_grad():
-            for xy_b, E_b, T_b, tgt_b in val_loader:
-                xy_b  = xy_b.to(DEVICE, non_blocking=True)
-                E_b   = E_b.to(DEVICE,  non_blocking=True)
-                T_b   = T_b.to(DEVICE,  non_blocking=True)
-                tgt_b = tgt_b.to(DEVICE, non_blocking=True)
-                inp  = build_recon_input(xy_b, E_b, T_b)
-                pred = recon(inp)
-                l_dx = F.mse_loss(pred[:, 0], tgt_b[:, 0])
-                l_dy = F.mse_loss(pred[:, 1], tgt_b[:, 1])
-                l_dz = F.mse_loss(pred[:, 2], tgt_b[:, 2])
-                l_lE = F.mse_loss(pred[:, 3], tgt_b[:, 3])
-                l    = l_dx + l_dy + l_dz + l_lE
-                B = xy_b.shape[0]
-                va_tot += l.item()    * B
-                va_dx  += l_dx.item() * B
-                va_dy  += l_dy.item() * B
-                va_dz  += l_dz.item() * B
-                va_lE  += l_lE.item() * B
-                n_va   += B
-        va_tot /= max(n_va, 1)
-        va_dx  /= max(n_va, 1)
-        va_dy  /= max(n_va, 1)
-        va_dz  /= max(n_va, 1)
-        va_lE  /= max(n_va, 1)
+        va = _validate(recon, val_loader, DEVICE)
 
         dt = time.time() - t_epoch
         print(f"[epoch {epoch+1:3d}/{N_EPOCHS}] "
-              f"train={tr_tot:.4f} val={va_tot:.4f} "
-              f"(dx={va_dx:.4f} dy={va_dy:.4f} dz={va_dz:.4f} logE={va_lE:.4f})  {dt:.1f}s")
+              f"train={tr['tot']:.4f} val={va['tot']:.4f} "
+              f"(dx={va['dx']:.4f} dy={va['dy']:.4f} dz={va['dz']:.4f} logE={va['logE']:.4f})  {dt:.1f}s")
         log.append(dict(
             epoch=epoch + 1,
-            train=tr_tot,
-            train_dx=tr_dx, train_dy=tr_dy, train_dz=tr_dz, train_logE=tr_lE,
-            val=va_tot,
-            val_dx=va_dx,   val_dy=va_dy,   val_dz=va_dz,   val_logE=va_lE,
+            train=tr['tot'],
+            train_dx=tr['dx'], train_dy=tr['dy'], train_dz=tr['dz'], train_logE=tr['logE'],
+            val=va['tot'],
+            val_dx=va['dx'],   val_dy=va['dy'],   val_dz=va['dz'],   val_logE=va['logE'],
             dt=dt,
         ))
 
-        if va_tot < best_val - 1e-6:
-            best_val   = va_tot
+        if va['tot'] < best_val - 1e-6:
+            best_val   = va['tot']
             best_epoch = epoch + 1
-            torch.save({
-                "state_dict": recon.state_dict(),
-                "epoch": epoch + 1,
-                "val_total": va_tot,
-                "val_dx": va_dx, "val_dy": va_dy, "val_dz": va_dz, "val_logE": va_lE,
-                "input_features": RECON_INPUT_FEATURES,
-                "num_detectors": N_DETECTORS,
-                "input_mean":  in_mean.detach().cpu(),
-                "input_std":   in_std.detach().cpu(),
-                "target_mean": tgt_mean.detach().cpu(),
-                "target_std":  tgt_std.detach().cpu(),
-                "config": dict(
-                    hidden=512, n_hidden_layers=3, dropout=0.1, output_dim=4,
-                ),
-            }, os.path.join(RECON_FOLDER, "recon.pt"))
+            _save_ckpt(
+                os.path.join(RECON_FOLDER, "recon.pt"),
+                recon, epoch + 1, va,
+                in_mean, in_std, tgt_mean, tgt_std,
+            )
 
     with open(os.path.join(RECON_FOLDER, "recon_train_log.json"), "w") as f:
         json.dump({
@@ -504,75 +522,58 @@ def main():
     lbfgs_iter_log = []   # one entry per closure call
     t_lbfgs = time.time()
     N_train = inp_all.shape[0]
+    # Track best L-BFGS val and save recon.pt whenever it improves — same
+    # pattern as 02_train_fnn.py. Previously only the LAST iter was checked,
+    # so a better mid-iter (e.g. before L-BFGS overshoots) was lost.
+    lbfgs_best_val  = adam_best_val
+    lbfgs_best_iter = -1
 
     def closure():
+        nonlocal lbfgs_best_val, lbfgs_best_iter
         lbfgs_optimizer.zero_grad()
         # Chunked forward+backward — sum-reduction per chunk, divided by
         # N_train so the accumulated gradient equals the mean-reduced gradient
-        # over the whole training set (matches what `mse_loss(..., reduction=
-        # "mean")` on the full batch would give).
-        tot, dx, dy, dz, lE = 0.0, 0.0, 0.0, 0.0, 0.0
+        # over the whole training set (caps peak GPU memory at O(chunk)).
+        sums = [0.0] * 5
         for lo in range(0, N_train, LBFGS_CHUNK):
             hi = min(lo + LBFGS_CHUNK, N_train)
             pred_c = recon(inp_all[lo:hi])
-            tgt_c  = tgt_train[lo:hi]
-            l_dx_c = F.mse_loss(pred_c[:, 0], tgt_c[:, 0], reduction="sum")
-            l_dy_c = F.mse_loss(pred_c[:, 1], tgt_c[:, 1], reduction="sum")
-            l_dz_c = F.mse_loss(pred_c[:, 2], tgt_c[:, 2], reduction="sum")
-            l_lE_c = F.mse_loss(pred_c[:, 3], tgt_c[:, 3], reduction="sum")
-            loss_c = l_dx_c + l_dy_c + l_dz_c + l_lE_c
-            (loss_c / N_train).backward()
-            tot += loss_c.item()
-            dx  += l_dx_c.item(); dy += l_dy_c.item()
-            dz  += l_dz_c.item(); lE += l_lE_c.item()
-        loss_val = tot / N_train
-        l_dx_val = dx  / N_train
-        l_dy_val = dy  / N_train
-        l_dz_val = dz  / N_train
-        l_lE_val = lE  / N_train
-        # Validation (no_grad — does not affect L-BFGS gradients)
-        with torch.no_grad():
-            va_tot, va_dx, va_dy, va_dz, va_lE, n_va = 0.0, 0.0, 0.0, 0.0, 0.0, 0
-            for xy_b, E_b, T_b, tgt_b in val_loader:
-                xy_b  = xy_b.to(DEVICE, non_blocking=True)
-                E_b   = E_b.to(DEVICE,  non_blocking=True)
-                T_b   = T_b.to(DEVICE,  non_blocking=True)
-                tgt_b = tgt_b.to(DEVICE, non_blocking=True)
-                inp  = build_recon_input(xy_b, E_b, T_b)
-                v_pred = recon(inp)
-                v_dx = F.mse_loss(v_pred[:, 0], tgt_b[:, 0])
-                v_dy = F.mse_loss(v_pred[:, 1], tgt_b[:, 1])
-                v_dz = F.mse_loss(v_pred[:, 2], tgt_b[:, 2])
-                v_lE = F.mse_loss(v_pred[:, 3], tgt_b[:, 3])
-                v_l  = v_dx + v_dy + v_dz + v_lE
-                B = xy_b.shape[0]
-                va_tot += v_l.item()   * B
-                va_dx  += v_dx.item()  * B
-                va_dy  += v_dy.item()  * B
-                va_dz  += v_dz.item()  * B
-                va_lE  += v_lE.item()  * B
-                n_va   += B
-            va_tot /= max(n_va, 1)
-            va_dx  /= max(n_va, 1)
-            va_dy  /= max(n_va, 1)
-            va_dz  /= max(n_va, 1)
-            va_lE  /= max(n_va, 1)
+            losses = _per_axis_loss(pred_c, tgt_train[lo:hi], reduction="sum")
+            (losses[0] / N_train).backward()
+            for i, v in enumerate(losses):
+                sums[i] += v.item()
+        tr = {k: sums[i] / N_train for i, k in enumerate(_AXIS_KEYS)}
+
+        # Validation (no_grad — does not affect L-BFGS gradients).
+        va = _validate(recon, val_loader, DEVICE)
+
         it = len(lbfgs_iter_log)
         lbfgs_iter_log.append(dict(
-            iter=it, loss=loss_val,
-            mse_dx=l_dx_val, mse_dy=l_dy_val,
-            mse_dz=l_dz_val, mse_logE=l_lE_val,
-            val=va_tot,
-            val_dx=va_dx, val_dy=va_dy, val_dz=va_dz, val_logE=va_lE,
+            iter=it, loss=tr['tot'],
+            mse_dx=tr['dx'], mse_dy=tr['dy'],
+            mse_dz=tr['dz'], mse_logE=tr['logE'],
+            val=va['tot'],
+            val_dx=va['dx'], val_dy=va['dy'], val_dz=va['dz'], val_logE=va['logE'],
         ))
-        print(f"  [lbfgs iter {it:3d}] loss={loss_val:.6f} "
-              f"(dx={l_dx_val:.6f} dy={l_dy_val:.6f} "
-              f"dz={l_dz_val:.6f} logE={l_lE_val:.6f})  "
-              f"val={va_tot:.6f}")
+        marker = ""
+        if va['tot'] < lbfgs_best_val - 1e-6:
+            lbfgs_best_val  = va['tot']
+            lbfgs_best_iter = it
+            _save_ckpt(
+                os.path.join(RECON_FOLDER, "recon.pt"),
+                recon, N_EPOCHS + 1, va,
+                in_mean, in_std, tgt_mean, tgt_std,
+                phase="lbfgs", lbfgs_iter=it,
+            )
+            marker = "  <- NEW BEST (saved)"
+        print(f"  [lbfgs iter {it:3d}] loss={tr['tot']:.6f} "
+              f"(dx={tr['dx']:.6f} dy={tr['dy']:.6f} "
+              f"dz={tr['dz']:.6f} logE={tr['logE']:.6f})  "
+              f"val={va['tot']:.6f}{marker}")
         # Return a detached scalar — L-BFGS only calls .item()/float() on the
         # returned value for line search comparisons; gradients are read from
         # `param.grad`, which we populated above via chunked accumulation.
-        return torch.tensor(loss_val, device=DEVICE)
+        return torch.tensor(tr['tot'], device=DEVICE)
 
     final_loss = lbfgs_optimizer.step(closure)
 
@@ -589,53 +590,30 @@ def main():
 
     print(f"[lbfgs] {n_iters} iterations in {dt_lbfgs:.1f}s")
 
-    # Validation after L-BFGS
-    overall_best_val = adam_best_val
+    # Per-iter best save already happened inside the closure. recon.pt holds
+    # the best-ever weights across both Adam and L-BFGS phases.
+    overall_best_val = lbfgs_best_val
     lbfgs_log = []
 
-    if not lbfgs_abort:
+    if not lbfgs_abort and lbfgs_iter_log:
         last = lbfgs_iter_log[-1]
-        va_tot = last["val"]
-        va_dx, va_dy = last["val_dx"], last["val_dy"]
-        va_dz, va_lE = last["val_dz"], last["val_logE"]
-
-        print(f"[lbfgs val] val={va_tot:.6f} "
-              f"(dx={va_dx:.6f} dy={va_dy:.6f} dz={va_dz:.6f} logE={va_lE:.6f})")
-
         lbfgs_log.append(dict(
             epoch=N_EPOCHS + 1, phase="lbfgs",
             train=last["loss"],
             train_dx=last["mse_dx"], train_dy=last["mse_dy"],
             train_dz=last["mse_dz"], train_logE=last["mse_logE"],
-            val=va_tot,
-            val_dx=va_dx, val_dy=va_dy, val_dz=va_dz, val_logE=va_lE,
+            val=last["val"],
+            val_dx=last["val_dx"], val_dy=last["val_dy"],
+            val_dz=last["val_dz"], val_logE=last["val_logE"],
             dt=dt_lbfgs,
         ))
 
-        if va_tot > 2.0 * adam_best_val:
-            print(f"[lbfgs] ABORT — val {va_tot:.4f} > 2x Adam best {adam_best_val:.4f}")
-            recon.load_state_dict(adam_ckpt["state_dict"])
-        elif va_tot < overall_best_val - 1e-6:
-            overall_best_val = va_tot
-            torch.save({
-                "state_dict": recon.state_dict(),
-                "epoch": N_EPOCHS + 1,
-                "phase": "lbfgs",
-                "val_total": va_tot,
-                "val_dx": va_dx, "val_dy": va_dy, "val_dz": va_dz, "val_logE": va_lE,
-                "input_features": RECON_INPUT_FEATURES,
-                "num_detectors": N_DETECTORS,
-                "input_mean":  in_mean.detach().cpu(),
-                "input_std":   in_std.detach().cpu(),
-                "target_mean": tgt_mean.detach().cpu(),
-                "target_std":  tgt_std.detach().cpu(),
-                "config": dict(
-                    hidden=512, n_hidden_layers=3, dropout=0.1, output_dim=4,
-                ),
-            }, os.path.join(RECON_FOLDER, "recon.pt"))
-            print(f"[lbfgs] new best val={va_tot:.6f}  (Adam was {adam_best_val:.6f})")
-        else:
-            print(f"[lbfgs] no improvement  val={va_tot:.6f} vs Adam {adam_best_val:.6f}")
+    if lbfgs_best_iter >= 0:
+        print(f"[lbfgs] best val={lbfgs_best_val:.6f} at iter {lbfgs_best_iter} "
+              f"(Adam was {adam_best_val:.6f}, gain={adam_best_val-lbfgs_best_val:.6f})")
+    else:
+        print(f"[lbfgs] no improvement over Adam best {adam_best_val:.6f}  "
+              f"(recon.pt unchanged)")
 
     # Merge logs and re-save
     full_log = log + lbfgs_log
@@ -667,11 +645,13 @@ def main():
         _best = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
         recon.load_state_dict(_best["state_dict"])
         recon.eval()
+        # Module filename starts with a digit; can't be regular-imported.
         import importlib.util
         _spec = importlib.util.spec_from_file_location(
             "_plot_tvp",
             os.path.join(_HERE, "plots", "02_plot_nn_target_vs_pred.py"),
         )
+        assert _spec is not None and _spec.loader is not None, "importlib spec/loader missing"
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _mod.plot_recon_only(
