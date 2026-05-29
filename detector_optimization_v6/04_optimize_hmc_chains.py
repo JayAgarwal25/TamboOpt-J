@@ -442,7 +442,7 @@ def nuts_sampling_multichain(init_x: torch.Tensor,
     )
 
 
-def _plot_curves(adam_log, nuts_result, path: str):
+def _plot_curves(adam_log, nuts_result, path: str, adam_logs_all=None):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -452,34 +452,61 @@ def _plot_curves(adam_log, nuts_result, path: str):
         N = nuts_result["num_samples_per_chain"]
         per_chain_U = nuts_result["utilities"].reshape(K, N).numpy()
 
-        if adam_log is None:
-            fig, axes = plt.subplots(1, 1, figsize=(7, 4))
-            axes = [None, axes]    # only NUTS panel populated below
-        else:
-            fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-            ep = [e["epoch"] for e in adam_log]
-            axes[0].plot(ep, [e["U"] for e in adam_log], color="C0", label="Adam U")
-            axes[0].axhline(nuts_result["best_u"], color="C1", linestyle="--",
-                            label=f"NUTS best U = {nuts_result['best_u']:.3f}")
-            axes[0].set_xlabel("Adam epoch")
-            axes[0].set_ylabel("U (composite)")
-            axes[0].set_title("Adam warm-start")
-            axes[0].grid(alpha=0.3); axes[0].legend(fontsize=9)
+        # Panels (left→right): [Adam best chain]? · [NUTS per-chain hist] ·
+        # [all Adam chains]?. The two Adam panels appear only when their data
+        # is supplied (adam_log / adam_logs_all).
+        have_adam   = adam_log is not None
+        have_chains = bool(adam_logs_all)
+        n_panels = 1 + int(have_adam) + int(have_chains)
+        fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 4))
+        axes = list(np.atleast_1d(axes))
 
-        # Per-chain histograms so between-chain disagreement is obvious.
+        col = 0
+        ax_adam = axes[col] if have_adam else None
+        if have_adam:
+            col += 1
+        ax_nuts = axes[col]; col += 1
+        ax_chains = axes[col] if have_chains else None
+
+        # Panel 1 — best Adam chain's U trajectory.
+        if ax_adam is not None:
+            ep = [e["epoch"] for e in adam_log]
+            ax_adam.plot(ep, [e["U"] for e in adam_log], color="C0",
+                         label="Adam U (best chain)")
+            ax_adam.axhline(nuts_result["best_u"], color="C1", linestyle="--",
+                            label=f"NUTS best U = {nuts_result['best_u']:.3f}")
+            ax_adam.set_xlabel("Adam epoch")
+            ax_adam.set_ylabel("U (composite)")
+            ax_adam.set_title("Adam warm-start (best chain)")
+            ax_adam.grid(alpha=0.3); ax_adam.legend(fontsize=9)
+
+        # Panel 2 — NUTS per-chain sample-U histograms.
         for k in range(K):
-            axes[1].hist(per_chain_U[k], bins=40, alpha=0.45,
+            ax_nuts.hist(per_chain_U[k], bins=40, alpha=0.45,
                          label=f"chain {k}  median={np.median(per_chain_U[k]):.2f}",
                          edgecolor="none")
-        axes[1].axvline(nuts_result["best_u"], color="black", linestyle="--",
+        ax_nuts.axvline(nuts_result["best_u"], color="black", linestyle="--",
                         label=f"pooled best = {nuts_result['best_u']:.3f}")
-        axes[1].set_xlabel("sample U")
-        axes[1].set_ylabel("count")
-        axes[1].set_title(
+        ax_nuts.set_xlabel("sample U")
+        ax_nuts.set_ylabel("count")
+        ax_nuts.set_title(
             f"NUTS samples per chain "
             f"(K={K}, N={N}, r̂max={nuts_result['r_hat_max']:.3f})"
         )
-        axes[1].grid(alpha=0.3); axes[1].legend(fontsize=8)
+        ax_nuts.grid(alpha=0.3); ax_nuts.legend(fontsize=8)
+
+        # Panel 3 — every Adam chain's U trajectory (one line per chain).
+        if ax_chains is not None:
+            colors = plt.cm.tab10(np.linspace(0, 1, max(len(adam_logs_all), 1)))
+            for k, lg in enumerate(adam_logs_all):
+                ep_k = [e["epoch"] for e in lg]
+                u_k  = [e["U"]     for e in lg]
+                ax_chains.plot(ep_k, u_k, color=colors[k], alpha=0.85, linewidth=1.0,
+                               label=f"chain {k}  best={max(u_k):.2f}")
+            ax_chains.set_xlabel("Adam epoch")
+            ax_chains.set_ylabel("U (composite)")
+            ax_chains.set_title(f"all Adam chains (K={len(adam_logs_all)})")
+            ax_chains.grid(alpha=0.3); ax_chains.legend(fontsize=7)
 
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -728,15 +755,13 @@ def _run_one_scheme(scheme: str,
     init_stacked = torch.cat(
         [torch.cat([bx, by], dim=0).unsqueeze(0) for bx, by in all_bests], dim=0,
     )
-    # Combined runs anchor the prior at the midpoint so no source is privileged.
-    if is_combined:
-        prior_x = torch.stack([bx for bx, _ in all_bests]).mean(0)
-        prior_y = torch.stack([by for _, by in all_bests]).mean(0)
-    else:
-        prior_x, prior_y = x_adam, y_adam
-
+    # Prior anchor = the single global Adam-best layout (a real, fully-spread
+    # configuration), for both per-scheme and combined runs. NOT the per-index
+    # mean across layouts: detectors have no consistent index->position mapping
+    # across schemes / permutation-equivariant runs, so averaging would collapse
+    # the anchor toward the centroid and bias NUTS toward a too-central layout.
     nuts_result = nuts_sampling_multichain(
-        prior_x, prior_y, fnn, recon, primary_all, n_total_primaries,
+        x_adam, y_adam, fnn, recon, primary_all, n_total_primaries,
         init_chains=init_stacked,
     )
 
@@ -826,7 +851,8 @@ def _run_one_scheme(scheme: str,
             ),
         }, f, indent=2)
 
-    _plot_curves(adam_log, nuts_result, os.path.join(opt_dir, "optimize_curves.png"))
+    _plot_curves(adam_log, nuts_result, os.path.join(opt_dir, "optimize_curves.png"),
+                 adam_logs_all=all_logs)
 
     _samples = nuts_result["samples"]                            # (K*N, 2*n_det)
     _x_std = _samples[:, :N_DETECTORS].std(dim=0)
