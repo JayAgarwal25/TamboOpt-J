@@ -85,13 +85,14 @@ def _scatter(ax, x, y, title: str, vmin=None, vmax=None):
     (0, 0) doesn't wash out the rare high-value tail; `mincnt=1` leaves
     empty bins blank so the y = x reference line stays readable. Pass
     `vmin` / `vmax` (in raw counts) to pin the colour scale across plots."""
-    from matplotlib.colors import LogNorm
-    lo = float(min(x.min(), y.min()))
+    from matplotlib.colors import LogNorm, Normalize
+    lo = 0.0#float(min(x.min(), y.min()))
     hi = float(max(x.max(), y.max()))
-    norm = LogNorm(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else LogNorm()
+    # norm = LogNorm(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else LogNorm()
+    norm = Normalize(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else Normalize()
     hb = ax.hexbin(x, y, gridsize=80, cmap="viridis", norm=norm,
                    mincnt=1, extent=(lo, hi, lo, hi))
-    plt.colorbar(hb, ax=ax, label="count (log scale)", pad=0.02, fraction=0.046)
+    plt.colorbar(hb, ax=ax, label="count", pad=0.02, fraction=0.046)
     ax.plot([lo, hi], [lo, hi], color="red", linestyle="--", linewidth=1.0,
             alpha=0.85, label="y = x")
     ax.set_xlabel("target"); ax.set_ylabel("prediction")
@@ -121,7 +122,8 @@ def load_fnn() -> FNNSurrogate:
     fnn.eval()
     print(f"[load] fnn.pt  epoch={fnn_ckpt.get('epoch','?')}  "
           f"val={fnn_ckpt.get('val_total','?')}  "
-          f"hidden={int(cfg.get('hidden', 512))}")
+          f"hidden={int(cfg.get('hidden', 512))} "
+          f"lbfgs_iter={fnn_ckpt.get('lbfgs_iter','?')}")
     return fnn
 
 
@@ -161,7 +163,8 @@ def load_recon() -> Reconstruction:
     )
     recon.eval()
     print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
-          f"val={recon_ckpt.get('val_total','?')}")
+          f"val={recon_ckpt.get('val_total','?')} "
+          f"lbfgs_iter={recon_ckpt.get('lbfgs_iter','?')}")
     return recon
 
 
@@ -180,10 +183,10 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     # use the same scale and small ckpt changes are visually comparable.
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
              f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",
-             vmin=10, vmax=10000)
+             vmin=10, vmax=5000)
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
              f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",
-             vmin=10, vmax=10000)
+             vmin=10, vmax=3000)
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
