@@ -52,6 +52,7 @@ if _HERE not in sys.path:
 
 import numpy as np
 import torch
+from scipy.optimize import linear_sum_assignment
 
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate import FNNSurrogate
@@ -90,7 +91,7 @@ ADAM_LOG_EVERY      = 100
 # VECTORS over W steps cancels zero-mean minibatch noise before the (nonlinear)
 # cosine, removing the noise-inflation bias instead of merely smoothing it.
 # 1 = no averaging (raw, noisy).
-GRAD_COS_WINDOW     = 5
+GRAD_COS_WINDOW     = 10
 
 # L-BFGS refinement (stage 2)
 LBFGS_MAX_ITER       = 1_500
@@ -101,7 +102,7 @@ LBFGS_BATCH_PRIMARIES = 512    # FIXED batch → deterministic objective for lin
 # Utility composite weights — match 04_optimize.py
 W_THETA = 1e2
 W_PHI   = 1e2
-W_E     = 1e3
+W_E     = 2.5e2
 W_PR    = 5e5
 W_DIV   = 1e3
 
@@ -167,7 +168,7 @@ def utility_of_xy(x_det: torch.Tensor,
     u_e     = U_E    (E_pred_phys, E_true,    r)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
-    return U, r, dict(u_theta=u_theta, u_phi=u_phi, u_e=u_e, u_pr=u_pr)
+    return U, r, dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV, u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)
 
 
 def adam_warm_start(scheme: str,
@@ -230,7 +231,13 @@ def adam_warm_start(scheme: str,
             best_x = xy_module.x.detach().cpu().clone()
             best_y = xy_module.y.detach().cpu().clone()
 
-        log.append(dict(epoch=epoch + 1, U=u_val, r_mean=float(r.mean().item())))
+        log.append(dict(
+            epoch=epoch + 1, U=u_val, r_mean=float(r.mean().item()),
+            u_theta=float(parts["u_theta"].item()),
+            u_phi=float(parts["u_phi"].item()),
+            u_e=float(parts["u_e"].item()),
+            u_pr=float(parts["u_pr"].item()),
+        ))
         if epoch == 0 or (epoch + 1) % ADAM_LOG_EVERY == 0 or epoch == N_ADAM_EPOCHS - 1:
             print(f"  [adam {epoch+1:4d}/{N_ADAM_EPOCHS}] U={u_val:+.3f}")
 
@@ -336,12 +343,17 @@ def lbfgs_refine(init_x: torch.Tensor,
         optimizer.zero_grad()
         x_det = xy[:N_DETECTORS]
         y_det = xy[N_DETECTORS:]
-        U, r, _ = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon)
+        U, r, parts = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon)
         loss = -U
         loss.backward()
         grad_hist.append(xy.grad.detach().reshape(-1).cpu())   # (2*n_det,)
-        iter_log.append(dict(iter=len(iter_log), U=float(U.item()),
-                             r_mean=float(r.mean().item())))
+        iter_log.append(dict(
+            iter=len(iter_log), U=float(U.item()), r_mean=float(r.mean().item()),
+            u_theta=float(parts["u_theta"].item()),
+            u_phi=float(parts["u_phi"].item()),
+            u_e=float(parts["u_e"].item()),
+            u_pr=float(parts["u_pr"].item()),
+        ))
         return loss
 
     optimizer.step(closure)
@@ -363,28 +375,8 @@ def _assign(cost: np.ndarray) -> np.ndarray:
     assigned to row i. Uses scipy's optimal Hungarian if available, else a
     dependency-free greedy global-minimum matcher (good enough for grouping
     n_det≈100 detectors by closest position)."""
-    try:
-        from scipy.optimize import linear_sum_assignment
-        _, col = linear_sum_assignment(cost)
-        return col
-    except Exception:
-        # Greedy: take cheapest (i, j) pairs first, skipping already-used rows/cols.
-        n = cost.shape[0]
-        order = np.argsort(cost, axis=None)         # flat indices, cost ascending
-        col = np.full(n, -1, dtype=np.int64)
-        row_used = np.zeros(n, dtype=bool)
-        col_used = np.zeros(n, dtype=bool)
-        filled = 0
-        for flat in order:
-            i, j = divmod(int(flat), n)
-            if row_used[i] or col_used[j]:
-                continue
-            col[i] = j
-            row_used[i] = col_used[j] = True
-            filled += 1
-            if filled == n:
-                break
-        return col
+    _, col = linear_sum_assignment(cost)
+    return col
 
 
 def align_to_reference(layouts_xy: np.ndarray, ref_idx: int):
@@ -415,39 +407,45 @@ def align_to_reference(layouts_xy: np.ndarray, ref_idx: int):
 
 
 def _plot_curves(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str):
-    """Three panels: Adam U trajectories, L-BFGS U trajectories, and the
-    consecutive-step gradient cosine distance — one line per run, Adam steps
-    then L-BFGS steps (solid → dashed) on a shared x-axis with a divider."""
+    """Two panels: (1) combined Adam→L-BFGS U trajectory, one line per run with
+    the SAME color across both phases (Adam solid, L-BFGS dashed) and a vertical
+    divider at the switch; (2) consecutive-step gradient cosine distance."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         K = max(len(adam_logs), 1)
-        fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+        fig, axes = plt.subplots(1, 2, figsize=(15, 4.5))
         colors = plt.cm.tab10(np.linspace(0, 1, K))
 
-        # Panel 1 — Adam U trajectories.
-        for k, lg in enumerate(adam_logs):
-            ep = [e["epoch"] for e in lg]
-            u  = [e["U"]     for e in lg]
-            axes[0].plot(ep, u, color=colors[k], alpha=0.85, linewidth=1.0,
-                         label=f"chain {k}  best={max(u):.2f}")
-        axes[0].set_xlabel("Adam epoch"); axes[0].set_ylabel("U (composite)")
-        axes[0].set_title(f"Adam warm-starts (K={len(adam_logs)})")
-        axes[0].grid(alpha=0.3); axes[0].legend(fontsize=7)
+        # Panel 1 — combined Adam + L-BFGS U, one continuous line per run.
+        # Adam epochs 1..A, then L-BFGS closure calls shifted to A+1..A+L.
+        adam_switch = max((len(lg) for lg in adam_logs), default=0)
+        for k in range(K):
+            a_lg = adam_logs[k] if k < len(adam_logs) else []
+            l_lg = lbfgs_logs[k] if k < len(lbfgs_logs) else []
+            a_u = [e["U"] for e in a_lg]
+            l_u = [e["U"] for e in l_lg]
+            best = max(a_u + l_u) if (a_u or l_u) else float("nan")
+            if a_u:
+                axes[0].plot(np.arange(1, len(a_u) + 1), a_u, color=colors[k],
+                             alpha=0.85, linewidth=1.0, linestyle="-",
+                             label=f"chain {k}  best={best:.2f}")
+            if l_u:
+                xl = np.arange(adam_switch + 1, adam_switch + 1 + len(l_u))
+                axes[0].plot(xl, l_u, color=colors[k], alpha=0.85, linewidth=1.0,
+                             linestyle="--",
+                             label=None if a_u else f"chain {k}  best={best:.2f}")
+        if adam_switch:
+            axes[0].axvline(adam_switch + 0.5, color="gray", linestyle=":",
+                            alpha=0.7, label="Adam→L-BFGS")
+        axes[0].set_xlabel("optimizer step (Adam epochs → L-BFGS calls)")
+        axes[0].set_ylabel("U (composite)")
+        axes[0].set_title(f"optimization: Adam (solid) + L-BFGS (dashed), K={K}")
+        axes[0].grid(alpha=0.3); axes[0].legend(fontsize=7, bbox_to_anchor=(1.04, 1), loc="upper left",)
 
-        # Panel 2 — L-BFGS U trajectories.
-        for k, lg in enumerate(lbfgs_logs):
-            it = [e["iter"] for e in lg]
-            u  = [e["U"]    for e in lg]
-            axes[1].plot(it, u, color=colors[k % K], alpha=0.85, linewidth=1.0,
-                         label=f"refine {k}  best={max(u):.2f}")
-        axes[1].set_xlabel("L-BFGS closure call"); axes[1].set_ylabel("U (composite)")
-        axes[1].set_title(f"L-BFGS refinements (K={len(lbfgs_logs)})")
-        axes[1].grid(alpha=0.3); axes[1].legend(fontsize=7)
-
-        # Panel 3 — consecutive-step gradient cosine distance, one line per run.
+        # Panel 2 — consecutive-step gradient cosine distance, one line per run.
         # Solid = Adam phase, dashed = L-BFGS phase (same color = same run).
         # Raw (W=1) drawn faint behind the W-step vector-averaged line (bold);
         # both x-shift L-BFGS after the Adam steps. adam_len from the RAW series
@@ -464,31 +462,31 @@ def _plot_curves(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str):
                     continue
                 raw  = _consecutive_cos_distance(grads, 1)
                 if len(raw):
-                    axes[2].plot(np.arange(x0 + 1, x0 + 1 + len(raw)), raw,
-                                 color=colors[k % K], alpha=0.18, linewidth=0.7,
+                    axes[1].plot(np.arange(x0 + 1, x0 + 1 + len(raw)), raw,
+                                 color=colors[k % K], alpha=0.1, linewidth=0.7,
                                  linestyle="--" if dashed else "-")
                     any_line = True
                 sm = _consecutive_cos_distance(grads, GRAD_COS_WINDOW)
                 if len(sm):
                     # Smoothed series is shorter by (W-1); center it on its window.
                     off = x0 + (len(raw) - len(sm)) // 2 + 1
-                    axes[2].plot(np.arange(off, off + len(sm)), sm,
+                    axes[1].plot(np.arange(off, off + len(sm)), sm,
                                  color=colors[k % K], alpha=0.9, linewidth=1.6,
                                  linestyle="--" if dashed else "-",
                                  label=f"run {k}" if not dashed else None)
         if adam_len and lbfgs_grads:
-            axes[2].axvline(adam_len + 0.5, color="gray", linestyle=":", alpha=0.6,
+            axes[1].axvline(adam_len + 0.5, color="gray", linestyle=":", alpha=0.6,
                             label="Adam→L-BFGS")
-        axes[2].set_xlabel("optimizer step")
-        axes[2].set_ylabel("cos distance (consecutive grads)")
-        axes[2].set_title(f"per-run gradient-direction turn "
+        axes[1].set_xlabel("optimizer step")
+        axes[1].set_ylabel("cos distance (consecutive grads)")
+        axes[1].set_title(f"per-run gradient-direction turn "
                           f"(W={GRAD_COS_WINDOW}-step vector avg; raw faint)")
-        axes[2].grid(alpha=0.3)
+        axes[1].grid(alpha=0.3)
         if any_line:
-            axes[2].legend(fontsize=7)
+            axes[1].legend(fontsize=7)
         else:
-            axes[2].text(0.5, 0.5, "no gradient history", ha="center", va="center",
-                         transform=axes[2].transAxes, fontsize=10)
+            axes[1].text(0.5, 0.5, "no gradient history", ha="center", va="center",
+                         transform=axes[1].transAxes, fontsize=10)
 
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -496,6 +494,78 @@ def _plot_curves(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str):
         print(f"[plot] wrote {path}")
     except Exception as exc:
         print(f"[plot] curves skipped ({exc!r})")
+
+
+def _plot_utility_components(adam_logs, lbfgs_logs, path: str):
+    """One subfigure per chain. Each shows the weighted utility sub-parts
+    (θ, φ, E contributions = W_x·u_x / W_DIV, which sum to U) over the combined
+    Adam→L-BFGS trajectory, plus a bold black line for the overall utility U.
+    Adam phase solid, L-BFGS phase dashed; a vertical divider marks the switch."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        K = max(len(adam_logs), len(lbfgs_logs), 1)
+        ncol = min(K, 5)
+        nrow = math.ceil(K / ncol)
+        fig, axes = plt.subplots(nrow, ncol, figsize=(5 * ncol, 3.5 * nrow),
+                                 squeeze=False, sharex=False)
+        axes_flat = axes.flatten()
+
+        # (label, log-key, weight). The logged u_* are ALREADY the weighted
+        # contributions (W_x * u_x / W_DIV; see utility_of_xy), and they sum to
+        # U by construction — so plot them as-is (weight 1.0). Re-applying the
+        # weight here double-counts it and shrinks the sub-curves below U.
+        parts = [
+            ("θ", "u_theta", 1.0, "C0"),
+            ("φ", "u_phi",   1.0, "C1"),
+            ("E", "u_e",     1.0, "C2"),
+        ]
+        adam_switch = max((len(lg) for lg in adam_logs), default=0)
+
+        for k in range(K):
+            ax = axes_flat[k]
+            a_lg = adam_logs[k] if k < len(adam_logs) else []
+            l_lg = lbfgs_logs[k] if k < len(lbfgs_logs) else []
+            xa = np.arange(1, len(a_lg) + 1)
+            xl = np.arange(adam_switch + 1, adam_switch + 1 + len(l_lg))
+
+            for label, key, w, col in parts:
+                if a_lg:
+                    ax.plot(xa, [e[key] * w for e in a_lg], color=col,
+                            linewidth=1.0, linestyle="-", alpha=0.85, label=label)
+                if l_lg:
+                    ax.plot(xl, [e[key] * w for e in l_lg], color=col,
+                            linewidth=1.0, linestyle="--", alpha=0.85,
+                            label=None if a_lg else label)
+            # Overall utility U (bold black).
+            if a_lg:
+                ax.plot(xa, [e["U"] for e in a_lg], color="black",
+                        linewidth=1.8, linestyle="-", label="U (overall)")
+            if l_lg:
+                ax.plot(xl, [e["U"] for e in l_lg], color="black",
+                        linewidth=1.8, linestyle="--",
+                        label=None if a_lg else "U (overall)")
+            if adam_switch:
+                ax.axvline(adam_switch + 0.5, color="gray", linestyle=":", alpha=0.6)
+            ax.set_title(f"chain {k}", fontsize=10)
+            ax.set_xlabel("optimizer step"); ax.set_ylabel("utility")
+            ax.grid(alpha=0.3); ax.legend(fontsize=7)
+
+        # Hide any unused axes in the grid.
+        for j in range(K, len(axes_flat)):
+            axes_flat[j].axis("off")
+
+        fig.suptitle("per-chain utility decomposition "
+                     "(weighted θ/φ/E sub-parts + overall U; Adam solid, L-BFGS dashed)",
+                     fontsize=12)
+        fig.tight_layout(rect=(0, 0, 1, 0.97))
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] utility components skipped ({exc!r})")
 
 
 def _plot_ensemble(aligned_xy: np.ndarray,
@@ -539,7 +609,6 @@ def _plot_ensemble(aligned_xy: np.ndarray,
         ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
         ax.set_aspect("equal")
         ax.set_title(f"L-BFGS ensemble (K={K}) — aligned best + 1σ ellipses")
-        # ax.legend(loc="left", )
         ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=8)
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -547,6 +616,116 @@ def _plot_ensemble(aligned_xy: np.ndarray,
         print(f"[plot] wrote {path}")
     except Exception as exc:
         print(f"[plot] ensemble skipped ({exc!r})")
+
+
+def _plot_density_heatmap(aligned_xy: np.ndarray,
+                          best_x, best_y,
+                          mountain, path: str,
+                          bins: int = 60):
+    """Mountain top-down 2D density of where detectors land across the ensemble.
+
+    Pools every detector position from all K aligned runs (K * n_det points)
+    into a 2D histogram over (North, Up); brighter cells = positions favored by
+    more runs. The mountain footprint is outlined faintly underneath, and the
+    single best-U layout is overlaid as a scatter so the densest regions can be
+    read against the actual winning layout."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        K, n_det, _ = aligned_xy.shape
+        pts = aligned_xy.reshape(-1, 2)                          # (K*n_det, 2)
+
+        # Histogram extent spans EXACTLY the union of the mountain footprint and
+        # the detector positions — no outer padding, otherwise the pad rows/cols
+        # carry no data and render as a permanent transparent border (the white
+        # top/bottom lines). The extreme points then live in the edge bins.
+        cen = getattr(mountain, "centroids_NUE", None)
+        if cen is not None:
+            allx = np.concatenate([cen[:, 0], pts[:, 0]])
+            ally = np.concatenate([cen[:, 1], pts[:, 1]])
+        else:
+            allx, ally = pts[:, 0], pts[:, 1]
+        xlo, xhi = float(allx.min()), float(allx.max())
+        ylo, yhi = float(ally.min()), float(ally.max())
+        extent = [xlo, xhi, ylo, yhi]
+
+        rng = [[extent[0], extent[1]], [extent[2], extent[3]]]
+        H, xedges, yedges = np.histogram2d(
+            pts[:, 0], pts[:, 1], bins=bins, range=rng,
+        )
+        H = H / max(K, 1)            # → expected detectors per cell per run
+
+        # Aligned detectors cluster into ~n_det tight spots, so raw bins read as
+        # scattered specks. A light Gaussian blur turns those into legible
+        # density blobs ("where detectors concentrate"). Falls back to raw H if
+        # scipy is unavailable.
+        try:
+            from scipy.ndimage import gaussian_filter
+            H = gaussian_filter(H, sigma=1.0)
+        except Exception:
+            pass
+
+        # Color ONLY the mountain footprint: histogram the centroids onto the
+        # same grid → cells that contain mountain, dilated a little to bridge the
+        # gaps between the (sparse) centroids, then mask everything else so the
+        # off-mountain region renders transparent.
+        if cen is not None:
+            occ, _, _ = np.histogram2d(cen[:, 0], cen[:, 1], bins=bins, range=rng)
+            # Detectors are projected onto the mountain, so cells holding a
+            # detector are valid mountain too — union them in so no scatter
+            # point ever lands outside the colored region (the centroid sample
+            # is slightly narrower than the layout footprint at the edges).
+            det_occ, _, _ = np.histogram2d(pts[:, 0], pts[:, 1], bins=bins, range=rng)
+            mask = (occ > 0) | (det_occ > 0)
+            try:
+                from scipy.ndimage import (binary_dilation, binary_fill_holes,
+                                           binary_erosion)
+                # Dilate to bridge gaps between the sparse centroids, fill the
+                # interior, then erode back so the outer boundary stays put —
+                # leaves a solid mountain footprint with no speckle holes.
+                mask = binary_dilation(mask, iterations=2)
+                mask = binary_fill_holes(mask)
+                # border_value=1 so the erosion doesn't strip the array-edge
+                # rows/cols (otherwise the top & bottom lines go transparent).
+                mask = binary_erosion(mask, iterations=1, border_value=1)
+            except Exception:
+                pass
+            H = np.ma.masked_array(H, mask=~mask)
+
+        # Figure aspect ≈ data aspect so the equal-aspect map fills the frame
+        # vertically (and the axes-height colorbar ends up as tall as the image).
+        data_ar = (extent[3] - extent[2]) / (extent[1] - extent[0])
+        fig_w = 14.0
+        fig, ax = plt.subplots(figsize=(fig_w, max(fig_w * data_ar + 1.2, 3.0)))
+
+        cmap = plt.cm.magma.copy()
+        cmap.set_bad(alpha=0.0)          # masked / off-mountain → transparent
+        im = ax.imshow(
+            H.T, origin="lower", extent=extent, aspect="equal",
+            cmap=cmap, interpolation="bilinear", zorder=0,
+        )
+
+        # Colorbar exactly as tall as the map.
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
+        cbar = fig.colorbar(im, cax=cax)
+        cbar.set_label("detector density (count per run per cell)")
+
+        ax.scatter(np.asarray(best_x), np.asarray(best_y), s=22, c="cyan",
+                   edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
+                   label="best-U layout")
+
+        ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
+        ax.set_title(f"detector placement density (K={K} runs, {bins}×{bins} bins) "
+                     f"+ best-U layout")
+        ax.legend(loc="upper right", fontsize=8)
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] density heatmap skipped ({exc!r})")
 
 
 def _load_models():
@@ -714,8 +893,12 @@ def _run_one_scheme(scheme: str,
 
     _plot_curves(all_adam_logs, lbfgs_logs, all_adam_grads, all_lbfgs_grads,
                  os.path.join(opt_dir, "optimize_curves.png"))
-    _plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y, 
+    _plot_utility_components(all_adam_logs, lbfgs_logs,
+                            os.path.join(opt_dir, "utility_components.png"))
+    _plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y,
                     mountain, os.path.join(opt_dir, "layout_ensemble.png"))
+    _plot_density_heatmap(aligned, best_x, best_y,
+                    mountain, os.path.join(opt_dir, "layout_density.png"))
 
     print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")

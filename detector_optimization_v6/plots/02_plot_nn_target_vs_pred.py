@@ -219,9 +219,11 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
             pred[lo:hi] = recon(flat).cpu()
 
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
+    vmin_s = (1, 1, 1, 1)
+    vmax_s = (350, 350, 250, 600)
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
     for i, name in enumerate(labels):
-        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}")
+        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i])
     fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
