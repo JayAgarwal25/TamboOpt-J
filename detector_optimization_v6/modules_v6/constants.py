@@ -40,7 +40,7 @@ RECENTER_TO_MOUNTAIN = True
 
 # 02_train_fnn.py: fraction of training-set indices to keep (val set always
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
-TRAIN_FRACTION = 1.0
+TRAIN_FRACTION = 0.1 #1.0
 
 NUM_SHOWERS = 500_000
 # NUM_SHOWERS = 100000
