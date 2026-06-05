@@ -8,6 +8,9 @@
 
 module load python 
 
+conda deactivate
+conda deactivate
+
 conda activate multiproc_env
 
 export PYTHONUNBUFFERED=1
@@ -15,7 +18,7 @@ export PYTHONUNBUFFERED=1
 # python -u 00_generate_data.py
 # python -u 01_build_dataset.py
 # python -u 02_train_fnn.py
-python -u 02_train_fnn_gauss_newton.py
+python -u 02_train_fnn_deepsets.py
 # python -u 03_train_recon.py
 # python -u 04_optimize_hmc_chains.py
 # python -u 04_optimize.py
