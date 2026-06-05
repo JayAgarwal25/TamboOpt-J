@@ -41,36 +41,12 @@ from modules_v6.constants import (
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-# 0040 (path-c schedule de-risk): the FNN was UNDERFITTING — Adam froze at the
-# OneCycle LR floor (val flat by ~ep90) and dropout suppressed an already-underfit
-# model. Fixes: (1) higher LR_MAX from an LR-range test, (2) AdamW weight decay
-# instead of dropout, (3) LR_MIN off the dead 1e-8 floor, (4) L-BFGS capped past
-# its val optimum. Run `lr_range_test.py` first; LR_MAX auto-loads its result.
 BATCH_SIZE          = 256
-N_EPOCHS            = 150       # was 100 (room past the old frozen tail; OneCycle auto-rescales via total_steps)
-DROPOUT             = 0.0       # was 0.1 — regularizing an underfit model is counterproductive
-WEIGHT_DECAY        = 1e-5      # AdamW replaces dropout (no train/eval asymmetry that hid convergence)
-
-# LR_MAX: prefer the LR-range-test recommendation (lr_range_test.json in
-# FNN_FOLDER) so the trainer and the probe never drift; fall back to 5e-4
-# (≈5× the old, conservative 1e-4) if the test hasn't been run yet.
-def _load_lr_max(default: float = 5e-4) -> float:
-    try:
-        import json as _json
-        with open(os.path.join(FNN_FOLDER, "lr_range_test.json")) as _f:
-            v = float(_json.load(_f)["recommended_lr_max"])
-        if 1e-6 < v < 1e-1:
-            print(f"[lr] using LR_MAX={v:.2e} from lr_range_test.json")
-            return v
-    except Exception:
-        pass
-    print(f"[lr] lr_range_test.json not found/invalid — LR_MAX fallback {default:.2e}")
-    return default
-
-LR_MAX              = _load_lr_max()
-LR                  = LR_MAX / 25     # OneCycle initial (warmup start)
-LR_MIN              = LR_MAX / 100    # was 1e-7 → froze the last ~15 epochs; keep Adam warm for L-BFGS handoff
-ONECYCLE_PCT_START  = 0.05            # warmup ~5% of steps (re-check if BATCH_SIZE changes)
+N_EPOCHS            = 100
+LR                  = 1e-5     # initial LR (OneCycleLR ramps from here up to LR_MAX)
+LR_MAX              = 1e-4     # OneCycleLR peak
+LR_MIN              = 1e-7     # OneCycleLR end (cosine anneal target)
+ONECYCLE_PCT_START  = 0.10     # 10% warmup, 90% cosine decay
 GRAD_CLIP           = 10.0
 VAL_FRAC            = 0.10
 SEED                = 0
@@ -79,7 +55,7 @@ DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu
 
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 800  # was 1500: prior run's val min was ~iter 695, then overfit 832 iters
+LBFGS_MAX_ITER           = 1500
 LBFGS_HISTORY_SIZE       = 5    # 0030: was 20 (cuts L-BFGS memory ~4x to unblock OOM on wider models)
 LBFGS_CHUNK_SIZE         = 4096 # 0030 (from 0010): chunked-closure forward to avoid full-batch OOM on wider Deep Sets
 
@@ -290,13 +266,13 @@ def main():
     torch.manual_seed(SEED)
     model = FNNSurrogate(
         n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-        hidden=1024, dropout=DROPOUT,
+        hidden=1024, dropout=0.1,
     ).to(DEVICE)
     model.set_normalization(norm_stats)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[model] params={n_params:,}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     # OneCycleLR (Smith & Topin 2017): warmup from LR -> LR_MAX over pct_start
     # of total steps, then cosine-anneal to LR_MIN. Steps per-batch.
     steps_per_epoch = len(train_loader)
@@ -307,11 +283,8 @@ def main():
         total_steps=total_steps,
         pct_start=ONECYCLE_PCT_START,
         anneal_strategy="cos",
-        div_factor=LR_MAX / LR,        # initial_lr = max_lr / div_factor = LR
-        # OneCycle defines min_lr = initial_lr / final_div_factor (relative to the
-        # INITIAL lr, NOT max_lr). The old `LR_MAX/LR_MIN` was a latent bug that
-        # annealed to ~1e-8 (a dead LR), freezing the last epochs. Correct form:
-        final_div_factor=LR / LR_MIN,  # end lr = initial_lr / (LR/LR_MIN) = LR_MIN
+        div_factor=LR_MAX / LR,        # initial lr = max_lr / div_factor = LR
+        final_div_factor=LR_MAX / LR_MIN,  # end lr  = max_lr / final_div_factor = LR_MIN
     )
 
     log = []
@@ -397,7 +370,7 @@ def main():
                 "norm_stats": norm_stats,
                 "config": dict(
                     n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                    hidden=1024, dropout=DROPOUT,
+                    hidden=1024, dropout=0.1,
                 ),
             }, os.path.join(FNN_FOLDER, "fnn.pt"))
 
@@ -407,8 +380,7 @@ def main():
             "best_val_total": best_val,
             "best_epoch": best_epoch,
             "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
-                lr_max=LR_MAX, lr_min=LR_MIN, dropout=DROPOUT, weight_decay=WEIGHT_DECAY,
+                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR, lr_min=LR_MIN,
                 grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
             ),
         }, f, indent=2)
@@ -523,7 +495,7 @@ def main():
                 "norm_stats": norm_stats,
                 "config": dict(
                     n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                    hidden=1024, dropout=DROPOUT,
+                    hidden=1024, dropout=0.1,
                 ),
             }, os.path.join(FNN_FOLDER, "fnn.pt"))
             marker = "  <- NEW BEST (saved)"
@@ -580,8 +552,7 @@ def main():
             "adam_best_val": adam_best_val,
             "adam_best_epoch": best_epoch,
             "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
-                lr_max=LR_MAX, lr_min=LR_MIN, dropout=DROPOUT, weight_decay=WEIGHT_DECAY,
+                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR, lr_min=LR_MIN,
                 grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
                 lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
