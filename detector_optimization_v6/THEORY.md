@@ -360,9 +360,7 @@ Both networks share the same **normalisation contract** (per-feature z-score bak
 
 ### 5.2 Why Permutation Augmentation?
 
-Both networks use flat MLPs, which are inherently order-dependent. A principled solution would be a set-equivariant architecture (e.g., DeepSets, Set Transformer), but MLPs are simpler, faster, and sufficient when combined with permutation augmentation during training. The augmentation ensures:
-- The FNN learns that permuting the input layout and the output responses together produces the same physical situation (equivariance).
-- The recon network learns that the scalar primary properties are invariant to detector ordering (invariance).
+Both networks use flat MLPs, which are inherently order-dependent, so training applies random per-sample detector permutations to *approximate* the symmetry: equivariance for the FNN (permuting the layout permutes the responses), invariance for the recon (reordering detectors must not change the inferred primary). This was chosen for simplicity, but the architecture search (§10) found it to be the dominant bottleneck — a set-equivariant model that bakes the symmetry in *by construction* (DeepSets) is the recommended replacement. Augmentation is the current expedient, not the endpoint.
 
 ### 5.3 Why Train Recon on FNN Predictions?
 
@@ -462,3 +460,36 @@ The expectation is approximated by mini-batches of 256 primaries sampled uniform
 $$U \;\xleftarrow{\text{utility}}\; (\hat E, \hat\theta, \hat\phi, r) \;\xleftarrow{\text{decode}}\; (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E}) \;\xleftarrow{f_\text{recon}}\; (x_i, y_i, \hat E_i, \hat T_i) \;\xleftarrow{f_\text{FNN}}\; (\mathbf{q}, x_i, y_i)$$
 
 back to the learnable parameters $(x_i, y_i)$. Both $f_\text{FNN}$ and $f_\text{recon}$ are frozen (no weight updates); only the detector positions receive gradient updates.
+
+
+## 10. FNN Surrogate: Development Log and Known Limitation
+
+The Step-2 surrogate has been the subject of an extensive architecture/hyperparameter search (full chronology in `diary.md`). The findings below are load-bearing for anyone continuing the work.
+
+### 10.1 What was tried, and the verdict
+
+Search ran on a 10% data subset; numbers are relative z-scored val-MSE within the search, **not** comparable to full-corpus production runs.
+
+- **Flat-MLP family plateaus at val ≈ 0.69–0.71.** OneCycleLR, GELU+LayerNorm, and width up to 1024 each gave only marginal gains; none broke the plateau.
+- **Deep Sets was the one decisive lever:** a per-detector shared MLP with pooled context reached **0.546 (−23%)**, with E dropping 40%. The permutation-equivariance inductive bias — which the current flat MLP only *approximates*, expensively, via augmentation — is what mattered.
+- **Capacity is not the bottleneck.** A 4× wider Deep Sets did not improve; it converged faster to a no-better minimum.
+- **A hard cross-method floor at ≈ 0.546.** Set Transformer (SAB/ISAB), a k-NN GNN, primary→detector cross-attention, learned uncertainty weighting, and AdamW+3× LR **all landed within ±0.3%** of Deep Sets. Such tightness across radically different models points to a **data/label ceiling**, not an architecture limit — most likely irreducible label noise from the upstream shower simulation, or a feature gap for the T channel (T stays ~2× harder than E throughout).
+- **Zero-inflation handling backfires.** Soft reweighting, BCE hit-gates, and hard masks to focus the loss on the rare non-zero T positions all *regressed* the pure-MSE metric — the ~96% zero-target positions dominate the MSE and masking starves their gradient. Zero-inflation is **not** the fitting bottleneck.
+- **log-T target** (`T ← log1p(T·10⁸)`, §6) and the **L-BFGS best-iter save fix** (§4.3) were the two changes that did stick and are now in production.
+
+### 10.2 Path-c schedule de-risk (2026-06-04) — failed, reverted
+
+A controlled attempt to lift the *production flat MLP* by schedule/optimizer alone (LR-range test → AdamW + weight decay, dropout off, raised LR floor, L-BFGS capped, and a fix to a latent OneCycle `final_div_factor` bug) **regressed** (val 0.60 vs the prior 0.40). The honest conditional metrics exposed the real failure mode the total-MSE hides:
+
+| metric | value | meaning |
+|--------|-------|---------|
+| E R² (all detectors) | 0.45 | flattering — dominated by trivially-correct empty detectors |
+| **E R² (fired only)** | **−0.14** | magnitude is *worse* than predicting the fired-channel mean |
+| fire precision / recall | 0.42 / 0.99 | the model **over-fires**, leaking energy onto empty detectors |
+| fired pred/target std | 0.69 | magnitude compression — classic predict-the-mean |
+
+All path-c edits were reverted; the working tree matches the recipe documented in §4.3.
+
+### 10.3 Standing recommendation
+
+Track **conditional-on-fired E/T R² and fire precision/recall**, not total val-MSE — the latter is flattering because ~68% of detector-samples are near-zero. The next high-leverage change is **path (a): re-architect the FNN as a pointwise DeepSets** `φ(q, xᵢ, yᵢ) → (Eᵢ, Tᵢ)` with weights shared across detectors. This is permutation-equivariant by construction (matching the provably per-detector-local kernel of §3.4), removes the augmentation, uses ~34× fewer parameters, and turns each detector into its own training example (~100× more effective samples). It preserves the `forward(primary, xy) → (B,100,2)` contract, so Steps 3–4 are unaffected. The recon network (§4.4) shares the same flat-MLP mismatch (its target is permutation-*invariant*) and is the natural follow-on.
