@@ -3,7 +3,7 @@
 import os
 
 
-GEOMETRY_PATH = "/n/home05/zdimitrov/tambo/TAMBOSim/resources/basic_geometry.h5"
+GEOMETRY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/colca_valley.h5"
 GEOMETRY_GROUP = "colca_valley_30000"
 DET_KEY        = "detector1"
 N_PLANES       = 24
@@ -40,7 +40,7 @@ RECENTER_TO_MOUNTAIN = True
 
 # 02_train_fnn.py: fraction of training-set indices to keep (val set always
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
-TRAIN_FRACTION = 0.01 #1.0
+TRAIN_FRACTION = 1.0
 
 NUM_SHOWERS = 500_000
 # NUM_SHOWERS = 100000

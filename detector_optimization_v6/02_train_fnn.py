@@ -55,9 +55,10 @@ DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu
 
 # ── L-BFGS fine-tuning (full-batch, one step, many iterations) ─────────────
 LBFGS_LR                 = 1.0
-LBFGS_MAX_ITER           = 1500
+LBFGS_MAX_ITER           = 1000
 LBFGS_HISTORY_SIZE       = 5    # 0030: was 20 (cuts L-BFGS memory ~4x to unblock OOM on wider models)
 LBFGS_CHUNK_SIZE         = 4096 # 0030 (from 0010): chunked-closure forward to avoid full-batch OOM on wider Deep Sets
+LBFGS_PATIENCE      = 150
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -424,7 +425,11 @@ def main():
     # min < last by 0.003-0.006 absolute).
     lbfgs_best_val = adam_best_val
     lbfgs_best_iter = -1
+    lbfgs_no_improve = 0
     n_total = int(p_all.shape[0])
+
+    class _LBFGSStop(Exception):
+        """Raised from the closure to early-stop L-BFGS once val stalls."""
 
     def closure():
         # 0030: chunked forward+backward to avoid full-batch OOM on wider
@@ -432,7 +437,7 @@ def main():
         # weight loss by chunk_size/n_total, backward (accumulates grad),
         # detach the loss scalar. Final scalar = mean over all samples,
         # final grad = exact full-batch gradient (verified in 0010).
-        nonlocal lbfgs_best_val, lbfgs_best_iter
+        nonlocal lbfgs_best_val, lbfgs_best_iter, lbfgs_no_improve
         lbfgs_optimizer.zero_grad()
         sum_loss = 0.0
         sum_E    = 0.0
@@ -484,6 +489,7 @@ def main():
         if va_tot < lbfgs_best_val - 1e-5:
             lbfgs_best_val = va_tot
             lbfgs_best_iter = it
+            lbfgs_no_improve = 0
             torch.save({
                 "state_dict": model.state_dict(),
                 "epoch": N_EPOCHS + 1,
@@ -500,13 +506,21 @@ def main():
             }, os.path.join(FNN_FOLDER, "fnn.pt"))
             marker = "  <- NEW BEST (saved)"
         else:
+            lbfgs_no_improve += 1
             marker = ""
         print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f} "
               f"(E={mE.item():.6f} T={mT.item():.6f})  "
               f"val={va_tot:.6f} (E={va_E:.6f} T={va_T:.6f}){marker}")
+        if lbfgs_no_improve >= LBFGS_PATIENCE:
+            raise _LBFGSStop
         return loss
 
-    final_loss = lbfgs_optimizer.step(closure)
+    try:
+        final_loss = lbfgs_optimizer.step(closure)
+    except _LBFGSStop:
+        print(f"[lbfgs] early stop: {LBFGS_PATIENCE} closure calls with no val "
+              f"improvement (best val={lbfgs_best_val:.6f} at iter {lbfgs_best_iter})")
+        final_loss = torch.tensor(lbfgs_best_val, device=DEVICE)
 
     # Free GPU memory
     del p_all, xy_all, E_all_train, T_all_train

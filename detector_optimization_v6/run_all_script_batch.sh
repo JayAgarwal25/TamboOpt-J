@@ -17,7 +17,7 @@ export PYTHONUNBUFFERED=1
 
 # python -u 00_generate_data.py
 # python -u 01_build_dataset.py
-# python -u 02_train_fnn.py
+python -u 02_train_fnn.py
 python -u 02_train_fnn_deepsets.py
 # python -u 03_train_recon.py
 # python -u 04_optimize_hmc_chains.py

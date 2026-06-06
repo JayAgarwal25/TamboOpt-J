@@ -473,7 +473,7 @@ Search ran on a 10% data subset; numbers are relative z-scored val-MSE within th
 - **Flat-MLP family plateaus at val ≈ 0.69–0.71.** OneCycleLR, GELU+LayerNorm, and width up to 1024 each gave only marginal gains; none broke the plateau.
 - **Deep Sets was the one decisive lever:** a per-detector shared MLP with pooled context reached **0.546 (−23%)**, with E dropping 40%. The permutation-equivariance inductive bias — which the current flat MLP only *approximates*, expensively, via augmentation — is what mattered.
 - **Capacity is not the bottleneck.** A 4× wider Deep Sets did not improve; it converged faster to a no-better minimum.
-- **A hard cross-method floor at ≈ 0.546.** Set Transformer (SAB/ISAB), a k-NN GNN, primary→detector cross-attention, learned uncertainty weighting, and AdamW+3× LR **all landed within ±0.3%** of Deep Sets. Such tightness across radically different models points to a **data/label ceiling**, not an architecture limit — most likely irreducible label noise from the upstream shower simulation, or a feature gap for the T channel (T stays ~2× harder than E throughout).
+- **A hard cross-method floor at ≈ 0.546.** Set Transformer (SAB/ISAB), a k-NN GNN, primary→detector cross-attention, learned uncertainty weighting, and AdamW+3× LR **all landed within ±0.3%** of Deep Sets. Such tightness across radically different models points to a **data/label ceiling**, not an architecture limit. §10.4 shows this is an **aleatoric** ceiling (the surrogate cannot see the stochastic shower realisation), and explains why T stays ~2× harder than E.
 - **Zero-inflation handling backfires.** Soft reweighting, BCE hit-gates, and hard masks to focus the loss on the rare non-zero T positions all *regressed* the pure-MSE metric — the ~96% zero-target positions dominate the MSE and masking starves their gradient. Zero-inflation is **not** the fitting bottleneck.
 - **log-T target** (`T ← log1p(T·10⁸)`, §6) and the **L-BFGS best-iter save fix** (§4.3) were the two changes that did stick and are now in production.
 
@@ -493,3 +493,25 @@ All path-c edits were reverted; the working tree matches the recipe documented i
 ### 10.3 Standing recommendation
 
 Track **conditional-on-fired E/T R² and fire precision/recall**, not total val-MSE — the latter is flattering because ~68% of detector-samples are near-zero. The next high-leverage change is **path (a): re-architect the FNN as a pointwise DeepSets** `φ(q, xᵢ, yᵢ) → (Eᵢ, Tᵢ)` with weights shared across detectors. This is permutation-equivariant by construction (matching the provably per-detector-local kernel of §3.4), removes the augmentation, uses ~34× fewer parameters, and turns each detector into its own training example (~100× more effective samples). It preserves the `forward(primary, xy) → (B,100,2)` contract, so Steps 3–4 are unaffected. The recon network (§4.4) shares the same flat-MLP mismatch (its target is permutation-*invariant*) and is the natural follow-on.
+
+### 10.4 The cross-method floor is largely aleatoric (not an architecture limit)
+
+The §10.1 floor has a concrete, kernel-level explanation that bounds what *any* Step-2 surrogate can achieve. The ground-truth response (§3.4) is a function of the **full stochastic shower point cloud** `samples (B, P, 5)`:
+
+$$E_{\text{det},i} = \sum_j e_j K_{ij}, \qquad T_{\text{det},i} = \frac{\sum_j t_j K_{ij}}{\sum_j K_{ij}}$$
+
+But the surrogate is conditioned only on the **primary summary** $\mathbf{q} = (\hat{\mathbf n}, \tilde E, \text{pdg})$ and the layout $\mathbf{xy}$ — it never sees the secondaries. The flow-matching generator (§3.2, §4.1) draws a *different* point cloud for every shower, so two showers with an identical primary yield different $(E_\text{det}, T_\text{det})$. The best any model can do is predict the **conditional mean** $\mathbb{E}[(E,T)\mid \mathbf q, \mathbf{xy}]$; the shower-to-shower variance is **irreducible aleatoric noise** — a hard floor on z-scored MSE, independent of capacity or optimiser. This is why §10.1's radically different architectures all stop at the same wall. (It supersedes the earlier "feature gap" guess: the missing information is the entire random realisation, which is unknowable from the primary, not a single engineered feature like time-of-flight.)
+
+**Why T floors higher than E.** $E_\text{det}$ is a *sum* of many per-particle contributions and self-averages (law of large numbers) → small conditional variance. $T_\text{det}$ is a kernel-weighted *mean arrival time*, dominated by where the few near-detector particles happen to land in each realisation → it fluctuates far more shower-to-shower. Aleatoric noise therefore ranks the channels as observed (T harder than E).
+
+**Measured floor (2026-06-05, `compute_aleatoric_floor.py`).** Directly: 128 primaries × 64 *independent* generated showers each, run through the exact training kernel + recentering + log-transforms, within-primary label variance / full-corpus variance (z-MSE units, so directly comparable to val):
+
+| channel | aleatoric floor | DeepSets val (1% data) | gap | max R² |
+|---------|-----------------|------------------------|-----|--------|
+| E (all) | **0.306** | 0.320 | 0.014 | 0.69 |
+| T (all) | **0.414** | 0.425 | 0.011 | 0.59 |
+| total   | **0.360** | 0.373 | 0.013 | — |
+
+**The DeepSets surrogate is essentially Bayes-optimal — within ~0.01–0.015 of the floor on every channel, on just 1% of the data.** Architecture/optimiser tuning past this point has ~zero headroom; full-data training only closes the residual ~0.013. The measured floor **T/E ratio is ~1.35** (not the ≈2.05 from the old 10%-subset search). For *fired-only* detectors the floor jumps to E≈0.75, T≈1.06 (vs global std) — a fired detector's precise arrival time is almost pure shower noise, so T signal must be aggregated across detectors, not read per-detector. The DeepSets rewrite (§10.3) is still worth doing — it reaches the floor with ~34× fewer params and no augmentation — but it lowers MSE by removing *approximation* error, not by beating the aleatoric floor.
+
+**Downstream note (correct consumer).** Stage 4 is the deterministic **L-BFGS ensemble** (`04_optimize_lbfgs_ensemble.py`, §4.5.4) — *not* a NUTS/HMC sampler. It uses the FNN as a point forward map; its uncertainty map is the spread of K perturbed-init optima (position-aligned mean ± std), which reads **no** FNN predictive variance. So adding a heteroscedastic / Gaussian-NLL head to the FNN would improve label-noise calibration but would **not** propagate into the stage-4 uncertainty — the only FNN property that matters downstream is the accuracy of its conditional-mean $(E, T)$. Reserve a predictive-variance head for a future Bayesian Stage 4, not the current ensemble.
