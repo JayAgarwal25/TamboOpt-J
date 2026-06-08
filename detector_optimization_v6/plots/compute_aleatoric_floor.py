@@ -74,6 +74,8 @@ GEOMETRY_PATH_RESOLVED = next(
     GEOMETRY_PATH,
 )
 
+sigma_spatial = 50
+
 
 def _corpus_global_std():
     """Per-channel std of the corpus labels in the SAME space the trainer
@@ -141,9 +143,9 @@ def main():
     ap.add_argument("--n-prim",    type=int, default=128, help="distinct primaries")
     ap.add_argument("--m-real",    type=int, default=64,  help="realizations per primary")
     ap.add_argument("--seed",      type=int, default=0)
-    ap.add_argument("--gen-batch", type=int, default=256, help="AllShowers gen batch")
+    ap.add_argument("--gen-batch", type=int, default=32, help="AllShowers gen batch")
     ap.add_argument("--out", type=str,
-                    default=os.path.join(_HERE, "aleatoric_floor.json"))
+                    default=os.path.join(_HERE, f"aleatoric_floor_{time.strftime('%Y%m%d_%H%M%S')}.json"))
     args = ap.parse_args()
 
     print("=" * 72)
@@ -152,6 +154,7 @@ def main():
     print(f"device={DEVICE}  recenter={RECENTER_TO_MOUNTAIN}  "
           f"n_prim={args.n_prim}  m_real={args.m_real}  strategies={len(_STRATEGIES)}")
     torch.manual_seed(args.seed); np.random.seed(args.seed)
+    torch.set_float32_matmul_precision('high') # TODO maybe deactivate if perforamne is too bad
 
     # Corpus global std (the trainer's z-score denominators).
     e_mean, e_std, t_mean, t_std = _corpus_global_std()
@@ -186,7 +189,7 @@ def main():
             x_det, y_det = fn(mountain, n_det=N_DETECTORS, rng=rng, **kwargs)
             x_det = x_det.float().to(DEVICE); y_det = y_det.float().to(DEVICE)
             cl = clouds[p].to(DEVICE)                          # (M, P, 5)
-            E, T = compute_labels_batch(cl, x_det, y_det, surface)   # (M, n_det) raw
+            E, T = compute_labels_batch(cl, x_det, y_det, surface, sigma_spatial=sigma_spatial)   # (M, n_det) raw
             E = torch.log1p(E)                                 # → training E space
             T = torch.log1p(T * T_LOG_SCALE)                   # → training T space
             var_E.append(E.var(dim=0, unbiased=True).cpu())    # (n_det,)
@@ -216,6 +219,8 @@ def main():
             E_fired=floor_E_fired, T_fired=floor_T_fired,
         ),
         max_R2=dict(E=1 - floor_E, T=1 - floor_T, total=1 - floor_total),
+        STRATEGIES=[(s_name, fn_name, kwargs) for s_name, fn_name, kwargs in _STRATEGIES],
+        sigma_spatial=sigma_spatial,
     )
     with open(args.out, "w") as f:
         json.dump(res, f, indent=2)
