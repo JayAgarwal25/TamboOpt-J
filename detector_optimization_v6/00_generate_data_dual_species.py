@@ -75,12 +75,12 @@ SPECIES = {
         allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
         max_points=4096,
-        pdg=0,                       # saved species id (downstream feature)
+        pdg=0,                       # saved species id
     ),
     "muon": dict(
         allshower_run=os.path.join(BEST, "20260520_160031_Muons-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_043912_Muon-PointCountFM", "compiled.pt"),
-        max_points=25088,
+        max_points=4096,   # TODO: capped for now (true muon cap during training ~25088)
         pdg=1,
     ),
 }
@@ -168,25 +168,29 @@ def _pad_points(samples, target_P):
     return out
 
 
-def _gen_chunk(gen, pcfm, cfg, n, seed, target_P):
+def _gen_chunk(gen, pcfm, cfg, n, target_P):
     """Generate one chunk of n showers for a species → a showerdata.Showers,
     padded to target_P. Bounded memory (only this chunk is held)."""
-    prim = sample_primary_particles(n=n, seed=seed)        # distinct seed → distinct showers
+    prim = sample_primary_particles(n=n)        
     energies, directions = prim["energies"], prim["directions"]
     # ASSUMPTION: generator label sampled 0/1 as the original pipeline did.
     labels = prim["labels"]
+
     # Stage 1 — PointCountFM on CPU (TorchScript device-baked → CUDA mismatches).
     num_points = run_point_count_fm(
         model_path=pcfm, energies=energies, directions=directions, labels=labels,
     )
+    
     # Stage 2 — AllShowers on GPU (max_points already set on gen).
     samples = generate(
         generator=gen, energies=energies, num_points=num_points,
         angles=directions, batch_size=GEN_BATCH, device=str(DEVICE), labels=labels,
     ).float().cpu()                                        # (n, sp_max_points, 5)
     samples = _pad_points(samples, target_P)
+    
     # Saved pdg = species id so the downstream corpus distinguishes electron/muon.
     pdg = torch.full((n,), int(cfg["pdg"]), dtype=torch.int64)
+    
     return showerdata.Showers(
         points=samples.numpy(), energies=energies.numpy(),
         pdg=pdg.numpy(), directions=directions.numpy(),
@@ -198,20 +202,21 @@ def main():
     # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so these
     # counts can scale freely (disk is the only limit). Muons are capped at 25088
     # points; the file is preallocated at that P and electrons are padded up.
-    ap.add_argument("--n-electron", type=int, default=250_000)
-    ap.add_argument("--n-muon",     type=int, default=250_000)
+    ap.add_argument("--n-electron", type=int, default=2)   # TEMP: smoke-run default
+    ap.add_argument("--n-muon",     type=int, default=2)   # TEMP: smoke-run default
     ap.add_argument("--chunk",      type=int, default=CHUNK_SIZE,
                     help="showers per streamed write-batch (bounds peak RAM)")
-    ap.add_argument("--seed",       type=int, default=0)
     ap.add_argument("--out", type=str, default=None,
                     help="output .pt path (default: <SHOWER_CACHE>/cashed_showers_dual_<total>.pt)")
     args = ap.parse_args()
 
     os.makedirs(SHOWER_CACHE, exist_ok=True)
     os.makedirs(STAGE_ROOT, exist_ok=True)
+
     counts = {"electron": args.n_electron, "muon": args.n_muon}
     active = [n for n in ("electron", "muon") if counts[n] > 0]
     total = sum(counts[n] for n in active)
+    
     out_path = args.out or os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{total}.pt")
     target_P = max(SPECIES[n]["max_points"] for n in active)
 
@@ -245,9 +250,7 @@ def main():
         done = 0
         while done < n:
             c = min(args.chunk, n - done)
-            # Distinct seed per chunk/species so realizations differ everywhere.
-            seed = args.seed + i * 1_000_003 + offset
-            sh = _gen_chunk(gen, pcfm, cfg, c, seed, target_P)
+            sh = _gen_chunk(gen, pcfm, cfg, c, target_P)
             showerdata.save_batch(sh, out_path, start=offset)
             offset += c
             done += c
