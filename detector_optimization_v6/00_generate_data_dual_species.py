@@ -16,6 +16,16 @@ in-RAM tensor would hit at the 25088-point muon cap. Species are written as
 contiguous blocks (electron then muon); the training shower-level split
 randperms showers, so no global shuffle is needed at generation time.
 
+Why call `Generator`/`generate` directly instead of the v3 `GenerateShowers`
+wrapper that `00_generate_data.py` uses? It is the *same* `Generator` class
+either way — `GenerateShowers.__call__` → `run_allshowers()` → `Generator(...)`
++ `generate(...)`. We just unwrap those two layers because `run_allshowers`
+hardcodes exactly the three things that must vary per species: it builds a fresh
+Generator and never sets `max_points` (so no 4096-vs-25088 cap), constructs it
+inline (so no chance to stage the run-dir first), and returns the whole corpus
+in RAM (so no chunked `save_batch` streaming). None of that is a different
+generator — only direct access to controls the wrapper doesn't expose.
+
 Two wrinkles handled here that a plain path-swap would miss:
   1. The AllShowers `Generator` loads `weights/best.pt`, but in the new run-dirs
      `weights/` is empty — the trained weights live in `checkpoints/best_epoch_*.pt`.
@@ -67,20 +77,20 @@ from allshowers.generate_showers import (
 from allshowers.generator import Generator, generate
 
 # ── Config ───────────────────────────────────────────────────────────────────
-BEST = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulations_for_training/best_ckpts"
+BEST = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/checkpoints"
 
 # Per-species model paths + point-cloud caps + saved-pdg id.
 SPECIES = {
-    # "electron": dict(
-    #     allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
-    #     pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
-    #     max_points=4096,
-    #     pdg=0,                       # saved species id
-    # ),
+    "electron": dict(
+        allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
+        pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
+        max_points=4096,
+        pdg=0,                       # saved species id
+    ),
     "muon": dict(
         allshower_run=os.path.join(BEST, "20260520_160031_Muons-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_043912_Muon-PointCountFM", "compiled.pt"),
-        max_points=25088,   # TODO: capped for now (true muon cap during training ~25088)
+        max_points=25088,   
         pdg=1,
     ),
 }
@@ -90,7 +100,7 @@ SOLVER        = "midpoint"
 GEN_BATCH     = 30                  # AllShowers gen batch (memory-bound; 30 matches production)
 CHUNK_SIZE    = 2000               # showers per streamed write-batch (bounds peak RAM)
 STAGE_ROOT    = os.path.join(RUN_LOCATION, "allshowers_staged")
-DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE        = torch.device("cuda")
 
 # State-dict wrapper keys to probe when checkpoints/best_epoch_*.pt is not already
 # a flat tensor dict (the Generator wants the raw flow state_dict).
@@ -202,8 +212,8 @@ def main():
     # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so these
     # counts can scale freely (disk is the only limit). Muons are capped at 25088
     # points; the file is preallocated at that P and electrons are padded up.
-    ap.add_argument("--n-electron", type=int, default=2)   # TEMP: smoke-run default
-    ap.add_argument("--n-muon",     type=int, default=2)   # TEMP: smoke-run default
+    ap.add_argument("--n-electron", type=int, default=2)   # TODO TEMP: smoke-run default
+    ap.add_argument("--n-muon",     type=int, default=2)   # TODO TEMP: smoke-run default
     ap.add_argument("--chunk",      type=int, default=CHUNK_SIZE,
                     help="showers per streamed write-batch (bounds peak RAM)")
     ap.add_argument("--out", type=str, default=None,
@@ -214,19 +224,18 @@ def main():
     os.makedirs(STAGE_ROOT, exist_ok=True)
 
     counts = {"electron": args.n_electron, "muon": args.n_muon}
-    # active = [n for n in ("electron", "muon") if counts[n] > 0]
-    active = ["muon"] if counts["muon"] > 0 else []
+    active = [n for n in SPECIES.keys() if counts[n] > 0]
     total = sum(counts[n] for n in active)
     
     out_path = args.out or os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{total}.pt")
     target_P = max(SPECIES[n]["max_points"] for n in active)
-
+    
     print("=" * 72)
     print("v6/00_generate_data_dual_species.py — electron + muon mixed corpus (streamed)")
     print("=" * 72)
     print(f"device      : {DEVICE}")
-    # print(f"electrons   : {args.n_electron}  (max_points={SPECIES['electron']['max_points']})")
-    print(f"muons       : {args.n_muon}  (max_points={SPECIES['muon']['max_points']})")
+    for name in active:
+        print(f"{name:12s} : {counts[name]} showers  (max_points={SPECIES[name]['max_points']})")
     print(f"chunk       : {args.chunk}  -> peak RAM ≈ "
           f"{args.chunk * target_P * 5 * 4 / 1e9:.2f} GB/chunk")
     print(f"output      : {out_path}  (preallocated {total}×{target_P}×5, "
@@ -245,7 +254,7 @@ def main():
         print("=" * 72)
         staged_dir, pcfm = stage_run_dir(name, cfg)
         gen = Generator(run_dir=staged_dir, num_timesteps=NUM_TIMESTEPS,
-                        compile=("cuda" in str(DEVICE)), solver=SOLVER)
+                        compile=True, solver=SOLVER)
         gen.max_points = int(cfg["max_points"])
 
         done = 0
@@ -256,13 +265,11 @@ def main():
             offset += c
             done += c
             del sh
-            if DEVICE.type == "cuda":
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
             print(f"[{name}] wrote {done}/{n}  (file offset {offset}/{total})  "
                   f"{time.time()-t0:.0f}s")
         del gen
-        if DEVICE.type == "cuda":
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
 
     # Species are written as contiguous blocks (electron then muon); the training
     # shower-level split randperms showers, so no global shuffle is needed here.
