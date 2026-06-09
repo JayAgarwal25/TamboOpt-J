@@ -32,7 +32,9 @@ The pipeline comprises five sequential stages:
 | **Step 1** | Shower library + mountain geometry | $(primary, xy, E, T)$ training tensors | Pair each shower with **7** diverse layouts; per-shower recenter onto mountain; compute detector responses (3.5M pairs) |
 | **Step 2** | Training tensors | Frozen `fnn.pt` checkpoint | Train surrogate: $(primary, layout) \to (E_\text{det}, T_\text{det})$. Adam (OneCycle) + L-BFGS fine-tune |
 | **Step 3** | Training tensors + frozen FNN | Frozen `recon.pt` checkpoint | Train reconstruction: $(x, y, E_\text{det}, T_\text{det}) \to (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E})$. Adam + L-BFGS fine-tune |
-| **Step 4** | Frozen FNN + frozen recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ + uncertainty | Maximise composite utility via backpropagation through both NNs. Base + 3 sampler/ensemble variants |
+| **Step 4** | Frozen FNN + frozen recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ + uncertainty | Maximise composite utility via backpropagation (or gradient-free DE) through both NNs. Base + 4 sampler/ensemble variants (§4.5.4) |
+
+> **(North, East) lineage.** Steps 1–4 also have a **North–East** branch (§3.5): `01_build_dataset_northeast.py` → `test_v6_run_01_northeast/`, retrained Steps 2–3, then `04_optimize_differential_evolution.py`. It is a *separate dataset + model lineage* (the `xy` feature means (North, East) and the labels differ); the original (North, Up) tables below still describe the default branch.
 
 > **Note on the run tree.** The current production runs use the *recentered* corpus (`RECENTER_TO_MOUNTAIN=True`); folders are named `test_v6_run_0X_recentered` under `RUN_LOCATION` on holylfs05 rather than the historical `v6_run_0X`. Paths are centralised in `modules_v6/constants.py`.
 
@@ -54,6 +56,8 @@ The East coordinate encodes the detector's **depth into the shower** via a conti
 $$z_{\text{cont},i} = \frac{E_\text{entry} - E_i}{\Delta E_\text{layer}}$$
 
 where $E_\text{entry} = 1500$ m is the East coordinate at AllShowers layer 0 and $\Delta E_\text{layer} = 150$ m is the layer spacing. Only detectors with $E_i < E_\text{entry}$ (i.e., $z_\text{cont} > 0$) can observe shower particles. $E_\text{entry}$ and $\Delta E_\text{layer}$ are manually selected for this version, such that the predefined 24 z output values span within the preselected mountain slope. Those are not real coordinates, rather adapted for development purposes.
+
+> **Two parameterizations of the same surface (see §3.5).** The above is the *original* convention — free coords $(N, U)$, East extrapolated. An alternative **(North, East)** convention places detectors by horizontal map coordinates and extrapolates the *height* $U = g(N, E)$; with the calibration above the whole mountain East span $[-2019, +1182]$ m gives $z_\text{cont} \in [\approx 2, 23.5]$, so every surface point sees showers.
 
 ### 3.2 Shower Point Clouds
 
@@ -86,6 +90,26 @@ Per-detector observables are then:
 $$E_{\text{det},i} = \sum_{j} e_j \cdot K_{ij}, \qquad T_{\text{det},i} = \frac{\sum_j t_j \cdot K_{ij}}{\sum_j K_{ij}}$$
 
 i.e., total kernel-weighted energy and kernel-weighted mean arrival time.
+
+### 3.5 Detector Parameterization: (North, Up) vs (North, East)
+
+A detector lives on the mountain surface — a 2-D manifold in ENU — so it needs **two free coordinates plus one surface-extrapolated coordinate**. The kernel (§3.4) always needs all three: the spatial Gaussian runs in the **(North, Up)** transverse plane and **East → $z_\text{cont}$** is the shower-depth axis. Two equivalent parameterizations exist:
+
+| | Free coords | Surface extrapolates | $z_\text{cont}$ from | Stored `xy` |
+|---|---|---|---|---|
+| **Original** (`modules_v4`) | $(N, U)$ | $E = f(N, U)$ (`SurfaceEastMap`) | extrapolated $E$ | $(N, U)$ |
+| **North–East** (`modules_v6/*_ne.py`) | $(N, E)$ | $U = g(N, E)$ (`SurfaceUpMap`) | **defined** $E$ | $(N, E)$ |
+
+The **North–East** convention is geographically natural — you place detectors at horizontal map coordinates $(N, E)$ and the terrain sets the elevation $U$. It is implemented v6-locally as **per-original mirror files** (each diffs cleanly against its source), leaving `modules_v4` untouched:
+
+| NE mirror | mirrors | change |
+|-----------|---------|--------|
+| `modules_v6/tr_surface_map_ne.py` (`SurfaceUpMap`) | `modules_v4/tr_surface_map.py` (`SurfaceEastMap`) | (N,Up)→East ⇒ (N,East)→Up |
+| `modules_v6/tr_geometry_ne.py` (`project_to_mountain_ne`, `sample_initial_layout_ne`) | `MountainData` methods in `modules_v4/tr_geometry.py` | Up axis → East (centroid col 1 → 2, Up bbox → `[east_lo, east_hi]`) |
+| `modules_v6/detector_strategies_ne.py` | `modules_v6/detector_strategies.py` | layouts in (North, East) |
+| `modules_v6/fnn_surrogate_ne.py` (`compute_labels_batch`, `build_training_pairs`) | same names in `modules_v6/fnn_surrogate.py` | Up extrapolated, `z_cont` from defined East |
+
+Because this changes both the **labels** and the **meaning of the `xy` feature**, it is a *separate dataset + model lineage*: regenerate Step 1 with `01_build_dataset_northeast.py` (writes `test_v6_run_01_northeast/`, `xy = (North, East)`) and retrain Steps 2–3 against it. The shower recentering is unchanged (the shower transverse plane is still (North, Up)).
 
 
 ## 4. Stage-by-Stage Theory
@@ -331,7 +355,7 @@ The **loss** is $\mathcal{L} = -U$, so gradient descent maximises utility.
 
 #### 4.5.4 Stage-4 Variants (uncertainty + multi-start)
 
-Three sibling scripts wrap the same frozen FNN+recon objective ($U_\text{var}$, Section 4.5.2) with richer search/uncertainty machinery. All share a common front end: K Gaussian-perturbed restarts of the chosen init scheme, each Adam-warm-started, then a second stage. A `"combined"` run pools the per-scheme restarts (grid + centre) into one analysis.
+Four sibling scripts wrap the same frozen FNN+recon objective ($U_\text{var}$, Section 4.5.2) with richer search/uncertainty machinery. All share a common front end: K Gaussian-perturbed restarts of the chosen init scheme, then a per-restart optimiser (Adam-warm-start + a second stage for the gradient methods; differential evolution for the gradient-free one). A `"combined"` run pools the per-scheme restarts (grid + centre) into one analysis.
 
 > **State of the art.** `04_optimize_lbfgs_ensemble.py` is the current recommended/most-developed Stage-4 entry point. The L-BFGS ensemble gives a deterministic local optimum per restart plus a network-input-invariant mean ± std uncertainty map (via position alignment), which proved more useful and far cheaper than the NUTS posterior — the samplers concentrate on the typical set rather than the mode, so they report a *lower* best-$U$ than the optimisers and cost ~6–7 h per combined run. Prefer the L-BFGS ensemble; treat the NUTS/HMC scripts as exploratory.
 
@@ -340,6 +364,8 @@ Three sibling scripts wrap the same frozen FNN+recon objective ($U_\text{var}$, 
 - **`04_optimize_hmc_chains.py`** — multi-sequence Gelman–Rubin variant. K NUTS chains start from **overdispersed** perturbed Adam optima (init spread > prior σ) and run **sequentially in-process** (Pyro's multi-process mode can't pickle the CUDA + closure `potential_fn`; sequential is the same wall-time on one GPU). R̂ and ESS are computed from the stacked `(chains, draws, dim)` array via ArviZ. The prior is anchored at a **single real Adam-best layout** (not the per-index mean across layouts, which would collapse detectors toward the centroid and bias the result central). Defaults: 4 chains × 1500 warmup × 1500 samples, $T = 3$, $\sigma_\text{prior} = 100$ m.
 
 - **`04_optimize_lbfgs_ensemble.py`** — frequentist ensemble. Each of K perturbed Adam optima is refined to a local optimum by **L-BFGS** on a fixed batch, then the K layouts are **aligned by physical position** — a Hungarian assignment (`scipy.optimize.linear_sum_assignment`, with a dependency-free greedy fallback) matches detectors across runs by closest $(x,y)$, since the permutation-equivariant networks make detector *index* meaningless across runs. Per aligned position-group it reports **mean and std**, giving a network-input-invariant uncertainty map. It also logs a **per-run consecutive-step gradient cosine distance** (with $W$-step vector-averaging to cancel minibatch-noise inflation) as a convergence diagnostic.
+
+- **`04_optimize_differential_evolution.py`** — global, **gradient-free** search with `scipy.optimize.differential_evolution` over the 200-D layout (100 North + 100 East, **North–East convention** §3.5), bounded by the North bbox and the East span `[east_lo, east_hi]`. Each candidate is projected to the mountain (`project_to_mountain_ne`) and scored by the same frozen FNN+recon composite $U$ on a fixed primary batch; reports the best layout. A global baseline to check whether the gradient optimisers sit in a local optimum. DE in 200-D is expensive (population $=$ `popsize` $\times 200$) — keep `popsize`/`maxiter` modest. **Requires NE-trained surrogates** (`01_build_dataset_northeast.py` → retrained Steps 2–3).
 
 
 ## 5. Key Design Decisions
@@ -399,13 +425,16 @@ All intermediate data is stored as PyTorch tensors under `RUN_LOCATION` (holylfs
 v6_run_00/                       ← Step 0: cached showers (shared across runs)
     cashed_showers_500000.pt     (HDF5 via showerdata; ~20 GB at 500k)
 
-test_v6_run_01_recentered/       ← Step 1: training dataset
+test_v6_run_01_recentered/       ← Step 1: training dataset (North, Up convention)
     primary.pt          (3500000, 5)      primary features
     xy.pt               (3500000, 100, 2) detector layouts (recentered)
     E.pt                (3500000, 100)    log1p(energy per detector)
     T.pt                (3500000, 100)    RAW time per detector (seconds)
     strategy_ids.pt     (3500000,)        layout strategy id [0–6], strategy-major
     norm_stats.pt       dict of z-score tensors (raw-T)
+
+test_v6_run_01_northeast/        ← Step 1 (North, East) variant — same tensors,
+                                   xy = (North, East); 01_build_dataset_northeast.py (§3.5)
 
 test_v6_run_02_recentered/       ← Step 2: FNN checkpoint
     fnn.pt              state_dict + norm_stats (log-T) + config(hidden,dropout)
@@ -433,6 +462,11 @@ test_v6_run_04_optimize_lbfgs_ensemble_{grid|center|combined}/  ← L-BFGS ensem
     layouts_all.pt (aligned ensemble + perms + utilities),
     optimize_log.json, optimize_curves.png, utility_components.png,
     layout_ensemble.png
+
+test_v6_run_04_optimize_de_ensemble_{grid|center|combined}/  ← DE ensemble variant (North, East)
+    layout_best.pt, layout_mean.pt, layouts_all.pt,
+    optimize_log.json (incl. de_best_U_history), optimize_curves.png,
+    utility_components.png, layout_ensemble.png, layout_density.png
 ```
 
 
