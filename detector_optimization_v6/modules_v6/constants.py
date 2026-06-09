@@ -18,7 +18,7 @@ PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
 LOG_E_MAX = 8.0   # log10(1e8 GeV)
 
-RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6"
+RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/optimization_runs_model_v1_recentered"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 
 # Output folders. Edit these in-place to point a fresh run at a new tree

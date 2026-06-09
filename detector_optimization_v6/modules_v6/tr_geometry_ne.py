@@ -73,8 +73,8 @@ def sample_initial_layout_ne(mountain, n_units: int = N_DETECTORS,
 
     if scheme == "grid":
         over = 4
-        cols = max(1, int(math.ceil(math.sqrt(
-            over * n_units * (mountain.n_max - mountain.n_min) / max(e_max - e_min, 1.0)))))
+        cols = max(1, int(math.ceil(math.sqrt(over * n_units * (mountain.n_max - mountain.n_min)
+                                                  / max(e_max - e_min, 1.0)))))
         rows = max(1, int(math.ceil(over * n_units / cols)))
         n_vals = np.linspace(mountain.n_min, mountain.n_max, cols + 2)[1:-1]
         e_vals = np.linspace(e_min, e_max, rows + 2)[1:-1]

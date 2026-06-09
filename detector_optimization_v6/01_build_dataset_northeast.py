@@ -34,7 +34,7 @@ from modules_v6.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     BATCH_SIZE_TRAIN, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
 )
-from modules_v4.tr_geometry        import load_tr_mountain
+from modules_v4.tr_geometry    import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
 
