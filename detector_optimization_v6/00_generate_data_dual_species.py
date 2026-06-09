@@ -71,16 +71,16 @@ BEST = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/hhanif/tambo_simulation
 
 # Per-species model paths + point-cloud caps + saved-pdg id.
 SPECIES = {
-    "electron": dict(
-        allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
-        pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
-        max_points=4096,
-        pdg=0,                       # saved species id
-    ),
+    # "electron": dict(
+    #     allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
+    #     pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
+    #     max_points=4096,
+    #     pdg=0,                       # saved species id
+    # ),
     "muon": dict(
         allshower_run=os.path.join(BEST, "20260520_160031_Muons-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_043912_Muon-PointCountFM", "compiled.pt"),
-        max_points=4096,   # TODO: capped for now (true muon cap during training ~25088)
+        max_points=25088,   # TODO: capped for now (true muon cap during training ~25088)
         pdg=1,
     ),
 }
@@ -214,7 +214,8 @@ def main():
     os.makedirs(STAGE_ROOT, exist_ok=True)
 
     counts = {"electron": args.n_electron, "muon": args.n_muon}
-    active = [n for n in ("electron", "muon") if counts[n] > 0]
+    # active = [n for n in ("electron", "muon") if counts[n] > 0]
+    active = ["muon"] if counts["muon"] > 0 else []
     total = sum(counts[n] for n in active)
     
     out_path = args.out or os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{total}.pt")
@@ -224,7 +225,7 @@ def main():
     print("v6/00_generate_data_dual_species.py — electron + muon mixed corpus (streamed)")
     print("=" * 72)
     print(f"device      : {DEVICE}")
-    print(f"electrons   : {args.n_electron}  (max_points={SPECIES['electron']['max_points']})")
+    # print(f"electrons   : {args.n_electron}  (max_points={SPECIES['electron']['max_points']})")
     print(f"muons       : {args.n_muon}  (max_points={SPECIES['muon']['max_points']})")
     print(f"chunk       : {args.chunk}  -> peak RAM ≈ "
           f"{args.chunk * target_P * 5 * 4 / 1e9:.2f} GB/chunk")
