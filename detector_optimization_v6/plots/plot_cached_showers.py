@@ -33,7 +33,7 @@ from modules_v6.constants import (
 )
 from modules_v4.tr_geometry import load_tr_mountain
 
-_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_2.pt")
+_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_4.pt")
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
@@ -77,7 +77,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", type=str, default=_DEFAULT_CKPT, help="cached shower file")
     ap.add_argument("--n", type=int, default=5, help="number of leading showers to plot")
-    ap.add_argument("--bins", type=int, default=80, help="heatmap bins per axis")
+    ap.add_argument("--bins", type=int, default=200, help="heatmap bins per axis")
     ap.add_argument("--mountain", action="store_true",
                     help="apply pipeline mountain normalization (recenter each shower's "
                          "energy-weighted centroid onto the mountain bbox centre) and "
