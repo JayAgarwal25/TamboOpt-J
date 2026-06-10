@@ -1,27 +1,36 @@
-"""Train the FNN surrogate as a permutation-equivariant DeepSets model.
+"""Train TWO parallel per-species DeepSets surrogates (electron + muon).
 
-Path-(a) rewrite of `02_train_fnn.py` (see THEORY.md §10): the flat MLP plateaued
-because it must learn a per-detector-local map across 100 flat slots and fake
-permutation equivariance via augmentation. This trainer swaps in
-`DeepSetsSurrogate` — a shared per-detector encoder/decoder with a pooled
-context, equivariant BY CONSTRUCTION — so the permutation augmentation is
-DELETED (it was approximating exactly this symmetry).
+The paired dual-species corpus (00_generate_data_dual_species.py) holds two
+COMPONENTS of each physical event — electron rows (pdg feature 0) and muon
+rows (pdg feature 1) sharing the same primaries. This trainer splits the
+dataset rows by that species id and trains one DeepSets surrogate per species:
+each model learns its component's response f_s(primary, layout) -> (E_s, T_s).
+Stages 3-4 evaluate BOTH models per event and combine the outputs physically
+(modules_v6/dual_surrogate.py: counts add, times average count-weighted).
 
-Everything else matches `02_train_fnn.py`: same corpus, same shower-level split,
-same log-T target treatment, same z-scored MSE loss, same two-phase
-Adam(OneCycle) → chunked-L-BFGS recipe with per-iter best-val save. The model is
-a literal drop-in for the FNN contract (`forward(primary, xy)→(B,100,2)`,
-`set_normalization(stats)`), so Steps 3–4 can load this checkpoint unchanged.
+Per species, everything matches the original single-model trainer: shower-level
+split, log-T target treatment, z-scored MSE loss, two-phase Adam(OneCycle) →
+chunked-L-BFGS recipe with per-iter best-val save. Norm stats are computed on
+each species SUBSET (electron and muon count scales differ by ~an order of
+magnitude, so shared stats would mis-weight the smaller component's loss); the
+per-model stats ship inside each checkpoint.
 
-Artifacts go to a DEDICATED folder (`FNN_FOLDER + "_deepsets"`) so they never
-clobber the production flat-MLP `fnn.pt`. To promote this model to production,
-point `FNN_FOLDER` in modules_v6/constants.py at this folder (or copy the .pt).
+Architecture note (THEORY.md §10): DeepSets — a shared per-detector
+encoder/decoder with a pooled context, permutation-equivariant BY CONSTRUCTION,
+so no permutation augmentation is used.
+
+Checkpoints land DIRECTLY in FNN_FOLDER as `fnn_electron.pt` / `fnn_muon.pt`
+(species-tagged names cannot clobber a legacy single-model fnn.pt); stages 3-4
+load them via `modules_v6.dual_surrogate.load_dual_surrogate(FNN_FOLDER, ...)`.
 
 Run:
 
     cd TambOpt/detector_optimization_v6
-    python 02_train_fnn_deepsets.py
+    python 02_train_fnn_deepsets.py                         # both species
+    python 02_train_fnn_deepsets.py --species muon          # retrain one
+    python 02_train_fnn_deepsets.py --epochs 2 --lbfgs-iters 3   # smoke run
 """
+import argparse
 import json
 import os
 import sys
@@ -38,18 +47,18 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 
 import modules_v6  # triggers sys.path injection for v3 + v4
 from modules_v6.deepsets_surrogate import DeepSetsSurrogate
+from modules_v6.fnn_surrogate import compute_normalization
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM,
+    N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, TRAIN_FRACTION,
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
-# Dedicated output dir — never overwrite the production flat-MLP fnn.pt.
-OUTPUT_FOLDER = FNN_FOLDER + "_deepsets"
-CKPT_NAME     = "fnn.pt"   # same name → drop-in if FNN_FOLDER is repointed here
-LOG_NAME      = "fnn_train_log.json"
-CURVES_NAME   = "fnn_train_curves.png"
-TVP_NAME      = "fnn_target_vs_pred.png"
+# Species-tagged checkpoints (fnn_electron.pt / fnn_muon.pt) go straight into
+# FNN_FOLDER — they cannot clobber a legacy single-model fnn.pt, and stages 3-4
+# load the pair from there via dual_surrogate.load_dual_surrogate.
+OUTPUT_FOLDER = FNN_FOLDER
+SPECIES_TAGS  = (("electron", 0.0), ("muon", 1.0))   # (tag, pdg feature value)
 
 BATCH_SIZE          = 256
 N_EPOCHS            = 100
@@ -182,40 +191,42 @@ def _plot_curves(log, path, adam_epochs=0, lbfgs_iter_log=None):
         print(f"[plot] skipped ({exc!r})")
 
 
-def _ckpt_config():
+def _ckpt_config(tag: str):
     return dict(
-        model_type="deepsets", n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
+        model_type="deepsets", species=tag,
+        n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
         hidden=DS_HIDDEN, context=DS_CONTEXT, n_enc=DS_N_ENC, n_dec=DS_N_DEC,
         dropout=DS_DROPOUT,
     )
 
 
-def main():
-    print("=" * 72)
-    print("v6/02_train_fnn_deepsets.py — permutation-equivariant DeepSets surrogate")
-    print("=" * 72)
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    print(f"data input dir  : {TRAINING_DATASET_FOLDER}")
-    print(f"output dir      : {OUTPUT_FOLDER}")
-    print(f"device          : {DEVICE}")
-    print(f"batch           : {BATCH_SIZE}   epochs: {N_EPOCHS}")
-    print(f"lr              : {LR} -> {LR_MAX} -> {LR_MIN} OneCycleLR (pct_start={ONECYCLE_PCT_START})")
-    print(f"deepsets        : hidden={DS_HIDDEN} context={DS_CONTEXT} "
-          f"enc={DS_N_ENC} dec={DS_N_DEC} dropout={DS_DROPOUT}")
-    print(f"augmentation    : NONE (equivariant by construction)")
+def train_species(tag:        str,
+                  primary:    torch.Tensor,
+                  xy:         torch.Tensor,
+                  E_all:      torch.Tensor,
+                  T_all:      torch.Tensor,
+                  strat_ids:  torch.Tensor,
+                  n_epochs:   int,
+                  lbfgs_max_iter: int) -> None:
+    """Train one per-species DeepSets surrogate on its (already filtered) rows.
 
-    # ── Corpus (identical to 02_train_fnn.py, incl. the log-T transform) ──
-    t0 = time.time()
-    primary    = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
-    xy         = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "xy.pt")).float()
-    E_all      = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
-    T_all      = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
-    strat_ids  = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
-    norm_stats = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
-    print(f"[load] corpus in {time.time()-t0:.1f}s  primary={tuple(primary.shape)}")
+    Norm stats are computed on the SUBSET — per-species E/T scales differ —
+    and the log-T transform mutates the T slots exactly as the single-model
+    trainer did; the per-model stats ship inside the checkpoint.
+    """
+    ckpt_name   = f"fnn_{tag}.pt"
+    log_name    = f"fnn_{tag}_train_log.json"
+    curves_name = f"fnn_{tag}_train_curves.png"
+    tvp_name    = f"fnn_{tag}_target_vs_pred.png"
+
+    print("=" * 72)
+    print(f"[{tag}] DeepSets surrogate on {primary.shape[0]} rows")
+    print("=" * 72)
+
+    # Per-species z-score stats (NOT the corpus-wide norm_stats.pt).
+    norm_stats = compute_normalization(primary, xy, E_all, T_all)
 
     # log-T canonical target (mirrors 02_train_fnn.py); ship modified stats in ckpt.
-    T_LOG_SCALE = 1.0e8
     T_all = torch.log1p(T_all * T_LOG_SCALE)
     _n = T_all.shape[1]
     norm_stats["out_mean"][_n:] = float(T_all.mean().item())
@@ -255,7 +266,7 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     steps_per_epoch = len(train_loader)
-    total_steps = N_EPOCHS * steps_per_epoch
+    total_steps = n_epochs * steps_per_epoch
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, 
         max_lr=LR_MAX, 
@@ -271,7 +282,7 @@ def main():
     best_epoch = -1
 
     # ── Phase 1: Adam (no permutation augmentation) ──────────────────────
-    for epoch in range(N_EPOCHS):
+    for epoch in range(n_epochs):
         t_epoch = time.time()
         model.train()
         tr_tot, tr_E, tr_T, n_tr = 0.0, 0.0, 0.0, 0
@@ -327,7 +338,7 @@ def main():
 
         dt = time.time() - t_epoch
         lr_now = optimizer.param_groups[0]["lr"]
-        print(f"[epoch {epoch+1:3d}/{N_EPOCHS}] "
+        print(f"[{tag} epoch {epoch+1:3d}/{n_epochs}] "
               f"train={tr_tot:.4f} (E={tr_E:.4f} T={tr_T:.4f})  "
               f"val={va_tot:.4f} (E={va_E:.4f} T={va_T:.4f})  "
               f"lr={lr_now:.1e}  {dt:.1f}s")
@@ -348,27 +359,27 @@ def main():
                 "val_E": va_E,
                 "val_T": va_T,
                 "norm_stats": norm_stats,
-                "config": _ckpt_config()
-                }, os.path.join(OUTPUT_FOLDER, CKPT_NAME))
+                "config": _ckpt_config(tag)
+                }, os.path.join(OUTPUT_FOLDER, ckpt_name))
 
-    with open(os.path.join(OUTPUT_FOLDER, LOG_NAME), "w") as f:
+    with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
         json.dump({
-            "log": log, 
-            "best_val_total": best_val, 
+            "log": log,
+            "best_val_total": best_val,
             "best_epoch": best_epoch,
             "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN, 
-                val_frac=VAL_FRAC, seed=SEED, **_ckpt_config()
+                batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN,
+                val_frac=VAL_FRAC, seed=SEED, **_ckpt_config(tag)
                 ),
                 }, f, indent=2)
-    _plot_curves(log, os.path.join(OUTPUT_FOLDER, CURVES_NAME))
-    print(f"[adam done] best val {best_val:.4f} at epoch {best_epoch}")
+    _plot_curves(log, os.path.join(OUTPUT_FOLDER, curves_name))
+    print(f"[{tag} adam done] best val {best_val:.4f} at epoch {best_epoch}")
 
     # ── Phase 2: L-BFGS fine-tuning (full-batch) ────────────────────────────
     print("\n" + "=" * 72)
-    print("Phase 2: L-BFGS fine-tuning (full-batch)")
+    print(f"[{tag}] Phase 2: L-BFGS fine-tuning (full-batch)")
     print("=" * 72)
-    adam_ckpt = torch.load(os.path.join(OUTPUT_FOLDER, CKPT_NAME), map_location=DEVICE)
+    adam_ckpt = torch.load(os.path.join(OUTPUT_FOLDER, ckpt_name), map_location=DEVICE)
     model.load_state_dict(adam_ckpt["state_dict"])
     adam_best_val = adam_ckpt["val_total"]
     print(f"[lbfgs] loaded Adam best epoch={adam_ckpt['epoch']} val={adam_best_val:.6f}")
@@ -383,7 +394,7 @@ def main():
     lbfgs_optimizer = torch.optim.LBFGS(
         model.parameters(),
         lr=LBFGS_LR,
-        max_iter=LBFGS_MAX_ITER,
+        max_iter=lbfgs_max_iter,
         history_size=LBFGS_HISTORY_SIZE,
         line_search_fn="strong_wolfe",
     )
@@ -463,15 +474,15 @@ def main():
             lbfgs_no_improve = 0
             torch.save({
                 "state_dict": model.state_dict(),
-                "epoch": N_EPOCHS + 1,
+                "epoch": n_epochs + 1,
                 "phase": "lbfgs",
                 "lbfgs_iter": it,
                 "val_total": va_tot,
                 "val_E": va_E,
                 "val_T": va_T,
                 "norm_stats": norm_stats,
-                "config": _ckpt_config()
-            }, os.path.join(OUTPUT_FOLDER, CKPT_NAME))
+                "config": _ckpt_config(tag)
+            }, os.path.join(OUTPUT_FOLDER, ckpt_name))
             marker = "  <- NEW BEST (saved)"
         else:
             lbfgs_no_improve += 1
@@ -511,7 +522,7 @@ def main():
     if not lbfgs_abort and lbfgs_iter_log:
         last = lbfgs_iter_log[-1]
         lbfgs_log.append(dict(
-            epoch=N_EPOCHS + 1, phase="lbfgs",
+            epoch=n_epochs + 1, phase="lbfgs",
             train=last["loss"], train_E=last["mse_E"], train_T=last["mse_T"],
             val=last["val"], val_E=last["val_E"], val_T=last["val_T"], dt=dt_lbfgs,
         ))
@@ -525,44 +536,103 @@ def main():
 
     # Merge logs and re-save
     full_log = log + lbfgs_log
-    with open(os.path.join(OUTPUT_FOLDER, "fnn_train_log.json"), "w") as f:
+    with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
         json.dump({
             "log": full_log,
             "lbfgs_iter_log": lbfgs_iter_log,
             "best_val_total": overall_best_val,
-            "best_epoch": best_epoch if overall_best_val == adam_best_val else N_EPOCHS + 1,
+            "best_epoch": best_epoch if overall_best_val == adam_best_val else n_epochs + 1,
             "adam_best_val": adam_best_val,
             "adam_best_epoch": best_epoch,
             "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR, lr_min=LR_MIN,
+                batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR, lr_min=LR_MIN,
                 grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
-                lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
+                lbfgs_lr=LBFGS_LR, lbfgs_max_iter=lbfgs_max_iter,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
+                **_ckpt_config(tag),
             ),
         }, f, indent=2)
-    _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, "fnn_train_curves.png"),
-                 adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
-    print(f"[done] best val {overall_best_val:.4f}  -> {OUTPUT_FOLDER}")
+    _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, curves_name),
+                 adam_epochs=n_epochs, lbfgs_iter_log=lbfgs_iter_log)
+    print(f"[{tag} done] best val {overall_best_val:.4f}  -> "
+          f"{os.path.join(OUTPUT_FOLDER, ckpt_name)}")
 
     # ── Auto-render target-vs-pred from the best checkpoint ──────────────
     try:
-        best = torch.load(os.path.join(OUTPUT_FOLDER, CKPT_NAME), map_location=DEVICE)
+        best = torch.load(os.path.join(OUTPUT_FOLDER, ckpt_name), map_location=DEVICE)
         model.load_state_dict(best["state_dict"]); model.eval()
         import importlib.util
         _spec = importlib.util.spec_from_file_location(
-            "_plot_tvp", 
+            "_plot_tvp",
             os.path.join(_HERE, "plots", "02_plot_nn_target_vs_pred.py"),
             )
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _mod.plot_fnn_only(
-            fnn=model, 
+            fnn=model,
             primary=primary, xy=xy,
-            E_true=E_all, T_true=T_all, 
+            E_true=E_all, T_true=T_all,
             val_idx=val_idx,
-            output_path=os.path.join(OUTPUT_FOLDER, TVP_NAME))
+            output_path=os.path.join(OUTPUT_FOLDER, tvp_name))
     except Exception as exc:
         print(f"[plot-tvp] skipped ({exc!r})")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--epochs", type=int, default=N_EPOCHS,
+                    help="Adam epochs per species (default from config)")
+    ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER,
+                    help="L-BFGS max iterations per species (default from config)")
+    ap.add_argument("--species", type=str, default="electron,muon",
+                    help="comma-separated subset of {electron,muon} to (re)train")
+    args = ap.parse_args()
+    wanted = {s.strip() for s in args.species.split(",") if s.strip()}
+    unknown = wanted - {tag for tag, _ in SPECIES_TAGS}
+    if unknown:
+        raise SystemExit(f"unknown species {sorted(unknown)}; valid: electron, muon")
+
+    print("=" * 72)
+    print("v6/02_train_fnn_deepsets.py — two parallel per-species DeepSets surrogates")
+    print("=" * 72)
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    print(f"data input dir  : {TRAINING_DATASET_FOLDER}")
+    print(f"output dir      : {OUTPUT_FOLDER}")
+    print(f"device          : {DEVICE}")
+    print(f"species         : {sorted(wanted)}")
+    print(f"batch           : {BATCH_SIZE}   epochs: {args.epochs}   "
+          f"lbfgs iters: {args.lbfgs_iters}")
+    print(f"lr              : {LR} -> {LR_MAX} -> {LR_MIN} OneCycleLR (pct_start={ONECYCLE_PCT_START})")
+    print(f"deepsets        : hidden={DS_HIDDEN} context={DS_CONTEXT} "
+          f"enc={DS_N_ENC} dec={DS_N_DEC} dropout={DS_DROPOUT}")
+    print(f"augmentation    : NONE (equivariant by construction)")
+
+    t0 = time.time()
+    primary   = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
+    xy        = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "xy.pt")).float()
+    E_all     = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
+    T_all     = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
+    strat_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
+    print(f"[load] corpus in {time.time()-t0:.1f}s  primary={tuple(primary.shape)}")
+
+    n_strat = int(strat_ids.max().item() + 1)
+    for tag, pdg_val in SPECIES_TAGS:
+        if tag not in wanted:
+            continue
+        idx = torch.nonzero(primary[:, PRIMARY_DIM - 1] == pdg_val).squeeze(-1)
+        if idx.numel() == 0:
+            raise SystemExit(
+                f"no rows with species id {pdg_val} ({tag}) in the dataset — "
+                f"was 01_build_dataset.py run on the paired dual-species corpus?")
+        # shower_level_split relies on strategy-major contiguous blocks; the
+        # species filter preserves that as long as every strategy block holds
+        # the same per-species rows (true for the paired corpus).
+        assert idx.numel() % n_strat == 0, (idx.numel(), n_strat)
+        train_species(
+            tag,
+            primary[idx], xy[idx], E_all[idx], T_all[idx], strat_ids[idx],
+            n_epochs=args.epochs, lbfgs_max_iter=args.lbfgs_iters,
+        )
 
 
 if __name__ == "__main__":
