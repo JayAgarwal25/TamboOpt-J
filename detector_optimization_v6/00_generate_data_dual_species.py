@@ -44,13 +44,52 @@ Run (heavy — submit via SLURM for production sizes):
     cd TambOpt/detector_optimization_v6
     python 00_generate_data_dual_species.py --n-electron 250000 --n-muon 250000
 
+Checkpoint ↔ architecture pairing (root-caused & verified 2026-06-10):
+TAMBO-opt's two checkpoint generations were trained with DIFFERENT transformer
+encoder blocks, and the two variants share identical state_dict keys — so a
+checkpoint loads into the wrong variant without any error but computes a
+different function, silently generating diffuse blobs instead of physical
+rod-like showers (no crash, no warning, just wrong-looking output):
+
+  * old `all_showers` (Apr 3)            → post-LN: x = layer_norm(x + attn(x))
+  * NEW per-species e/µ models (May 19-20) → pre-LN:  x = x + attn(layer_norm(x))
+
+This bit in both directions: the 06-09 dual-species plots were blobs (new
+checkpoints on old post-LN code), and after pulling Hamza's pre-LN code the
+OLD checkpoint's plots turned to blobs instead. The fix is per-checkpoint, not
+global: `allshowers/transformer.py` takes `pre_ln: bool = False` (default =
+post-LN, so the old checkpoint's conf needs no change), and `stage_run_dir`
+below ALWAYS injects `pre_ln: true` into the staged conf.yaml so these
+checkpoints request the architecture they were trained with. Two more fixes
+from the same debugging pass: `generate()` in `allshowers/generator.py` must
+run under `torch.no_grad()` (without it each batch retains its full ODE
+autograd graph — 39 GB OOM on an A100 at the 4096-pt electron cap, hopeless at
+the 25088-pt muon cap), and the generator must keep its `with_time` support
+(both new models are time models, dim_inputs [4,6,4]).
+
 Label convention (verified 2026-06-10 against the training h5 files): both
-per-species models were trained with conditioning label 0 ONLY, so the
+per-species models were trained with conditioning label 0 ONLY (their training
+h5 `pdg` datasets are all-zero; label 1 hits an untrained embedding), so the
 generator/PointCountFM `label` input is always 0 here. The saved corpus `pdg`
 is a SPECIES id (electron=0, muon=1) — a downstream feature, not a model input.
-The staged conf.yaml gets `pre_ln: true` injected: these checkpoints were
-trained with pre-LN transformer blocks, unlike the older post-LN all_showers
-checkpoint (wrong LN placement loads silently but generates blobs).
+
+Training-data provenance — "species" = secondary COMPONENT, not shower type
+(verified 2026-06-10 against the h5_files_v3 files + TAMBO-opt's
+`util/combine_h5_files.py`): the electron and muon training sets are the SAME
+130k simulated showers, matched row-for-row (identical energies, directions and
+shower_ids across all rows). Primaries are tau decay daughters (actual_pdg ∈
+{±11, 111, ±211} — e± and pions; NO muon or tau primaries). The simulation
+writes each shower's secondary hits split by species (electrons / muons /
+photons folders), and each per-species file holds that component of the same
+events; muons survive the through-rock geometry while EM is absorbed, hence the
+25088 vs 4096 point caps. Implication: the two models generate two COMPONENTS
+of one physical shower, conditioned on the same primary. This script samples
+INDEPENDENT primaries per species block — fine for training the surrogate's
+per-component response f(primary, layout, species), but a complete physical
+event is the SUM of both components for one primary: at optimization time
+evaluate the surrogate for pdg=0 and pdg=1 with the same primary and add the
+counts (or switch this script to paired generation: sample primaries once, run
+both model pairs, merge the point clouds into one shower per event).
 """
 import argparse
 import glob
