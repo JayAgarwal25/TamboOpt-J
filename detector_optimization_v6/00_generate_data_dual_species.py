@@ -8,6 +8,13 @@ for muons, with different point-cloud caps (electron 4096, muon 25088). This
 script generates each species with its own model pair and writes them into one
 cached corpus (electron rows padded up to the muon point cap).
 
+The corpus is PAIRED: primaries are sampled ONCE (`--n-pairs` events) and both
+species are generated from the SAME primaries — electron rows 0..N-1 and muon
+rows N..2N-1, so row i and row N+i are the two components of one physical
+event (mirroring the matched per-species training files). Downstream, two
+parallel per-species surrogates are trained (02) and their outputs are
+physically combined per event (modules_v6/dual_surrogate.py) in stages 3-4.
+
 Generation is **streamed in chunks**: the HDF5 file is preallocated once
 (`create_empty_file`) and each chunk is written at its row offset
 (`save_batch`), so peak RAM is one chunk (`--chunk` showers), not the whole
@@ -83,13 +90,11 @@ writes each shower's secondary hits split by species (electrons / muons /
 photons folders), and each per-species file holds that component of the same
 events; muons survive the through-rock geometry while EM is absorbed, hence the
 25088 vs 4096 point caps. Implication: the two models generate two COMPONENTS
-of one physical shower, conditioned on the same primary. This script samples
-INDEPENDENT primaries per species block — fine for training the surrogate's
-per-component response f(primary, layout, species), but a complete physical
-event is the SUM of both components for one primary: at optimization time
-evaluate the surrogate for pdg=0 and pdg=1 with the same primary and add the
-counts (or switch this script to paired generation: sample primaries once, run
-both model pairs, merge the point clouds into one shower per event).
+of one physical shower, conditioned on the same primary. This script therefore
+generates PAIRED blocks (same primaries for both species, see above); a
+complete physical event is the SUM of both components for one primary, which
+stages 3-4 obtain by evaluating both per-species surrogates with the same
+primary and combining counts (modules_v6/dual_surrogate.py).
 """
 import argparse
 import glob
@@ -111,7 +116,7 @@ torch.set_float32_matmul_precision("high")
 
 import showerdata
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
-from modules_v6.constants import SHOWER_CACHE, RUN_LOCATION
+from modules_v6.constants import SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
 from modules.generate_showers import GenerateShowers  # noqa: F401  (path injection)
@@ -231,11 +236,12 @@ def _pad_points(samples, target_P):
     return out
 
 
-def _gen_chunk(gen, pcfm, cfg, n, target_P):
-    """Generate one chunk of n showers for a species → a showerdata.Showers,
-    padded to target_P. Bounded memory (only this chunk is held)."""
-    prim = sample_primary_particles(n=n)
-    energies, directions = prim["energies"], prim["directions"]
+def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P):
+    """Generate one chunk of showers for a species from PRE-SAMPLED primaries
+    → a showerdata.Showers, padded to target_P. Bounded memory (only this
+    chunk is held). Primaries come in as slices of the corpus-wide arrays so
+    both species blocks share them (paired events)."""
+    n = int(energies.shape[0])
     # Conditioning label is ALWAYS 0: both per-species models were trained with
     # label 0 only (their training h5 `pdg` datasets are all-zero), so label 1
     # would hit an untrained embedding. Species identity is recorded separately
@@ -265,33 +271,42 @@ def _gen_chunk(gen, pcfm, cfg, n, target_P):
 
 def main():
     ap = argparse.ArgumentParser()
-    # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so these
-    # counts can scale freely (disk is the only limit). Muons are capped at 25088
-    # points; the file is preallocated at that P and electrons are padded up.
-    ap.add_argument("--n-electron", type=int, default=2)   # TODO TEMP: smoke-run default
-    ap.add_argument("--n-muon",     type=int, default=2)   # TODO TEMP: smoke-run default
-    ap.add_argument("--chunk",      type=int, default=CHUNK_SIZE,
+    # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so the
+    # pair count can scale freely (disk is the only limit). Muons are capped at
+    # 25088 points; the file is preallocated at that P and electrons are padded up.
+    ap.add_argument("--n-pairs", type=int, default=NUM_SHOWERS,
+                    help="number of paired events; the corpus holds 2*n_pairs rows "
+                         "(electron block rows 0..N-1, muon block rows N..2N-1, "
+                         "row i and row N+i share the same primary)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="primary-sampling seed (deterministic corpus)")
+    ap.add_argument("--chunk", type=int, default=CHUNK_SIZE,
                     help="showers per streamed write-batch (bounds peak RAM)")
     ap.add_argument("--out", type=str, default=None,
-                    help="output .pt path (default: <SHOWER_CACHE>/cashed_showers_dual_<total>.pt)")
+                    help="output .pt path (default: <SHOWER_CACHE>/cashed_showers_dual_<2*n_pairs>.pt)")
     args = ap.parse_args()
 
     os.makedirs(SHOWER_CACHE, exist_ok=True)
     os.makedirs(STAGE_ROOT, exist_ok=True)
 
-    counts = {"electron": args.n_electron, "muon": args.n_muon}
-    active = [n for n in SPECIES.keys() if counts[n] > 0]
-    total = sum(counts[n] for n in active)
-    
+    n_pairs = int(args.n_pairs)
+    total   = 2 * n_pairs
+
     out_path = args.out or os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{total}.pt")
-    target_P = max(SPECIES[n]["max_points"] for n in active)
-    
+    target_P = max(cfg["max_points"] for cfg in SPECIES.values())
+
+    # Sample the primaries ONCE — both species blocks reuse them, so row i and
+    # row n_pairs+i are the two components of one physical event.
+    prim = sample_primary_particles(n=n_pairs, seed=args.seed)
+    energies_all, directions_all = prim["energies"], prim["directions"]
+
     print("=" * 72)
-    print("v6/00_generate_data_dual_species.py — electron + muon mixed corpus (streamed)")
+    print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
     print("=" * 72)
     print(f"device      : {DEVICE}")
-    for name in active:
-        print(f"{name:12s} : {counts[name]} showers  (max_points={SPECIES[name]['max_points']})")
+    print(f"pairs       : {n_pairs} events -> {total} rows (seed={args.seed})")
+    for name in SPECIES:
+        print(f"{name:12s} : max_points={SPECIES[name]['max_points']}")
     print(f"chunk       : {args.chunk}  -> peak RAM ≈ "
           f"{args.chunk * target_P * 5 * 4 / 1e9:.2f} GB/chunk")
     print(f"output      : {out_path}  (preallocated {total}×{target_P}×5, "
@@ -302,11 +317,10 @@ def main():
     showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
 
     offset = 0
-    for i, name in enumerate(active):
-        cfg, n = SPECIES[name], counts[name]
+    for name, cfg in SPECIES.items():
         print("=" * 72)
-        print(f"[{name}] {n} showers  (max_points={cfg['max_points']}, "
-              f"{(n + args.chunk - 1) // args.chunk} chunks)")
+        print(f"[{name}] {n_pairs} showers  (max_points={cfg['max_points']}, "
+              f"{(n_pairs + args.chunk - 1) // args.chunk} chunks)")
         print("=" * 72)
         staged_dir, pcfm = stage_run_dir(name, cfg)
         gen = Generator(run_dir=staged_dir, num_timesteps=NUM_TIMESTEPS,
@@ -314,23 +328,28 @@ def main():
         gen.max_points = int(cfg["max_points"])
 
         done = 0
-        while done < n:
-            c = min(args.chunk, n - done)
-            sh = _gen_chunk(gen, pcfm, cfg, c, target_P)
+        while done < n_pairs:
+            c = min(args.chunk, n_pairs - done)
+            sh = _gen_chunk(
+                gen, pcfm, cfg,
+                energies_all[done:done + c], directions_all[done:done + c],
+                target_P,
+            )
             showerdata.save_batch(sh, out_path, start=offset)
             offset += c
             done += c
             del sh
             torch.cuda.empty_cache()
-            print(f"[{name}] wrote {done}/{n}  (file offset {offset}/{total})  "
+            print(f"[{name}] wrote {done}/{n_pairs}  (file offset {offset}/{total})  "
                   f"{time.time()-t0:.0f}s")
         del gen
         torch.cuda.empty_cache()
 
-    # Species are written as contiguous blocks (electron then muon); the training
-    # shower-level split randperms showers, so no global shuffle is needed here.
-    print(f"[done] {offset} showers (electron pdg=0, muon pdg=1) in "
-          f"{time.time()-t0:.0f}s -> {out_path}")
+    # Species are contiguous blocks sharing primaries (electron then muon); the
+    # training shower-level split randperms showers, so no global shuffle here.
+    print(f"[done] {offset} rows = {n_pairs} paired events "
+          f"(electron pdg=0 rows 0..{n_pairs-1}, muon pdg=1 rows {n_pairs}..{total-1}) "
+          f"in {time.time()-t0:.0f}s -> {out_path}")
 
 
 if __name__ == "__main__":

@@ -42,9 +42,22 @@ RECENTER_TO_MOUNTAIN = True
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
 TRAIN_FRACTION = 1.00
 
-NUM_SHOWERS = 500_000
+# NUM_SHOWERS = 500_000
 # NUM_SHOWERS = 100000
 # NUM_SHOWERS = 5_000_000
-# NUM_SHOWERS = 50
+NUM_SHOWERS = 50
 BATCH_SIZE  = 30
 BATCH_SIZE_TRAIN  = 20
+
+# ── Dual-species (paired) pipeline ────────────────────────────────────────────
+# 00_generate_data_dual_species.py samples NUM_SHOWERS primaries ONCE and
+# generates BOTH components per primary: electron rows 0..N-1 and muon rows
+# N..2N-1 of the corpus share the same (energy, direction) — row i and row N+i
+# are two components of ONE physical event. pdg column = species id (e=0, µ=1).
+DUAL_SHOWER_CACHE_PATH = os.path.join(
+    SHOWER_CACHE, f"cashed_showers_dual_{2 * NUM_SHOWERS}.pt")
+
+# 02_train_fnn_deepsets.py log-compresses the T targets as log1p(T*T_LOG_SCALE);
+# the dual-surrogate combination (modules_v6/dual_surrogate.py) must invert the
+# same transform to average times in physical units, so the scale lives here.
+T_LOG_SCALE = 1.0e8
