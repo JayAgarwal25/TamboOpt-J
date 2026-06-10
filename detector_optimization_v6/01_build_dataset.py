@@ -28,16 +28,20 @@ from modules_v6.fnn_surrogate import (
     build_training_pairs, compute_normalization,
 )
 from modules_v6.constants import (
-    SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     BATCH_SIZE_TRAIN, TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
+    DUAL_SHOWER_CACHE_PATH,
 )
 from modules_v4.tr_geometry    import load_tr_mountain
 from modules_v4.tr_surface_map import SurfaceEastMap
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-MAX_SHOWERS = NUM_SHOWERS
+# The paired dual-species corpus holds 2*NUM_SHOWERS rows (electron block then
+# muon block, same primaries); both blocks become dataset rows here, and 02
+# splits them per species via the primary's pdg feature.
+MAX_SHOWERS = 2 * NUM_SHOWERS
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # RECENTER_TO_MOUNTAIN is imported from modules_v6.constants — edit it there.
@@ -49,7 +53,7 @@ def main():
     print("=" * 72)
     print(f"v6/01_build_dataset.py")
     print("=" * 72)
-    print(f"shower cache : {SHOWER_CACHE}")
+    print(f"shower cache : {DUAL_SHOWER_CACHE_PATH}")
     print(f"geometry     : {GEOMETRY_PATH}")
     print(f"output dir   : {TRAINING_DATASET_FOLDER}")
     print(f"batch size   : {BATCH_SIZE_TRAIN}")
@@ -74,7 +78,7 @@ def main():
     primary, xy, E, T, strat = build_training_pairs(
         mountain=mountain,
         surface=surface,
-        shower_cache_path=os.path.join(SHOWER_CACHE, f"cashed_showers_{NUM_SHOWERS}.pt"),
+        shower_cache_path=DUAL_SHOWER_CACHE_PATH,
         batch_size=BATCH_SIZE_TRAIN,
         max_showers=MAX_SHOWERS,
         seed=SEED,
