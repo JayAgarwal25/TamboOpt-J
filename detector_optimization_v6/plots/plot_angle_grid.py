@@ -126,7 +126,7 @@ def main():
         energies=energies, directions=directions, labels=labels,
         num_points=num_points, num_timesteps=16, batch_size=ncell,
         solver="midpoint", device=args.device,
-    ).float().cpu().numpy()                                       # (ncell, P, 5)
+    ).float().cpu().detach().numpy()                                       # (ncell, P, 5)
 
     cells = []
     for k in range(ncell):

@@ -177,14 +177,24 @@ def main():
         mountain = _load_mountain()
         cells = [_recenter_to_mountain(p, mountain) for p in cells]
 
-    _plot_grid(cells, zeniths, azimuths, args.energy, pdg, args.species, out, mountain)
+    # Energy/morphology grid (color = energy) + a companion time grid (color =
+    # arrival time), both spanning every angle cell.
+    base, ext = os.path.splitext(out)
+    out_time = f"{base}_time{ext or '.png'}"
+    _plot_grid(cells, zeniths, azimuths, args.energy, pdg, args.species, out, mountain,
+               color_by="energy")
     print(f"[done] wrote {out}")
+    _plot_grid(cells, zeniths, azimuths, args.energy, pdg, args.species, out_time, mountain,
+               color_by="time")
+    print(f"[done] wrote {out_time}")
 
 
-def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain):
+def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain,
+               color_by="energy"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
 
     R, C = len(zeniths), len(azimuths)
 
@@ -200,8 +210,19 @@ def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain):
     xlim = (xs.min() - mx, xs.max() + mx)
     ylim = (ys.min() - my, ys.max() + my)
 
+    # Shared color scale for the time grid (percentile-clipped so a few outliers
+    # don't flatten the contrast). Energy grid keeps its fixed flat color.
+    tnorm = None
+    if color_by == "time" and len(allpts) and allpts[:, 4].size:
+        tvals = allpts[:, 4]
+        lo, hi = np.percentile(tvals, [2, 98])
+        if hi <= lo:
+            hi = lo + 1e-9
+        tnorm = Normalize(vmin=float(lo), vmax=float(hi))
+
     fig, axes = plt.subplots(R, C, figsize=(3.0 * C, 3.0 * R),
                              sharex=True, sharey=True, squeeze=False)
+    sc = None
     for i in range(R):
         for j in range(C):
             ax = axes[i][j]
@@ -212,8 +233,13 @@ def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain):
             if len(pts):
                 e = pts[:, 3]
                 s = 2 + 18 * (e / (e.max() + 1e-12))
-                ax.scatter(pts[:, 0], pts[:, 1], s=s, c="C0", alpha=0.4,
-                           edgecolors="none", zorder=1)
+                if color_by == "time":
+                    sc = ax.scatter(pts[:, 0], pts[:, 1], s=s, c=pts[:, 4],
+                                    cmap="viridis", norm=tnorm, alpha=0.6,
+                                    edgecolors="none", zorder=1)
+                else:
+                    ax.scatter(pts[:, 0], pts[:, 1], s=s, c="C0", alpha=0.4,
+                               edgecolors="none", zorder=1)
             # Azimuth arrow: incident travel direction projected onto x-y, ∝ (cosφ, sinφ).
             az = np.radians(azimuths[j])
             ux, uy = np.cos(az), np.sin(az)
@@ -240,14 +266,21 @@ def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain):
             if j == 0:
                 ax.set_ylabel(f"θ = {zeniths[i]:.0f}°", fontsize=10)
 
+    if color_by == "time" and sc is not None:
+        cb = fig.colorbar(sc, ax=axes.ravel().tolist(), shrink=0.6, pad=0.02)
+        cb.set_label("arrival time (cluster)", fontsize=9)
+
     unit = "North/Up [m]" if mountain is not None else "x / y [m]"
     norm = " (mountain-normalized)" if mountain is not None else ""
+    color_lbl = "color = arrival time" if color_by == "time" else "size ∝ energy"
     fig.suptitle(
         f"Shower vs incident angle — azimuth φ across columns, zenith θ across rows{norm}\n"
         f"{species} model (pdg={pdg}), fixed E = {energy:.2e} GeV   ({unit})   "
-        f"[red arrow = azimuth travel direction (cosφ, sinφ)]",
+        f"[{color_lbl}; red arrow = azimuth travel direction (cosφ, sinφ)]",
         fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    # colorbar already steals layout space; only tight-pack the no-colorbar case
+    if not (color_by == "time" and sc is not None):
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out, dpi=120)
     plt.close(fig)
 

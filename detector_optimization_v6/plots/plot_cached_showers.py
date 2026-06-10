@@ -33,7 +33,7 @@ from modules_v6.constants import (
 )
 from modules_v4.tr_geometry import load_tr_mountain
 
-_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_4.pt")
+_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_50.pt")
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
