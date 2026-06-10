@@ -646,7 +646,7 @@ def main():
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _mod.plot_recon_only(
-            fnn=fnn, recon=recon,
+            fnn=dual, recon=recon,
             primary=primary, xy=xy,
             val_idx=val_idx,
         )
