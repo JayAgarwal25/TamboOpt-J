@@ -44,10 +44,13 @@ Run (heavy — submit via SLURM for production sizes):
     cd TambOpt/detector_optimization_v6
     python 00_generate_data_dual_species.py --n-electron 250000 --n-muon 250000
 
-ASSUMPTIONS TO VERIFY (flagged inline): the generator `label` is sampled 0/1 as
-the original pipeline did; the saved `pdg` is set to a SPECIES id (electron=0,
-muon=1) so the downstream corpus distinguishes species. Adjust SPECIES below if
-the new models expect a different label convention.
+Label convention (verified 2026-06-10 against the training h5 files): both
+per-species models were trained with conditioning label 0 ONLY, so the
+generator/PointCountFM `label` input is always 0 here. The saved corpus `pdg`
+is a SPECIES id (electron=0, muon=1) — a downstream feature, not a model input.
+The staged conf.yaml gets `pre_ln: true` injected: these checkpoints were
+trained with pre-LN transformer blocks, unlike the older post-LN all_showers
+checkpoint (wrong LN placement loads silently but generates blobs).
 """
 import argparse
 import glob
@@ -55,6 +58,8 @@ import os
 import shutil
 import sys
 import time
+
+import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -140,16 +145,25 @@ def stage_run_dir(name, cfg):
     weights_pt = os.path.join(dst, "weights", "best.pt")
     pcfm_dst   = os.path.join(dst, "pcfm_compiled.pt")
 
+    os.makedirs(os.path.join(dst, "weights"), exist_ok=True)
+    os.makedirs(os.path.join(dst, "preprocessing"), exist_ok=True)
+
+    # conf.yaml is ALWAYS rewritten (even when already staged) so older staged
+    # dirs pick up the injection: these May checkpoints were trained with
+    # pre-LN transformer blocks (verified 2026-06-10 — post-LN loads silently
+    # but generates blobs), so the staged conf requests pre_ln explicitly.
+    with open(os.path.join(src, "conf.yaml")) as f:
+        conf = yaml.safe_load(f)
+    conf["model"]["pre_ln"] = True
+    with open(os.path.join(dst, "conf.yaml"), "w") as f:
+        yaml.safe_dump(conf, f, sort_keys=False)
+
     if os.path.exists(weights_pt) and os.path.exists(pcfm_dst) \
-            and os.path.exists(os.path.join(dst, "conf.yaml")) \
             and os.path.exists(os.path.join(dst, "preprocessing", "trafos.pt")):
-        print(f"[stage] {name}: already staged at {dst}")
+        print(f"[stage] {name}: already staged at {dst} (conf.yaml re-patched)")
         return dst, pcfm_dst
 
     print(f"[stage] {name}: staging {src} -> {dst}")
-    os.makedirs(os.path.join(dst, "weights"), exist_ok=True)
-    os.makedirs(os.path.join(dst, "preprocessing"), exist_ok=True)
-    shutil.copy2(os.path.join(src, "conf.yaml"), os.path.join(dst, "conf.yaml"))
     shutil.copy2(os.path.join(src, "preprocessing", "trafos.pt"),
                  os.path.join(dst, "preprocessing", "trafos.pt"))
 
@@ -181,10 +195,13 @@ def _pad_points(samples, target_P):
 def _gen_chunk(gen, pcfm, cfg, n, target_P):
     """Generate one chunk of n showers for a species → a showerdata.Showers,
     padded to target_P. Bounded memory (only this chunk is held)."""
-    prim = sample_primary_particles(n=n)        
+    prim = sample_primary_particles(n=n)
     energies, directions = prim["energies"], prim["directions"]
-    # ASSUMPTION: generator label sampled 0/1 as the original pipeline did.
-    labels = prim["labels"]
+    # Conditioning label is ALWAYS 0: both per-species models were trained with
+    # label 0 only (their training h5 `pdg` datasets are all-zero), so label 1
+    # would hit an untrained embedding. Species identity is recorded separately
+    # in the saved corpus `pdg` field below.
+    labels = torch.zeros(n, dtype=torch.int64)
 
     # Stage 1 — PointCountFM on CPU (TorchScript device-baked → CUDA mismatches).
     num_points = run_point_count_fm(

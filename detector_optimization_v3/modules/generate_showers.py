@@ -3,7 +3,7 @@ from typing import Union
 import torch
 
 sys.path.insert(0, "/n/home05/zdimitrov/tambo/TAMBO-opt")
-from allshowers.generate_showers import (
+from util.allshowers_related.generate_showers import (
     sample_primary_particles, 
     run_point_count_fm, 
     run_allshowers, 
