@@ -525,7 +525,7 @@ def main():
 
     # Merge logs and re-save
     full_log = log + lbfgs_log
-    with open(os.path.join(FNN_FOLDER, "fnn_train_log.json"), "w") as f:
+    with open(os.path.join(OUTPUT_FOLDER, "fnn_train_log.json"), "w") as f:
         json.dump({
             "log": full_log,
             "lbfgs_iter_log": lbfgs_iter_log,
@@ -540,9 +540,9 @@ def main():
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
             ),
         }, f, indent=2)
-    _plot_curves(full_log, os.path.join(FNN_FOLDER, "fnn_train_curves.png"),
+    _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, "fnn_train_curves.png"),
                  adam_epochs=N_EPOCHS, lbfgs_iter_log=lbfgs_iter_log)
-    print(f"[done] best val {overall_best_val:.4f}  -> {FNN_FOLDER}")
+    print(f"[done] best val {overall_best_val:.4f}  -> {OUTPUT_FOLDER}")
 
     # ── Auto-render target-vs-pred from the best checkpoint ──────────────
     try:
