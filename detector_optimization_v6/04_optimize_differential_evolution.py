@@ -48,7 +48,7 @@ import torch
 from scipy.optimize import linear_sum_assignment, differential_evolution
 
 import modules_v6   # sys.path injection for v3 + v4
-from modules_v6.deepsets_surrogate import build_surrogate_from_ckpt
+from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.reconstruction import Reconstruction
 from modules_v6.tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
 from modules_v6.constants import (
@@ -498,11 +498,10 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
 
 
 def _load_models():
-    """Frozen FNN + recon, matching the conventions in 04_optimize_lbfgs_ensemble.py.
-    Uses `build_surrogate_from_ckpt` so either a flat-MLP or DeepSets fnn.pt loads."""
-    fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
-    fnn = build_surrogate_from_ckpt(fnn_ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
-    print(f"[load] fnn.pt    val={fnn_ckpt.get('val_total', '?')}")
+    """Frozen dual-species surrogate + recon, matching 04_optimize_lbfgs_ensemble.py.
+    The wrapper combines fnn_electron.pt + fnn_muon.pt per event (counts add,
+    times average count-weighted)."""
+    fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
     recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
     cfg = recon_ckpt.get("config", {})

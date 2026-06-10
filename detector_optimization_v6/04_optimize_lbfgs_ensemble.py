@@ -55,7 +55,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 import modules_v6   # sys.path injection for v3 + v4
-from modules_v6.fnn_surrogate import FNNSurrogate
+from modules_v6.dual_surrogate import DualSpeciesSurrogate, load_dual_surrogate
 from modules_v6.reconstruction import Reconstruction
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
@@ -132,9 +132,13 @@ def primary_to_physical_labels(primary: torch.Tensor):
 def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
-                  fnn: FNNSurrogate,
+                  fnn: DualSpeciesSurrogate,
                   recon: Reconstruction):
     """Differentiable composite U for a layout against a primary batch.
+
+    `fnn` is the dual-species wrapper: both per-species surrogates are
+    evaluated with the same primary + layout and physically combined, so the
+    backprop into (x_det, y_det) flows through BOTH models.
 
     Mirrors the inner loop of `_run_optimization` in 04_optimize.py so this
     script optimizes the SAME objective (the U_PR term is computed but
@@ -173,7 +177,7 @@ def utility_of_xy(x_det: torch.Tensor,
 
 def adam_warm_start(scheme: str,
                     mountain,
-                    fnn: FNNSurrogate,
+                    fnn: DualSpeciesSurrogate,
                     recon: Reconstruction,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
@@ -316,7 +320,7 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
 
 def lbfgs_refine(init_x: torch.Tensor,
                  init_y: torch.Tensor,
-                 fnn: FNNSurrogate,
+                 fnn: DualSpeciesSurrogate,
                  recon: Reconstruction,
                  primary_fixed: torch.Tensor,
                  mountain):
@@ -729,25 +733,12 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
 
 
 def _load_models():
-    """Frozen FNN + recon, matching the conventions in 04_optimize.py."""
-    fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
-    fnn_cfg  = fnn_ckpt.get("config", {})
-    fnn = FNNSurrogate(
-        n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-        hidden=int(fnn_cfg.get("hidden", 512)),
-        dropout=float(fnn_cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    fnn.load_state_dict(fnn_ckpt["state_dict"])
-    norm_stats = fnn_ckpt.get(
-        "norm_stats",
-        torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt")),
-    )
-    fnn.set_normalization(norm_stats)
-    fnn.eval()
-    for p in fnn.parameters():
-        p.requires_grad_(False)
-    print(f"[load] fnn.pt    epoch={fnn_ckpt.get('epoch','?')}  "
-          f"val={fnn_ckpt.get('val_total', '?')}  hidden={int(fnn_cfg.get('hidden', 512))}")
+    """Frozen dual-species surrogate + recon.
+
+    The dual wrapper holds fnn_electron.pt + fnn_muon.pt (frozen, eval); its
+    combined output feeds recon and reconstructability exactly like the old
+    single fnn, and gradients flow through both branches."""
+    fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
     recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
     cfg = recon_ckpt.get("config", {})
@@ -776,7 +767,7 @@ def _load_models():
 
 def _run_one_scheme(scheme: str,
                     mountain,
-                    fnn: FNNSurrogate,
+                    fnn: DualSpeciesSurrogate,
                     recon: Reconstruction,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
@@ -909,6 +900,16 @@ def _run_one_scheme(scheme: str,
 
 
 def main():
+    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--chains", type=int, default=N_CHAINS)
+    ap.add_argument("--adam-epochs", type=int, default=N_ADAM_EPOCHS)
+    ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    args = ap.parse_args()
+    N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
+        int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
+
     print("=" * 72)
     print("v6/04_optimize_lbfgs_ensemble.py — Adam warm-start + L-BFGS ensemble")
     print("=" * 72)
