@@ -1,37 +1,45 @@
-"""Train a reconstruction NN on frozen-FNN outputs.
+"""Train a reconstruction NN on frozen dual-surrogate outputs.
 
-Pipeline (step 3 of the v6 plan):
+Pipeline (step 3 of the v6 plan, dual-species):
 
-    fnn (frozen)                                          recon targets
-       │                                                         │
-       ▼                                                         ▼
-  primary → FNN(primary, xy) → (E_pred, T_pred)          primary[:, :4] =
-                                    │                    [dir_x, dir_y, dir_z, log_e_norm]
-                                    │                    z-scored via norm_stats[:4]
-  recon input per detector = (x, y, E_pred, T_pred)              │
+    fnn_electron + fnn_muon (frozen,                      recon targets
+    combined per event by DualSpeciesSurrogate)                  │
+       │                                                         ▼
+       ▼                                                  primary[:, :4] =
+  primary → dual(primary, xy) → (E_comb, T_comb)         [dir_x, dir_y, dir_z, log_e_norm]
+                                    │                    z-scored from the data
+  recon input per detector = (x, y, E_comb, T_comb)              │
                                     │                            │
                                     └────────────────────────────┘
                                          v3 Reconstruction
                                       (input_features=4, output_dim=4)
+
+The combined response is the COMPLETE physical event: both per-species
+surrogates evaluated with the same primary and layout, counts summed and
+times count-weight averaged (modules_v6/dual_surrogate.py). The recon
+therefore learns to invert the full detector response, matching how stage 4
+evaluates layouts.
 
 Permutation augmentation is applied to the recon input on every batch: a
 random per-sample permutation of the 100 detectors (with xy, E, T permuted
 together; the target is a scalar 4-vector that stays fixed). This teaches
 the flat MLP recon to be approximately permutation-invariant in its output.
 
-Shower-level 90/10 split (matches 02_train_fnn.py). Reuses the trained FNN
-from `outputs/v6_run_01/fnn.pt`.
+Shower-level 90/10 split (matches 02). Loads fnn_electron.pt + fnn_muon.pt
+from FNN_FOLDER.
 
 Run:
 
     cd TambOpt/detector_optimization_v6
     python 03_train_recon.py
+    python 03_train_recon.py --epochs 2 --lbfgs-iters 3    # smoke run
 
-Artifacts in `outputs/v6_run_01/`:
+Artifacts in RECON_FOLDER:
     recon.pt               best-val model checkpoint
     recon_train_log.json   per-epoch train/val MSE (+ per-axis val)
     recon_train_curves.png
 """
+import argparse
 import json
 import os
 import sys
@@ -47,11 +55,11 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
 import modules_v6   # noqa: F401  (side-effect import: injects v3 + v4 into sys.path)
-from modules_v6.fnn_surrogate  import FNNSurrogate
+from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.reconstruction import Reconstruction
 from modules_v6.constants import (
     RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
-    N_DETECTORS, PRIMARY_DIM,
+    N_DETECTORS,
     )
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -102,15 +110,17 @@ def shower_level_split(strategy_ids: torch.Tensor,
 
 
 @torch.no_grad()
-def compute_fnn_predictions(model: FNNSurrogate,
+def compute_fnn_predictions(model: torch.nn.Module,
                             primary: torch.Tensor,
                             xy:      torch.Tensor,
                             device:  torch.device,
                             batch_size: int = 1024
                             ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Run FNN forward on the whole corpus. Returns CPU tensors.
+    """Run the (dual) surrogate forward on the whole corpus. Returns CPU tensors.
 
-    primary and xy are CPU tensors; only batches are moved to device.
+    primary and xy are CPU tensors; only batches are moved to device. With the
+    DualSpeciesSurrogate, the returned (E, T) are the COMBINED event response —
+    the row's own pdg feature is ignored by the wrapper.
     """
     model.eval()
     N = int(primary.shape[0])
@@ -285,13 +295,19 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
 
 
 def main():
-    
+    global N_EPOCHS, LBFGS_MAX_ITER
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--epochs", type=int, default=N_EPOCHS)
+    ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    args = ap.parse_args()
+    N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
+
     print("=" * 72)
-    print("v6/03_train_recon.py")
+    print("v6/03_train_recon.py — recon on combined dual-species predictions")
     print("=" * 72)
     os.makedirs(RECON_FOLDER, exist_ok=True)
     print(f"training data   : {TRAINING_DATASET_FOLDER}")
-    print(f"fnn checkpoint  : {FNN_FOLDER}")
+    print(f"fnn checkpoints : {FNN_FOLDER}  (fnn_electron.pt + fnn_muon.pt)")
     print(f"device          : {DEVICE}")
     print(f"batch           : {BATCH_SIZE}")
     print(f"epochs          : {N_EPOCHS}")
@@ -306,44 +322,25 @@ def main():
     strat_ids  = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
     print(f"[load] corpus in {time.time() - t0:.1f}s  primary={tuple(primary.shape)}")
 
-    # Load frozen FNN. Read its width + dropout from the saved config and
-    # prefer the FNN's *own* norm_stats — when 02 applies log-T it updates the
-    # T slots in-memory and ships the modified stats inside fnn.pt, while the
-    # disk norm_stats.pt still holds the raw-T values. Using the ckpt copy
-    # keeps the FNN's E/T denormalization consistent with how it was trained.
-    fnn_ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
-    fnn_cfg  = fnn_ckpt.get("config", {})
-    fnn_hidden  = int(fnn_cfg.get("hidden", 512))
-    fnn_dropout = float(fnn_cfg.get("dropout", 0.1))
-    fnn = FNNSurrogate(n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
-                       hidden=fnn_hidden, dropout=fnn_dropout).to(DEVICE)
-    fnn.load_state_dict(fnn_ckpt["state_dict"])
-    norm_stats = fnn_ckpt.get(
-        "norm_stats",
-        torch.load(os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt")),
-    )
-    fnn.set_normalization(norm_stats)
-    fnn.eval()
-    for p in fnn.parameters():
-        p.requires_grad_(False)
-    print(f"[load] fnn.pt  epoch={fnn_ckpt.get('epoch','?')}  "
-          f"val_total={fnn_ckpt.get('val_total', fnn_ckpt.get('val','?'))}  "
-          f"hidden={fnn_hidden}")
+    # Load the frozen dual surrogate: fnn_electron.pt + fnn_muon.pt, each built
+    # from its own saved config + norm stats, combined per event by the wrapper
+    # (counts add, times average count-weighted).
+    dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
-    # Predict (E, T) on the full corpus once (deterministic, FNN is in eval)
+    # Predict combined (E, T) on the full corpus once (deterministic, eval mode)
     t0 = time.time()
-    E_pred, T_pred = compute_fnn_predictions(fnn, primary, xy, DEVICE, batch_size=1024)
-    print(f"[fnn] predictions in {time.time() - t0:.1f}s  "
+    E_pred, T_pred = compute_fnn_predictions(dual, primary, xy, DEVICE, batch_size=1024)
+    print(f"[dual] combined predictions in {time.time() - t0:.1f}s  "
           f"E mean={E_pred.mean():.3g} std={E_pred.std():.3g}  "
           f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
 
-    # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw units.
-    # z-score stats reuse the FNN's per-feature primary stats (slots 0..3 of norm_stats;
-    # slot 4 = pdg is dropped). These get baked into the Reconstruction model via
-    # `set_normalization(...)`, so training/validation MSE is computed in raw units.
+    # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw
+    # units (pdg dropped — the combined response describes the whole event).
+    # z-score stats are computed directly from the data being trained on; they
+    # ship inside recon.pt, so stage 4 stays consistent automatically.
     target   = primary[:, :4].clone().float()                                # (N, 4)
-    tgt_mean = norm_stats["in_mean"][:4].float()                             # (4,)
-    tgt_std  = norm_stats["in_std" ][:4].float().clamp(min=1e-8)             # (4,)
+    tgt_mean = target.mean(dim=0)                                            # (4,)
+    tgt_std  = target.std(dim=0).clamp(min=1e-8)                             # (4,)
     print(f"[target raw] "
           f"dx in [{target[:,0].min():.3f}, {target[:,0].max():.3f}]  "
           f"dy in [{target[:,1].min():.3f}, {target[:,1].max():.3f}]  "
@@ -355,31 +352,25 @@ def main():
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
     print(f"[split] train pairs={len(train_idx)}  val pairs={len(val_idx)}")
 
-    # Reuse the FNN's dataset-wide stats (norm_stats.pt) instead of recomputing
-    # over the train subset — keeps train/val/04_optimize on a single z-score.
-    # norm_stats layout:
-    #   in_mean  : (205,) = [primary(5), x0, y0, x1, y1, ..., x99, y99]
-    #   out_mean : (200,) = [E(100), T(100)]
-    # xy are broadcast (same stat every slot) and so are E/T, so one scalar each.
-    fnn_in_mean  = norm_stats["in_mean" ].float()
-    fnn_in_std   = norm_stats["in_std"  ].float()
-    fnn_out_mean = norm_stats["out_mean"].float()
-    fnn_out_std  = norm_stats["out_std" ].float()
+    # Recon-input z-score stats computed from the ACTUAL inputs (xy coordinates
+    # and the COMBINED E/T predictions) — the combined event distributions are
+    # not any single species model's stats. One shared scalar per feature kind
+    # across all detector slots (matches the permutation augmentation).
     per_det_mean = torch.stack([
-        fnn_in_mean[5],           # x
-        fnn_in_mean[6],           # y
-        fnn_out_mean[0],          # E
-        fnn_out_mean[N_DETECTORS],# T
+        xy[..., 0].mean(),        # x
+        xy[..., 1].mean(),        # y
+        E_pred.mean(),            # E (combined)
+        T_pred.mean(),            # T (combined)
     ])
     per_det_std = torch.stack([
-        fnn_in_std[5],
-        fnn_in_std[6],
-        fnn_out_std[0],
-        fnn_out_std[N_DETECTORS],
+        xy[..., 0].std(),
+        xy[..., 1].std(),
+        E_pred.std(),
+        T_pred.std(),
     ]).clamp(min=1e-8)
     in_mean = per_det_mean.repeat(N_DETECTORS)   # (400,)
     in_std  = per_det_std.repeat(N_DETECTORS)
-    print(f"[norm] recon per-det stats (from norm_stats.pt)  "
+    print(f"[norm] recon per-det stats (from combined predictions)  "
           f"mean={per_det_mean.tolist()}  std={per_det_std.tolist()}")
     # No .to(DEVICE) needed here — stats are pushed to the model via
     # `set_normalization(...)` and live on the model's device as buffers.
