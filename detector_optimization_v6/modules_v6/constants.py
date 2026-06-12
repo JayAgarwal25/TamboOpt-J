@@ -42,11 +42,11 @@ RECENTER_TO_MOUNTAIN = True
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
 TRAIN_FRACTION = 1.00
 
-# NUM_SHOWERS = 500_000
-# NUM_SHOWERS = 100000
+NUM_SHOWERS = 500_000
+# NUM_SHOWERS = 100_000
 # NUM_SHOWERS = 5_000_000
-NUM_SHOWERS = 50
-BATCH_SIZE  = 30
+# NUM_SHOWERS = 50
+BATCH_SIZE  = 60
 BATCH_SIZE_TRAIN  = 20
 
 # ── Dual-species (paired) pipeline ────────────────────────────────────────────

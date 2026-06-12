@@ -259,6 +259,19 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P):
         angles=directions, batch_size=GEN_BATCH, device=str(DEVICE), labels=labels,
     ).float().cpu()                                        # (n, sp_max_points, 5)
     samples = _pad_points(samples, target_P)
+
+    # Underflow guard: the inverse energy trafo (exp of a latent) can emit
+    # EXACTLY 0.0 for extreme negative latents (float32 underflow, ~1-in-1e8
+    # per point — guaranteed at production corpus sizes). showerdata requires
+    # real points contiguous at the front: its ragged save slices
+    # [:num_points] (an interior zero silently drops the last real point) and
+    # a zero at slot 0 raises "Padding should be in the end". Stable-partition
+    # each shower: e>0 rows first in original order, zero rows (including the
+    # padding) at the end.
+    key = (samples[:, :, 3] <= 0).to(torch.int8)           # 0 = real, 1 = zero/pad
+    order = torch.argsort(key, dim=1, stable=True)         # (n, target_P)
+    samples = torch.gather(
+        samples, 1, order.unsqueeze(-1).expand(-1, -1, samples.shape[2]))
     
     # Saved pdg = species id so the downstream corpus distinguishes electron/muon.
     pdg = torch.full((n,), int(cfg["pdg"]), dtype=torch.int64)
@@ -284,6 +297,11 @@ def main():
                     help="showers per streamed write-batch (bounds peak RAM)")
     ap.add_argument("--out", type=str, default=None,
                     help="output .pt path (default: <SHOWER_CACHE>/cashed_showers_dual_<2*n_pairs>.pt)")
+    ap.add_argument("--resume-at-row", type=int, default=0,
+                    help="continue a crashed run into the EXISTING output file, "
+                         "skipping rows < this (use the last logged 'file offset'). "
+                         "--n-pairs/--seed must match the original run so the "
+                         "regenerated primaries pair with the rows already on disk.")
     args = ap.parse_args()
 
     os.makedirs(SHOWER_CACHE, exist_ok=True)
@@ -313,21 +331,38 @@ def main():
           f"≈{total * target_P * 5 * 4 / 1e9:.1f} GB on disk)")
 
     t0 = time.time()
-    # Preallocate the HDF5 once; write each chunk at its row offset (bounded RAM).
-    showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
+    resume = int(args.resume_at_row)
+    if resume > 0:
+        # Continue into the existing preallocated file. Primaries are seeded,
+        # so the regenerated slices pair exactly with the rows already on disk
+        # (as long as --n-pairs/--seed match the original run).
+        if not (0 < resume < total):
+            raise SystemExit(f"--resume-at-row {resume} outside (0, {total})")
+        if not os.path.exists(out_path):
+            raise SystemExit(f"--resume-at-row given but {out_path} does not exist")
+        print(f"[resume] continuing into existing file from row {resume}/{total}")
+    else:
+        # Preallocate the HDF5 once; each chunk is written at its row offset.
+        showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
 
-    offset = 0
-    for name, cfg in SPECIES.items():
+    for i, (name, cfg) in enumerate(SPECIES.items()):
+        block_start = i * n_pairs              # this species' rows: [block_start, block_start + n_pairs)
+        done = min(max(resume - block_start, 0), n_pairs)   # rows of this block already on disk
+        if done >= n_pairs:
+            print(f"[{name}] block already on disk "
+                  f"(rows {block_start}..{block_start + n_pairs - 1}) — skipping")
+            continue
         print("=" * 72)
-        print(f"[{name}] {n_pairs} showers  (max_points={cfg['max_points']}, "
-              f"{(n_pairs + args.chunk - 1) // args.chunk} chunks)")
+        print(f"[{name}] {n_pairs - done} of {n_pairs} showers  "
+              f"(max_points={cfg['max_points']}, "
+              f"{(n_pairs - done + args.chunk - 1) // args.chunk} chunks"
+              f"{f', resuming at block row {done}' if done else ''})")
         print("=" * 72)
         staged_dir, pcfm = stage_run_dir(name, cfg)
         gen = Generator(run_dir=staged_dir, num_timesteps=NUM_TIMESTEPS,
                         compile=True, solver=SOLVER)
         gen.max_points = int(cfg["max_points"])
 
-        done = 0
         while done < n_pairs:
             c = min(args.chunk, n_pairs - done)
             sh = _gen_chunk(
@@ -335,19 +370,19 @@ def main():
                 energies_all[done:done + c], directions_all[done:done + c],
                 target_P,
             )
-            showerdata.save_batch(sh, out_path, start=offset)
-            offset += c
+            showerdata.save_batch(sh, out_path, start=block_start + done)
             done += c
             del sh
             torch.cuda.empty_cache()
-            print(f"[{name}] wrote {done}/{n_pairs}  (file offset {offset}/{total})  "
+            print(f"[{name}] wrote {done}/{n_pairs}  "
+                  f"(file offset {block_start + done}/{total})  "
                   f"{time.time()-t0:.0f}s")
         del gen
         torch.cuda.empty_cache()
 
     # Species are contiguous blocks sharing primaries (electron then muon); the
     # training shower-level split randperms showers, so no global shuffle here.
-    print(f"[done] {offset} rows = {n_pairs} paired events "
+    print(f"[done] {total} rows = {n_pairs} paired events "
           f"(electron pdg=0 rows 0..{n_pairs-1}, muon pdg=1 rows {n_pairs}..{total-1}) "
           f"in {time.time()-t0:.0f}s -> {out_path}")
 
