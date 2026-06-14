@@ -16,7 +16,14 @@ PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]
 
 # Primary energy bounds (log10 GeV) for min-max normalization
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
-LOG_E_MAX = 8.0   # log10(1e8 GeV)
+LOG_E_MAX = 7.0   # log10(1e8 GeV)
+
+# Direction bounds for sampling priamries
+ZENITH_MIN   = 60.0  # degrees
+ZENITH_MAX   = 100.0 # degrees
+AZIMUTH_MIN  = 0.0   # degrees
+AZIMUTH_MAX  = 360.0 # degrees
+
 
 RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
@@ -26,7 +33,8 @@ SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 # production location instead). 01_build_dataset.py writes to
 # TRAINING_DATASET_FOLDER; 02 + 03 read from it; 02 writes fnn.pt to
 # FNN_FOLDER; 03 writes recon.pt to RECON_FOLDER; 04 reads both.
-TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_recentered")
+# TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_recentered")
+TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 FNN_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_02_recentered")
 RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered")
 # 04_optimize.py appends "_{scheme}" (one folder per init scheme).
@@ -46,12 +54,12 @@ TRAIN_FRACTION = 1.00
 # dataset build, applied per species. 1.0 = all 2*NUM_SHOWERS rows, which dense
 # is ~501 GB and OOMs at --mem=100g. 0.10 keeps the first 10% of each species
 # block (~50 GB dense), so both electron and muon stay represented.
-DATASET_FRACTION = 0.10
+DATASET_FRACTION = 1.00
 
-NUM_SHOWERS = 500_000
+# NUM_SHOWERS = 500_000
 # NUM_SHOWERS = 100_000
 # NUM_SHOWERS = 5_000_000
-# NUM_SHOWERS = 50
+NUM_SHOWERS = 1_000
 BATCH_SIZE  = 60
 BATCH_SIZE_TRAIN  = 20
 
