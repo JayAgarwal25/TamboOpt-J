@@ -215,3 +215,96 @@ one interior zero silently drops the shower's LAST real point.
 muon showers (counts up to 55k vs the 25088 cap) — roughly a third of muon
 components clipped. Raised as a retraining question (higher cap) for the next
 model round.
+
+## High-E blob band = train/generate energy mismatch (2026-06-14)
+
+Plotting the 1M-pair production corpus (`cashed_showers_dual_1000000.pt`), the
+high-point-count muon showers render as diffuse isotropic **blobs** while the
+rest are clean rods. **Not** a plot artifact and **not** the post-LN/pre-LN
+checkpoint bug (that blobs *every* shower; here only a tail degrades). Root
+cause is a sampling-vs-training **energy** mismatch:
+
+- **Diagnostic** (300 muon showers, elongation = std along travel ÷ std across,
+  in x-y): elongation is 3.4–4.6 for E < 1e7 (rods) and collapses to **~1.0 for
+  E ∈ [1e7,1e8]** (isotropic blobs). `corr(log10 E, elong) = −0.62`,
+  `corr(n_pts, elong) = −0.53`. A near-horizontal shower must stay elongated
+  along its axis at any energy, so elongation 1.0 is unphysical — the generator
+  is extrapolating.
+- **Training spectrum** (`combined_{electrons,muons}.h5`, the actual May-ckpt
+  training files): median E **2.4e5**, p99.9 **1.8e6**, MAX **4.9e7** GeV;
+  **0.02 %** of training is above 1e7 and **nothing** above ~5e7. `num_points`
+  caps are already saturated in training (muon p99 = max = 25088).
+- **Generation**: `sample_primary_particles` (TAMBO-opt
+  `allshowers/generate_showers.py`) draws energy **log-uniform in [E_MIN=1e5,
+  E_MAX=1e8]** — the dual `00` script passes no `e_max`, so this default rules.
+  That dumps **~⅓** of showers into [1e7,1e8] (≈0 % training coverage) and 2×
+  past the highest energy ever simulated. PointCountFM then extrapolates
+  `num_points` straight to the cap and AllShowers can't lay ~23k points out as a
+  rod → cloud. Zenith/azimuth are fine (training `cosθ ∈ [−0.174,0.500]` =
+  zenith [60°,100°], matches the U[60,100] sampling exactly).
+
+**Where the training data is generated** (traced today): a CORSIKA-8 binary
+**`c8_air_shower`** run as SLURM batches under
+`…/hhanif/tambo_simulations_for_training/` (driver `scripts/run_tambo_batch_*.sh`
++ `args_batches/args_*.txt`, auto-generated with a power-law **`gamma=1.5`**).
+Primaries are tau-decay daughters (pdg ±11, 111, ±211; e±/π, no µ or τ),
+injection-height 2500, per-run output split into `*_{muons,electrons,photons}.h5`
+under `pdg_*/energy_*/`. TAMBO-opt `util/` (`combine_h5_files.py`,
+`add_num_points_per_layer.py`, …) stitches these into the `h5_files_v3/combined_*`
+training files. The `gamma=1.5` power law is exactly the steep falling spectrum
+above — the surrogate never saw a flat log-uniform high-E tail.
+
+**Fix**: cap the generation default `E_MAX` **1e8 → 2e6** in
+`TAMBO-opt/allshowers/generate_showers.py`, keeping sampling inside training
+support (2e6 ≈ p99.9). Log-uniform [1e5,2e6] still doesn't match the spectrum
+*shape*, but it stops the extrapolation blobs; matching the physical `gamma=1.5`
+spectrum is the more-correct follow-up.
+
+Side fix from the same session: `plots/plot_cached_showers.py` was calling
+`showerdata.load(ckpt)` with no range — fine at 50 showers, OOM-killed on the
+**161 GB** dual cache. Now it reads only each species' leading N rows via
+`showerdata.load(start, stop)` (peak RSS 731 MB regardless of corpus size).
+
+## Anti-clip PointCountFM re-roll (2026-06-14)
+
+Follow-up to the blob band: even *within* training-support energies, blobs still
+appear for the occasional muon shower because the blob tracks **point
+multiplicity**, not energy per se — a shower whose predicted total exceeds the
+25088 cap is truncated by `generate()`, and losing the tail collapses the rod
+into a cloud. `corr(n_pts, elong) = −0.53` in the corpus; at a *fixed* E=1e7 the
+multiplicity (hence which cells blob) varies cell-to-cell with direction. So
+energy capping reduces but never fully removes muon blobs.
+
+**Key enabling fact: PointCountFM is stochastic.** Its TorchScript `sample()`
+draws fresh `z = torch.randn(...)` and decodes through the flow ODE each call, so
+re-running it on the *same* primary yields a different total count. And the clip
+is decided from `num_points` **before** the expensive GPU `generate()` — so we
+can re-roll just the counts on CPU and run the generate once.
+
+**`resample_overclip(...)`** (new helper in `00_generate_data_dual_species.py`):
+re-rolls PointCountFM for only the showers whose clip fraction
+`(total − cap)/total` exceeds `MAX_CLIP_FRAC` (0.10). Each retry replaces the
+previous draw (several retries → keep the **last**), re-rolls **only the still-
+failing subset**, up to `MAX_PCFM_RETRIES` (set to **10**). Showers that stay
+over threshold after the budget keep their last draw and truncate as before.
+Shared by `_gen_chunk` (generation) and `plot_angle_grid_3d_dual_species.py`
+(plots) so both apply the identical policy.
+
+**Verified on an A100** (muon angle grid, the plot now calls the same helper):
+
+| run | mean hits | over-cap | morphology |
+|-----|-----------|----------|------------|
+| E=1e6 (in support) | 6546 | 0 / 25 | all rods (loop no-op) |
+| E=1e7, no re-roll | 20413 | 6 / 25 | blobs at the over-cap cells |
+| E=1e7, 4 retries | — | 5→3→3→2→1 | 1 residual blob |
+| E=1e7, 10 retries | — | 4→3→2→0 | all rods |
+
+Generator smoke run (`--n-pairs 120`, full [1e5,1e8] energy) fired it on muons:
+`[anti-clip 1/4] … 4/120 … >10%` → converged to 1 residual, re-rolling only the
+failed subset each attempt — confirming the loop touches only the cheap CPU
+stage and leaves the single GPU generate untouched. **Log bug fixed in the same
+pass**: the summary keyed on `sum > cap` (any clip) and said "after N retries"
+even for sub-threshold showers never re-rolled (e.g. electrons at 4097–4192,
+~2% clip); now it keys on `clip_frac > MAX_CLIP_FRAC`, so only genuinely-failed
+showers are reported. (Electrons are pinned ~4096 by training, so they sit just
+over their cap by <3% and are correctly left alone.)
