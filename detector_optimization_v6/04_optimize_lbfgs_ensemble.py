@@ -67,6 +67,7 @@ from modules_v6.constants import (
 from modules.utility_functions   import reconstructability, U_E, U_angle, U_PR
 from modules.layout_optimization import LearnableXY
 from modules_v4.tr_geometry      import load_tr_mountain
+from modules_v6.tr_geometry_ne   import project_to_mountain_ne
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
