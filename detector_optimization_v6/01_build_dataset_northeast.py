@@ -33,6 +33,7 @@ from modules_v6.constants import (
     SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     BATCH_SIZE_TRAIN, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
+    DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
 from modules_v4.tr_geometry    import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -41,7 +42,11 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 # ── Config ───────────────────────────────────────────────────────────────────
 # Dedicated output dir (notable name) — never overwrite the (North, Up) corpus.
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
-MAX_SHOWERS = NUM_SHOWERS
+# Paired dual-species corpus holds 2*NUM_SHOWERS rows (electron block then muon
+# block, same primaries); 02 splits them per species via the primary pdg feature.
+# DATASET_FRACTION caps how many rows are loaded (split evenly across species) so
+# the build fits in RAM — see modules_v6/constants.py.
+MAX_SHOWERS = int(DATASET_FRACTION * 2 * NUM_SHOWERS)
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # RECENTER_TO_MOUNTAIN is imported from modules_v6.constants — edit it there.
@@ -53,7 +58,7 @@ def main():
     print("=" * 72)
     print(f"v6/01_build_dataset_northeast.py")
     print("=" * 72)
-    print(f"shower cache : {SHOWER_CACHE}")
+    print(f"shower cache : {DUAL_SHOWER_CACHE_PATH}")
     print(f"geometry     : {GEOMETRY_PATH}")
     print(f"output dir   : {TRAINING_DATASET_FOLDER}")
     print(f"batch size   : {BATCH_SIZE_TRAIN}")
@@ -78,7 +83,7 @@ def main():
     primary, xy, E, T, strat = build_training_pairs(
         mountain=mountain,
         surface=surface,
-        shower_cache_path=os.path.join(SHOWER_CACHE, f"cashed_showers_{NUM_SHOWERS}.pt"),
+        shower_cache_path=DUAL_SHOWER_CACHE_PATH,
         batch_size=BATCH_SIZE_TRAIN,
         max_showers=MAX_SHOWERS,
         seed=SEED,

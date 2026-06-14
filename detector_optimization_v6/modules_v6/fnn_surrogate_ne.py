@@ -87,19 +87,38 @@ def build_training_pairs(mountain, surface,
         strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
     """
     import showerdata
-    data = showerdata.load(shower_cache_path)
 
-    points = torch.as_tensor(data.points,     dtype=torch.float32)  # (N, P, 5)
-    dirs   = torch.as_tensor(data.directions, dtype=torch.float32)  # (N, 3)
-    energs = torch.as_tensor(data.energies,   dtype=torch.float32)  # (N, 1)
-    pdg    = torch.as_tensor(data.pdg,        dtype=torch.long)     # (N,)
+    # The dual corpus is two equal species blocks: electron rows [0, per_sp) then
+    # muon rows [per_sp, 2*per_sp). Loading ALL points dense is ~501 GB; instead
+    # load only the kept prefix of EACH block (max_showers total rows, split
+    # evenly so both species stay represented — 02 splits them by pdg). Metadata
+    # (dir/energy/pdg) is tiny, so it is read in full first.
+    meta   = showerdata.load_inc_particles(shower_cache_path)
+    n_file = meta.pdg.shape[0]
+    per_sp = n_file // 2
+    keep   = n_file if not max_showers else min(int(max_showers), n_file)
+    k_sp   = keep // 2                                   # rows kept per species
+
+    # Load each species prefix into a preallocated tensor (peak ≈ kept + 1 block,
+    # never the full corpus).
+    e = showerdata.load(shower_cache_path, start=0, stop=k_sp)
+    P, C = e.points.shape[1], e.points.shape[2]
+    points = torch.empty((2 * k_sp, P, C), dtype=torch.float32)   # (2*k_sp, P, 5)
+    points[:k_sp] = torch.as_tensor(e.points, dtype=torch.float32)
+    del e
+    m = showerdata.load(shower_cache_path, start=per_sp, stop=per_sp + k_sp)
+    points[k_sp:] = torch.as_tensor(m.points, dtype=torch.float32)
+    del m
+
+    keep_idx = np.concatenate([np.arange(0, k_sp),
+                               np.arange(per_sp, per_sp + k_sp)])
+    dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (2*k_sp, 3)
+    energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)  # (2*k_sp, 1)
+    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (2*k_sp,)
     n_showers = points.shape[0]
-    if max_showers is not None:
-        n_showers = min(n_showers, int(max_showers))
-        points = points[:n_showers]
-        dirs   = dirs[:n_showers]
-        energs = energs[:n_showers]
-        pdg    = pdg[:n_showers]
+    if verbose:
+        print(f"[load] kept {k_sp}/{per_sp} per species "
+              f"-> {n_showers} rows of {n_file} (DATASET_FRACTION applied via max_showers)")
 
     if recenter_to_mountain:
         # Shower transverse plane is (North, Up) — unchanged from the original.
@@ -111,7 +130,7 @@ def build_training_pairs(mountain, surface,
         cy = (points[:, :, 1] * mask).sum(dim=1) / w_sum
         dx = (mtn_cx - cx).view(-1, 1)                           # (N, 1)
         dy = (mtn_cy - cy).view(-1, 1)
-        points = points.clone()
+        # points is freshly allocated above (we own it) — recenter in place.
         points[..., 0] = points[..., 0] + dx * mask
         points[..., 1] = points[..., 1] + dy * mask
         if verbose:

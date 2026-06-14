@@ -42,6 +42,12 @@ RECENTER_TO_MOUNTAIN = True
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
 TRAIN_FRACTION = 1.00
 
+# 01_build_dataset(_northeast).py: fraction of the dual corpus to LOAD into the
+# dataset build, applied per species. 1.0 = all 2*NUM_SHOWERS rows, which dense
+# is ~501 GB and OOMs at --mem=100g. 0.10 keeps the first 10% of each species
+# block (~50 GB dense), so both electron and muon stay represented.
+DATASET_FRACTION = 0.10
+
 NUM_SHOWERS = 500_000
 # NUM_SHOWERS = 100_000
 # NUM_SHOWERS = 5_000_000
