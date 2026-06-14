@@ -28,13 +28,15 @@ The pipeline comprises five sequential stages:
 
 | Stage | Input | Output | Role |
 |-------|-------|--------|------|
-| **Step 0** | Energy/angle sampling ranges | Point-cloud showers $(\mathbf{r}, E, t)$ | Generate synthetic shower library (default 500k showers) |
-| **Step 1** | Shower library + mountain geometry | $(primary, xy, E, T)$ training tensors | Pair each shower with **7** diverse layouts; per-shower recenter onto mountain; compute detector responses (3.5M pairs) |
-| **Step 2** | Training tensors | Frozen `fnn.pt` checkpoint | Train surrogate: $(primary, layout) \to (E_\text{det}, T_\text{det})$. Adam (OneCycle) + L-BFGS fine-tune |
-| **Step 3** | Training tensors + frozen FNN | Frozen `recon.pt` checkpoint | Train reconstruction: $(x, y, E_\text{det}, T_\text{det}) \to (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E})$. Adam + L-BFGS fine-tune |
-| **Step 4** | Frozen FNN + frozen recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ + uncertainty | Maximise composite utility via backpropagation (or gradient-free DE) through both NNs. Base + 4 sampler/ensemble variants (§4.5.4) |
+| **Step 0** | Energy/angle sampling ranges | Point-cloud showers $(\mathbf{r}, E, t)$ | Generate the PAIRED dual-species shower library: primaries sampled once, electron + muon component generated per event (§3.6) |
+| **Step 1** | Shower library + mountain geometry | $(primary, xy, E, T)$ training tensors | Pair each corpus row with **7** diverse layouts; per-shower recenter onto mountain; compute detector responses |
+| **Step 2** | Training tensors | Frozen `fnn_electron.pt` + `fnn_muon.pt` | Train TWO per-species DeepSets surrogates: $(primary, layout) \to (E_\text{det}, T_\text{det})$ per component. Adam (OneCycle) + L-BFGS fine-tune |
+| **Step 3** | Training tensors + frozen dual surrogate | Frozen `recon.pt` checkpoint | Train reconstruction on the **combined** event response: $(x, y, E_\text{comb}, T_\text{comb}) \to (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E})$ |
+| **Step 4** | Frozen dual surrogate + frozen recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ + uncertainty | Maximise composite utility via backpropagation (or gradient-free DE) through recon + **both** species surrogates summed. Base + sampler/ensemble variants (§4.5.4) |
 
-> **(North, East) lineage.** Steps 1–4 also have a **North–East** branch (§3.5): `01_build_dataset_northeast.py` → `test_v6_run_01_northeast/`, retrained Steps 2–3, then `04_optimize_differential_evolution.py`. It is a *separate dataset + model lineage* (the `xy` feature means (North, East) and the labels differ); the original (North, Up) tables below still describe the default branch.
+> **Dual-species lineage (2026-06-11, current default).** Steps 0–4 were rewired to the per-species May checkpoints: Step 0 is `00_generate_data_dual_species.py` (paired corpus), Step 2 is `02_train_fnn_deepsets.py` (two models), and Steps 3–4 evaluate both models per event and combine physically via `modules_v6/dual_surrogate.py` (§3.6). The legacy single-model scripts (`00_generate_data.py`, `02_train_fnn.py`) remain for the old all-showers checkpoint.
+
+> **(North, East) lineage.** Steps 1–4 also have a **North–East** branch (§3.5): `01_build_dataset_northeast.py` → `test_v6_run_01_northeast/`, retrained Steps 2–3, then `04_optimize_differential_evolution.py`. It is a *separate dataset + model lineage* (the `xy` feature means (North, East) and the labels differ); the original (North, Up) tables below still describe the default branch. **Status caveat (2026-06-11):** only the NE *dataset* exists — no NE-retrained Steps 2–3 checkpoints. The DE script currently loads the shared (North, Up) `FNN_FOLDER`/`RECON_FOLDER` models, whose second `xy` feature was trained as Up ∈ [2442, 3886] m, and feeds them East ∈ [−2019, 1182] m — disjoint ranges, so its utilities are not physically meaningful until the NE chain is retrained. `01_build_dataset_northeast.py` also still reads the pre-dual single-model corpus.
 
 > **Note on the run tree.** The current production runs use the *recentered* corpus (`RECENTER_TO_MOUNTAIN=True`); folders are named `test_v6_run_0X_recentered` under `RUN_LOCATION` on holylfs05 rather than the historical `v6_run_0X`. Paths are centralised in `modules_v6/constants.py`.
 
@@ -111,14 +113,40 @@ The **North–East** convention is geographically natural — you place detector
 
 Because this changes both the **labels** and the **meaning of the `xy` feature**, it is a *separate dataset + model lineage*: regenerate Step 1 with `01_build_dataset_northeast.py` (writes `test_v6_run_01_northeast/`, `xy = (North, East)`) and retrain Steps 2–3 against it. The shower recentering is unchanged (the shower transverse plane is still (North, Up)).
 
+> **Init-vs-bounds subtlety (fixed 2026-06-11).** `project_to_mountain_ne` is a *tolerance test*, not a box clamp: a point within `max_gap` (≈2× mean centroid spacing, ~170 m) of any centroid is left untouched, so valid layouts can sit up to ~`max_gap` **outside** the tight centroid bbox. SciPy's `differential_evolution` requires `x0` strictly inside `bounds`, so the σ=1000 m perturbed starts crashed it. The DE bounds are now widened by `_ne_max_gap(mountain)` on both axes — exactly the region projection can emit; candidates are still mountain-projected before scoring, so the optimum cannot leave the mountain.
+
+### 3.6 Dual-Species Event Model (electron + muon components)
+
+**Provenance (verified 2026-06-10 against the training h5 files + `TAMBO-opt/util/combine_h5_files.py`).** The May per-species AllShowers/PointCountFM checkpoints were trained on the **same** 130k simulated showers, matched row-for-row: identical energies, directions and shower ids in `combined_electrons.h5` and `combined_muons.h5`. Primaries are tau decay daughters (`actual_pdg` ∈ {±11, 111, ±211} — e± and pions; **no muon or tau primaries**). The simulation writes each shower's secondary hits split by species (electrons / muons / photons), so *"species" means secondary COMPONENT of one event, not shower type*. Muons survive the through-rock geometry while the EM component is absorbed — hence the asymmetric point caps (electron 4096, muon 25088).
+
+Consequences baked into the pipeline:
+
+1. **Paired corpus.** `00_generate_data_dual_species.py` samples $N$ primaries once and generates BOTH components per primary: electron rows $0..N{-}1$ and muon rows $N..2N{-}1$ share the same $(E, \hat{\mathbf n})$ — row $i$ and row $N{+}i$ are one physical event. The stored `pdg` is a species id (e=0, µ=1), a downstream feature only.
+2. **Conditioning label is always 0.** Both per-species models were trained with conditioning label 0 only (their training `pdg` datasets are all-zero); label 1 hits an untrained embedding. Species identity never enters the generators as a label.
+3. **Two parallel surrogates, physically combined.** Step 2 trains one DeepSets surrogate per component; Steps 3–4 evaluate both with the same $(\mathbf q, \mathbf{xy})$ and combine in *physical* space (`modules_v6/dual_surrogate.py`), not by adding the log-channels:
+
+$$N_\text{tot} = N_e + N_\mu, \qquad t_\text{tot} = \frac{N_e t_e + N_\mu t_\mu}{N_e + N_\mu}$$
+
+   with $N_s = \mathrm{expm1}(\hat E_s)$ and $t_s = \mathrm{expm1}(\hat T_s)/10^8$ inverting the per-channel log transforms (§6), then re-encoded as $\hat E_\text{comb} = \log(1{+}N_\text{tot})$, $\hat T_\text{comb} = \log(1{+}10^8\, t_\text{tot})$. Counts add; arrival times average count-weighted, matching the kernel's weighted-mean $T$ definition (§3.4). Step 4's `reconstructability(expm1(\hat E_\text{comb}))` recovers exactly $N_\text{tot}$, and gradients flow into the layout through **both** models.
+
+> **Checkpoint ↔ architecture pairing (the silent-blob trap, root-caused 2026-06-10).** TAMBO-opt's two checkpoint generations were trained with different transformer encoder blocks that share identical state-dict keys: the old `all_showers` ckpt (Apr 3) is **post-LayerNorm** ($x \leftarrow \mathrm{LN}(x + \mathrm{attn}(x))$), the May per-species ckpts are **pre-LayerNorm** ($x \leftarrow x + \mathrm{attn}(\mathrm{LN}(x))$). The wrong pairing loads without any error and generates diffuse blobs instead of rod-like showers. Fix: `allshowers/transformer.py` takes `pre_ln: bool = False` and `stage_run_dir` injects `pre_ln: true` into the staged conf.yaml of the per-species run-dirs. Two companions from the same debugging pass: the generator must keep `with_time` support (all current ckpts are time models, `dim_inputs[0] == 4`), and `generate()` must run under `torch.no_grad()` (otherwise each batch retains its ODE autograd graph — 39 GB OOM at the 4096-point cap, hopeless at 25088).
+
 
 ## 4. Stage-by-Stage Theory
 
-### 4.1 Step 0 — Shower Corpus Generation (`00_generate_data.py`)
+### 4.1 Step 0 — Shower Corpus Generation (`00_generate_data_dual_species.py`)
 
-A library of shower point clouds (default `NUM_SHOWERS = 500{,}000`, configurable in `modules_v6/constants.py`) is generated by the AllShowers flow-matching model and cached to disk. Primary particles are sampled uniformly in $(\theta, \phi, \log E)$ and the flow-matching solver produces stochastic point clouds via $T = 16$ midpoint integration steps. This step is GPU-intensive and runs once; all downstream stages read the cached corpus.
+The current generator builds the **paired dual-species corpus** (§3.6): `--n-pairs` primaries (default `NUM_SHOWERS` from `modules_v6/constants.py`, seeded) are sampled once, then each species' staged model pair (AllShowers run-dir + PointCountFM `compiled.pt`) generates its component — electron block first, muon block second, same primaries. Per species the two-stage chain runs PointCountFM on CPU (its TorchScript bakes device constants) and AllShowers on GPU with $T = 16$ midpoint integration steps; per-species point caps are set explicitly (electron 4096, muon 25088). `stage_run_dir` rebuilds Generator-loadable run-dirs from the raw training checkpoints and injects `pre_ln: true` (§3.6).
 
-> **Memory caveat.** The generator accumulates the entire `(N, max_points, 5)` sample tensor in RAM and writes a single HDF5 file only at the very end (`save_output`), with a transient numpy copy during the save. There is no incremental checkpointing, so for large `NUM_SHOWERS` the save step is the peak-memory moment and an OOM there loses the whole run. Size `--mem` for the *save* peak, not the steady state.
+Generation is **streamed in chunks**: the HDF5 file is preallocated once and each chunk is written at its row offset, so peak RAM is one chunk regardless of corpus size — this supersedes the legacy script's all-in-RAM save. Output: `cashed_showers_dual_{2N}.pt` at `DUAL_SHOWER_CACHE_PATH`.
+
+**Crash recovery (`--resume-at-row`, added after run 21376182).** A crashed run can continue into the existing preallocated file: pass the last logged "file offset" and the script skips completed rows — fully-written species blocks are skipped outright (their models never even load), a partial block resumes at its offset. Primaries are seeded, so the regenerated slices pair exactly with the rows already on disk; `--n-pairs`/`--seed` must match the original run. `run_all_script_batch.sh` exposes this as the `RESUME_ROW` knob (set 0 for a fresh corpus). Guards reject an out-of-range row or a missing output file.
+
+> **Energy-underflow guard (root cause of the 21376182 crash).** The inverse energy transform is an `exp` of a flow latent — mathematically positive, but float32 `exp` underflows to **exactly 0.0** for extreme negative latents (~1-in-10⁸ per point; guaranteed at production scale — the run had generated ~5×10⁸ points). `showerdata` requires real points contiguous at the front: its ragged save slices `[:num_points]` with `num_points = count_nonzero(e)`, so an *interior* zero silently drops the shower's last real point, and a zero at **slot 0** raises `"Padding should be in the end of the shower points."` — which killed the run 2.5 h in (electron block complete, muon at 20k/500k). Fix: `_gen_chunk` stable-partitions every shower (key on `e ≤ 0`, `argsort(stable=True)` + `gather` that moves whole 5-feature points), putting real points first in original order and all zero rows at the end. Verified against the real showerdata validator.
+
+> **Muon point-budget saturation (quantified at production scale).** The muon PointCountFM routinely predicts totals above the 25088 cap — run 21376182 logged ~8.4k truncation warnings within its first ~22k muon showers (counts observed up to 55k), i.e. roughly a third of muon components clipped. This matches the model's own training cap but means high-energy muon components saturate the point budget — flagged for revisiting with retrained higher-cap models.
+
+> **Legacy script.** `00_generate_data.py` (single dual-class model, in-RAM save) remains for the old Apr-3 `all_showers` checkpoint; its memory caveat — the save step is the peak-memory moment — still applies to that path only.
 
 ### 4.2 Step 1 — Dataset Construction (`01_build_dataset.py`)
 
@@ -136,21 +164,23 @@ Each shower is paired with **7** different detector layouts drawn from diverse *
 
 Ring layouts are built with v3's `Layouts` and given a random rotation per sample; all strategies are anchored at the centroid nearest the mountain $(N, U)$ bounding-box centre.
 
-For each (shower, layout) pair, the physics-based kernel (Section 3.4) computes ground-truth detector responses $(E_{\text{det}}, T_{\text{det}})$. The energy is log-transformed via $\log(1 + E)$ in Step 1 to compress the heavy right tail; **$T$ is stored raw** (the log-T rescale happens later, in Step 2 — see Section 6). Z-score normalisation statistics are computed over the full corpus.
+For each (shower, layout) pair, the physics-based kernel (Section 3.4) computes ground-truth detector responses $(E_{\text{det}}, T_{\text{det}})$. The energy is log-transformed via $\log(1 + E)$ in Step 1 to compress the heavy right tail; **$T$ is stored raw** (the log-T rescale happens later, in Step 2 — see Section 6). Z-score normalisation statistics are computed over the full corpus (Step 2 recomputes per-species stats on its subsets — §4.3).
 
-This produces a training corpus of $500{,}000 \times 7 = 3{,}500{,}000$ training pairs, each consisting of:
+With the paired dual-species corpus the input has $2N$ rows ($N$ electron components then $N$ muon components, same primaries; §3.6), so Step 1 produces $2N \times 7$ training pairs whose `pdg` feature carries the species id. Layout draws are independent per batch — the two component rows of one event do **not** share layouts (each per-species surrogate just needs $(\mathbf q, \mathbf{xy})$ coverage). Each pair consists of:
 - **Input**: primary vector $\mathbf{q} \in \mathbb{R}^5$ + detector layout $\mathbf{xy} \in \mathbb{R}^{100 \times 2}$
 - **Label**: detector responses $\mathbf{E} \in \mathbb{R}^{100}$ (log1p energy), $\mathbf{T} \in \mathbb{R}^{100}$ (raw seconds)
 
 The use of multiple layout strategies ensures the surrogate learns the dependence on detector positions, not just on the primary particle — this is what makes the surrogate useful for layout optimisation. The pairs are laid out **strategy-major** (entry for shower $i$ under strategy $s$ sits at index $s \cdot N_\text{showers} + i$), which the shower-level train/val split exploits to keep all 7 variants of one shower in the same split.
 
-### 4.3 Step 2 — Forward Surrogate Training (`02_train_fnn.py`)
+### 4.3 Step 2 — Forward Surrogate Training (`02_train_fnn_deepsets.py`)
 
-**Purpose**: Learn a fast, differentiable approximation:
+**Purpose**: Learn a fast, differentiable approximation per species component (§3.6):
 
-$$f_\text{FNN}: (\mathbf{q}, \mathbf{xy}) \;\longmapsto\; (\hat{\mathbf{E}}, \hat{\mathbf{T}}) \in \mathbb{R}^{100 \times 2}$$
+$$f_s: (\mathbf{q}, \mathbf{xy}) \;\longmapsto\; (\hat{\mathbf{E}}_s, \hat{\mathbf{T}}_s) \in \mathbb{R}^{100 \times 2}, \qquad s \in \{e, \mu\}$$
 
-**Architecture**: A feedforward network (FNNSurrogate). The current production width is **hidden = 1024 across 7 hidden layers** (the `hidden` kwarg defaults to 512 in the module, but `02_train_fnn.py` instantiates it at 1024):
+**Current production trainer (2026-06-11).** `02_train_fnn_deepsets.py` splits the dataset rows by the primary's species id and trains **two parallel DeepSets surrogates** (the architecture that broke the flat-MLP plateau — §10/diary), saving `fnn_electron.pt` and `fnn_muon.pt` directly into `FNN_FOLDER`. Per-species z-score stats are computed on each subset (muon counts are ~an order of magnitude above electron — shared stats would crush the smaller component's loss) and ship inside each checkpoint; the same split seed makes the two components of one event co-split. Everything else (shower-level split, log-T treatment, Adam(OneCycle) → chunked L-BFGS with best-val save) matches the single-model recipe below. CLI: `--epochs`, `--lbfgs-iters`, `--species`.
+
+**Legacy architecture** (single flat MLP, `02_train_fnn.py`): a feedforward network (FNNSurrogate) at **hidden = 1024 across 7 hidden layers** (the `hidden` kwarg defaults to 512 in the module, but `02_train_fnn.py` instantiates it at 1024):
 
 ```
 Input:  [q (5), xy_flat (200)] = 205 features
@@ -175,7 +205,7 @@ $$\mathcal{L}_\text{FNN} = \frac{1}{2}\bigl(\text{MSE}_E + \text{MSE}_T\bigr) \q
 
 **Permutation Augmentation**: Because the FNN is a flat MLP (not a set-equivariant architecture), the detector ordering is arbitrary. To teach approximate permutation equivariance by data augmentation, every training batch applies an **independent random permutation** of the 100 detectors per sample. The same permutation is applied to the input layout $\mathbf{xy}$ and the target $(\mathbf{E}, \mathbf{T})$ jointly, preserving the detector-wise correspondence while exposing the network to all orderings.
 
-**T target is log-rescaled at training time.** Mirroring the $\log(1+E)$ treatment, Step 2 applies $T \leftarrow \log(1 + T\cdot 10^{8})$ in-memory (raw $T \in [10^{-12}, 2.4\times10^{-6}]$ s maps to a workable $0$–$5.5$ range), recomputes the T-channel z-score stats, and ships the **modified** `norm_stats` *inside* `fnn.pt`. The on-disk `norm_stats.pt` keeps the raw-T values, so Steps 3–4 deliberately read the FNN checkpoint's own `norm_stats` to stay consistent. After this, log-T is the canonical target — there is no inverse at eval, and `val_mse_T` is reported in z-scored log-T space.
+**T target is log-rescaled at training time.** Mirroring the $\log(1+E)$ treatment, Step 2 applies $T \leftarrow \log(1 + T\cdot 10^{8})$ in-memory (raw $T \in [10^{-12}, 2.4\times10^{-6}]$ s maps to a workable $0$–$5.5$ range; the scale is `T_LOG_SCALE` in `modules_v6/constants.py`), recomputes the T-channel z-score stats per species, and ships the **modified** `norm_stats` *inside* each `fnn_*.pt`. The on-disk `norm_stats.pt` keeps the raw-T values; the dual-surrogate combination (§3.6) inverts the same transform, and Step 3 computes its own stats from the combined predictions. After this, log-T is the canonical target — there is no inverse at eval, and `val_mse_T` is reported in z-scored log-T space.
 
 **Train/Val Split**: Shower-level 90/10 split — all 7 layout variants of the same shower go into the same split, preventing information leakage. An optional `TRAIN_FRACTION < 1` subsamples the train split (val always full) for smoke tests.
 
@@ -192,9 +222,9 @@ $$f_\text{recon}: (x_i, y_i, \hat E_i, \hat T_i)_{i=1}^{100} \;\longmapsto\; (\h
 
 Given the per-detector positions and the FNN-predicted responses, reconstruct the primary's **direction unit vector** $\hat{\mathbf n} = (\sin\theta\cos\phi, \sin\theta\sin\phi, \cos\theta)$ and **normalised log-energy** $\widetilde{\log E} = (\log_{10} E - 5)/3$. The network predicts the same 4-D encoding as the first four columns of the primary vector $\mathbf{q}$ (Section 3.3); $(E, \theta, \phi)$ are recovered analytically downstream (Section 4.5). Predicting a unit vector instead of $(\theta, \phi)$ avoids the $\phi$ branch cut at $0/2\pi$ and keeps the loss geometrically well-behaved near the poles.
 
-**Training data generation**: The frozen FNN from Step 2 is run in eval mode on the entire training corpus to produce predicted $(\hat E_i, \hat T_i)$. The reconstruction network is trained on FNN *predictions* (not ground-truth kernel outputs) — this is critical because at optimisation time the reconstruction network will only ever see FNN outputs, so it must be robust to FNN-specific prediction patterns and artefacts.
+**Training data generation**: The frozen **dual surrogate** from Step 2 (`fnn_electron.pt` + `fnn_muon.pt` behind `DualSpeciesSurrogate`, §3.6) is run in eval mode on the entire training corpus to produce the **combined** event response $(\hat E_\text{comb}, \hat T_\text{comb})$ per row — both models evaluated with the same $(\mathbf q, \mathbf{xy})$, counts summed, times count-weight averaged; the row's own pdg feature is ignored by the wrapper. The reconstruction network is trained on surrogate *predictions* (not ground-truth kernel outputs) — this is critical because at optimisation time it will only ever see surrogate outputs, so it must be robust to their prediction patterns and artefacts; and it learns to invert the *complete* event response, matching how Step 4 evaluates layouts.
 
-**Targets**: The recon target is `primary[:, :4]` — i.e. the raw 4-D primary encoding $(n_x, n_y, n_z, \widetilde{\log E})$ — used in raw units. Per-channel z-score stats are taken from the FNN's `norm_stats.pt` (slots 0–3 of the primary input stats) and baked into the model as output denormalisation buffers so that both training loss and inference live in the same raw units.
+**Targets**: The recon target is `primary[:, :4]` — i.e. the raw 4-D primary encoding $(n_x, n_y, n_z, \widetilde{\log E})$ — used in raw units (pdg is dropped: the combined response describes the whole event). Target z-score stats and recon-input per-detector stats are computed **directly from the data being trained on** (the xy coordinates and the combined predictions — no single species checkpoint's stats describe the combined distributions) and baked into the model/`recon.pt`, so Step 4 stays consistent automatically.
 
 **Architecture**: The v6 `Reconstruction` module (`modules_v6/reconstruction.py`) mirrors `FNNSurrogate` one-for-one:
 
@@ -219,7 +249,7 @@ $$\mathcal{L}_\text{recon} = \text{MSE}_{n_x} + \text{MSE}_{n_y} + \text{MSE}_{n
 
 **Permutation Augmentation**: Same random-permutation scheme as Step 2. The target is a scalar 4-vector (primary encoding) that is invariant to detector ordering — only the input features are permuted. This teaches the MLP to be approximately **permutation-invariant** in its output.
 
-**Architecture note**: the recon MLP is the narrower **3×512-hidden** form (vs the FNN's 7×1024). The FNN's width is read from `fnn.pt`'s `config` at load time, so Step 3 stays correct even when the FNN width changes.
+**Architecture note**: the recon MLP is the narrower **3×512-hidden** form (vs the FNN's 7×1024). Each surrogate checkpoint's architecture (flat-MLP or DeepSets, width, etc.) is read from its saved `config` at load time via `build_surrogate_from_ckpt`, so Steps 3–4 stay correct regardless of which surrogate generation is on disk.
 
 **Optimiser — two phases** (mirrors Step 2):
 
@@ -228,7 +258,7 @@ $$\mathcal{L}_\text{recon} = \text{MSE}_{n_x} + \text{MSE}_{n_y} + \text{MSE}_{n
 
 ### 4.5 Step 4 — Layout Optimisation (`04_optimize.py`)
 
-**Purpose**: Find detector positions that maximise reconstruction quality by backpropagating through the frozen FNN and reconstruction networks.
+**Purpose**: Find detector positions that maximise reconstruction quality by backpropagating through the frozen surrogate(s) and reconstruction networks. In the dual-species lineage the "FNN" slot holds the `DualSpeciesSurrogate` wrapper (§3.6): both per-species models are evaluated per primary, their outputs physically combined, and the layout gradient flows through **both** branches — the rest of the computational graph below is unchanged.
 
 **Computational Graph** (per optimisation step):
 
@@ -365,7 +395,7 @@ Four sibling scripts wrap the same frozen FNN+recon objective ($U_\text{var}$, S
 
 - **`04_optimize_lbfgs_ensemble.py`** — frequentist ensemble. Each of K perturbed Adam optima is refined to a local optimum by **L-BFGS** on a fixed batch, then the K layouts are **aligned by physical position** — a Hungarian assignment (`scipy.optimize.linear_sum_assignment`, with a dependency-free greedy fallback) matches detectors across runs by closest $(x,y)$, since the permutation-equivariant networks make detector *index* meaningless across runs. Per aligned position-group it reports **mean and std**, giving a network-input-invariant uncertainty map. It also logs a **per-run consecutive-step gradient cosine distance** (with $W$-step vector-averaging to cancel minibatch-noise inflation) as a convergence diagnostic.
 
-- **`04_optimize_differential_evolution.py`** — global, **gradient-free** search with `scipy.optimize.differential_evolution` over the 200-D layout (100 North + 100 East, **North–East convention** §3.5), bounded by the North bbox and the East span `[east_lo, east_hi]`. Each candidate is projected to the mountain (`project_to_mountain_ne`) and scored by the same frozen FNN+recon composite $U$ on a fixed primary batch; reports the best layout. A global baseline to check whether the gradient optimisers sit in a local optimum. DE in 200-D is expensive (population $=$ `popsize` $\times 200$) — keep `popsize`/`maxiter` modest. **Requires NE-trained surrogates** (`01_build_dataset_northeast.py` → retrained Steps 2–3).
+- **`04_optimize_differential_evolution.py`** — global, **gradient-free** search with `scipy.optimize.differential_evolution` over the 200-D layout (100 North + 100 East, **North–East convention** §3.5), bounded by the North bbox and the East span `[east_lo, east_hi]` **widened by the projection tolerance `max_gap`** (§3.5 init-vs-bounds note: perturbed starts can legitimately sit up to ~`max_gap` outside the tight centroid bbox, and SciPy requires `x0` inside the bounds). Each candidate is projected to the mountain (`project_to_mountain_ne`) and scored by the same frozen surrogate+recon composite $U$ on a fixed primary batch; reports the best layout. A global baseline to check whether the gradient optimisers sit in a local optimum. DE in 200-D is expensive (population $=$ `popsize` $\times 200$) — keep `popsize`/`maxiter` modest. **Requires NE-trained surrogates** (`01_build_dataset_northeast.py` → retrained Steps 2–3) — **which do not exist yet** (§2 status caveat): until then its utilities are not physically meaningful.
 
 
 ## 5. Key Design Decisions
@@ -403,18 +433,27 @@ Pure reconstruction MSE would ignore whether a layout is even viable — a layou
 
 The mountain surface is a non-convex 2D manifold embedded in 3D. Unconstrained gradient descent would push detectors off the mountain into physically impossible positions. After each Adam update, the `project_to_mountain()` method snaps any drifted detector back to the nearest valid centroid. This is a projected gradient descent approach on a discrete feasible set.
 
+### 5.6 Why Two Per-Species Surrogates (and why their outputs sum)?
+
+The May generative checkpoints are per-species because the *training data* is per-component: the simulation writes each shower's electron and muon secondary hits to separate files of the **same** events (§3.6). A single surrogate conditioned on a species flag would model "an electron-component shower" or "a muon-component shower" — but no physical event is only one of those. Two consequences drive the design:
+
+1. **Each surrogate learns one component's response** $f_s(\mathbf q, \mathbf{xy})$, on its own output scale (per-species norm stats; muon counts dominate electron counts by ~an order of magnitude in the through-rock geometry).
+2. **A complete event is the superposition of both components for one primary.** Detector counts are extensive — they add — and the kernel's $T$ is a count-weighted mean, so the correct combination is $N_e + N_\mu$ and $(N_e t_e + N_\mu t_\mu)/(N_e + N_\mu)$, performed in *physical* space (adding the log-channels would be meaningless). The combination is differentiable, so Stage-4 layout gradients flow through both models.
+
+The corpus is generated **paired** (same primaries for both blocks) so this superposition is faithful to the simulation's matched structure, and the recon/optimizer always see complete events rather than half-showers.
+
 
 ## 6. Normalisation Strategy
 
-The pipeline normalises both surrogates through the **same z-score pipeline**, sourced from a single `norm_stats.pt`:
+All z-scoring is baked into the models' forward passes via registered buffers; in the dual-species lineage each stage computes its stats from the data it actually trains on:
 
 | Where | What | Why |
 |-------|------|-----|
-| **FNN input/output** | Z-score (mean/std from training corpus, baked into forward pass buffers) | Ensures all features contribute equally to MSE; mountain-scale coordinates and small energy counts are on comparable scales |
-| **Recon input** | Z-score reusing the FNN's per-feature primary/xy/E/T stats (broadcast per-detector, baked into forward pass buffers) | Mountain-scale $(x, y)$ values and FNN output scales need normalisation; sharing stats with the FNN keeps train / val / optimisation on one identical scale |
-| **Recon output** | Z-score denormalisation with stats from FNN primary slots 0–3 (baked into forward pass buffers) | The 4-D primary encoding lives in known raw units; baking de-z-score into `forward()` lets losses and downstream decoding work directly in raw primary units, with no min-max/Tanh squash |
-| **FNN training labels (E)** | $\log(1 + E)$ before z-score (applied in Step 1, stored in `E.pt`) | Compresses heavy right tail of the energy distribution |
-| **FNN training labels (T)** | $\log(1 + T\cdot 10^{8})$ applied **in Step 2** (not stored on disk) | Raw $T$ spans $10^{-12}$–$10^{-6}$ s; the rescale maps it to $\sim 0$–$5.5$. The modified T-channel stats are shipped **inside `fnn.pt`**; disk `norm_stats.pt` keeps raw-T, so Steps 3–4 read the checkpoint's `norm_stats` for consistency |
+| **Surrogate input/output** | Z-score, **per-species stats** computed on each species' row subset in Step 2 (baked into forward pass buffers, shipped inside each checkpoint) | Muon and electron count scales differ by ~an order of magnitude; shared stats would mis-weight the smaller component's loss. Per-model denormalisation keeps both outputs in the same physical units for the §3.6 combination |
+| **Recon input** | Z-score with per-detector stats computed from the actual recon inputs (xy coordinates + **combined** $\hat E/\hat T$ predictions), baked into buffers and stored in `recon.pt` | The combined event distributions are not any single species checkpoint's stats; computing from the data is exact, and `recon.pt` carrying its own stats keeps Step 4 consistent automatically |
+| **Recon output** | Z-score denormalisation with stats computed from `primary[:, :4]` of the corpus (baked into forward pass buffers) | The 4-D primary encoding lives in known raw units; baking de-z-score into `forward()` lets losses and downstream decoding work directly in raw primary units, with no min-max/Tanh squash |
+| **Surrogate training labels (E)** | $\log(1 + E)$ before z-score (applied in Step 1, stored in `E.pt`) | Compresses heavy right tail of the energy distribution |
+| **Surrogate training labels (T)** | $\log(1 + T\cdot 10^{8})$ applied **in Step 2** per species (`T_LOG_SCALE` in `modules_v6/constants.py`; not stored on disk) | Raw $T$ spans $10^{-12}$–$10^{-6}$ s; the rescale maps it to $\sim 0$–$5.5$. The modified T-channel stats ship **inside each `fnn_*.pt`**; the §3.6 combination inverts the same transform to average times in physical units |
 
 
 ## 7. Data Layout and Storage
@@ -423,24 +462,30 @@ All intermediate data is stored as PyTorch tensors under `RUN_LOCATION` (holylfs
 
 ```
 v6_run_00/                       ← Step 0: cached showers (shared across runs)
-    cashed_showers_500000.pt     (HDF5 via showerdata; ~20 GB at 500k)
+    cashed_showers_dual_{2N}.pt  PAIRED dual-species corpus (§3.6): rows 0..N-1
+                                 electron, N..2N-1 muon, same primaries; ragged
+                                 HDF5 via showerdata, streamed chunked writes.
+                                 At muon cap 25088 a 500k-pair corpus is ~250 GB.
+    cashed_showers_500000.pt     legacy single-model corpus (~20 GB at 500k)
 
 test_v6_run_01_recentered/       ← Step 1: training dataset (North, Up convention)
-    primary.pt          (3500000, 5)      primary features
-    xy.pt               (3500000, 100, 2) detector layouts (recentered)
-    E.pt                (3500000, 100)    log1p(energy per detector)
-    T.pt                (3500000, 100)    RAW time per detector (seconds)
-    strategy_ids.pt     (3500000,)        layout strategy id [0–6], strategy-major
-    norm_stats.pt       dict of z-score tensors (raw-T)
+    primary.pt          (2N·7, 5)      primary features (pdg = species id)
+    xy.pt               (2N·7, 100, 2) detector layouts (recentered)
+    E.pt                (2N·7, 100)    log1p(energy per detector)
+    T.pt                (2N·7, 100)    RAW time per detector (seconds)
+    strategy_ids.pt     (2N·7,)        layout strategy id [0–6], strategy-major
+    norm_stats.pt       dict of z-score tensors (raw-T; corpus-wide — Step 2
+                        recomputes per-species stats on its subsets)
 
 test_v6_run_01_northeast/        ← Step 1 (North, East) variant — same tensors,
                                    xy = (North, East); 01_build_dataset_northeast.py (§3.5)
+                                   STALE: still built from the pre-dual corpus
 
-test_v6_run_02_recentered/       ← Step 2: FNN checkpoint
-    fnn.pt              state_dict + norm_stats (log-T) + config(hidden,dropout)
-    fnn_train_log.json  Adam per-epoch + L-BFGS iter log
-    fnn_train_curves.png
-    fnn_target_vs_pred.png        density heatmap, auto-rendered at end of Step 2
+test_v6_run_02_recentered/       ← Step 2: per-species DeepSets checkpoints
+    fnn_electron.pt     state_dict + per-species norm_stats (log-T) + config
+    fnn_muon.pt         (model_type=deepsets, species tag)
+    fnn_{species}_train_log.json / _train_curves.png / _target_vs_pred.png
+    fnn.pt              legacy single-model checkpoint (untouched by the dual trainer)
 
 test_v6_run_03_recentered/       ← Step 3: Recon checkpoint
     recon.pt            state_dict + input/target mean+std + config
@@ -527,6 +572,8 @@ All path-c edits were reverted; the working tree matches the recipe documented i
 ### 10.3 Standing recommendation
 
 Track **conditional-on-fired E/T R² and fire precision/recall**, not total val-MSE — the latter is flattering because ~68% of detector-samples are near-zero. The next high-leverage change is **path (a): re-architect the FNN as a pointwise DeepSets** `φ(q, xᵢ, yᵢ) → (Eᵢ, Tᵢ)` with weights shared across detectors. This is permutation-equivariant by construction (matching the provably per-detector-local kernel of §3.4), removes the augmentation, uses ~34× fewer parameters, and turns each detector into its own training example (~100× more effective samples). It preserves the `forward(primary, xy) → (B,100,2)` contract, so Steps 3–4 are unaffected. The recon network (§4.4) shares the same flat-MLP mismatch (its target is permutation-*invariant*) and is the natural follow-on.
+
+> **Status (2026-06-11): path (a) is implemented.** `modules_v6/deepsets_surrogate.py` + `02_train_fnn_deepsets.py` are the production Step-2 trainer, now in the dual-species form (two per-species DeepSets, §3.6/§4.3). The recon follow-on (set-equivariant recon) remains open.
 
 ### 10.4 The cross-method floor is largely aleatoric (not an architecture limit)
 
