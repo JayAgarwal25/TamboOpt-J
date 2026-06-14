@@ -50,7 +50,9 @@ from scipy.optimize import linear_sum_assignment, differential_evolution
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.reconstruction import Reconstruction
-from modules_v6.tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
+from modules_v6.tr_geometry_ne import (
+    _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
+)
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
@@ -182,11 +184,11 @@ def _perturbed_de_runs(scheme: str, K: int, generator: torch.Generator,
     starts — there is no Adam pre-optimization stage. Returns
     (starts, start_logs, perturbed_inits, _unused), each length K, so the
     downstream signature matches the L-BFGS ensemble."""
-    N_np, U_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
+    N_np, E_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
     N_t = torch.as_tensor(N_np, dtype=torch.float32)
-    U_t = torch.as_tensor(U_np, dtype=torch.float32)
-    N_t, U_t = project_to_mountain_ne(mountain, N_t, U_t)
-    chains_init = _build_chain_inits(N_t, U_t, K, generator)                  # (K, D)
+    E_t = torch.as_tensor(E_np, dtype=torch.float32)
+    N_t, E_t = project_to_mountain_ne(mountain, N_t, E_t)
+    chains_init = _build_chain_inits(N_t, E_t, K, generator)                  # (K, D)
 
     starts, start_logs, perturbed_inits, _unused = [], [], [], []
     for k in range(K):
@@ -558,9 +560,16 @@ def _run_one_scheme(scheme: str,
     idx_fixed = torch.randint(0, n_total_primaries, (DE_BATCH_PRIMARIES,), generator=g)
     primary_fixed = primary_all[idx_fixed].to(DEVICE)
 
-    # DE bounds: 100 North in [n_min, n_max], then 100 East in [east_lo, east_hi].
-    bounds = ([(mountain.n_min, mountain.n_max)] * N_DETECTORS +
-              [(mountain.east_lo, mountain.east_hi)] * N_DETECTORS)
+    # DE bounds: 100 North in [n_min, n_max], then 100 East in [east_lo, east_hi],
+    # each widened by the NE projection tolerance: project_to_mountain_ne keeps
+    # any point within max_gap of a centroid, so valid starts can sit up to
+    # ~max_gap OUTSIDE the tight centroid bbox — and scipy requires x0 inside
+    # the bounds. Candidates are mountain-projected before scoring, so the
+    # widened box never lets the optimum leave the mountain.
+    margin = _ne_max_gap(mountain)
+    print(f"[bounds] bbox widened by max_gap={margin:.1f} m")
+    bounds = ([(mountain.n_min - margin, mountain.n_max + margin)] * N_DETECTORS +
+              [(mountain.east_lo - margin, mountain.east_hi + margin)] * N_DETECTORS)
 
     # Stage 2: differential evolution from every start.
     refined, de_logs, refined_U, all_de_hists = [], [], [], []

@@ -304,7 +304,7 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
     for k in range(K):
         xk = chains_init[k, :N_DETECTORS].cpu()
         yk = chains_init[k, N_DETECTORS:].cpu()
-        xk, yk = mountain.project_to_mountain(xk, yk)
+        xk, yk = project_to_mountain_ne(mountain, xk, yk)
         perturbed_inits.append((xk.float().clone(), yk.float().clone()))
         print(f"\n[perturb→adam] scheme={scheme}  chain {k+1}/{K}")
         bx, by, _, _, log, ghist = adam_warm_start(
@@ -343,12 +343,17 @@ def lbfgs_refine(init_x: torch.Tensor,
     iter_log = []
     grad_hist = []
 
+    class _NonFiniteLoss(Exception):
+        pass
+
     def closure():
         optimizer.zero_grad()
         x_det = xy[:N_DETECTORS]
         y_det = xy[N_DETECTORS:]
         U, r, parts = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon)
         loss = -U
+        if not torch.isfinite(loss):
+            raise _NonFiniteLoss
         loss.backward()
         grad_hist.append(xy.grad.detach().reshape(-1).cpu())   # (2*n_det,)
         iter_log.append(dict(
@@ -360,7 +365,18 @@ def lbfgs_refine(init_x: torch.Tensor,
         ))
         return loss
 
-    optimizer.step(closure)
+    try:
+        optimizer.step(closure)
+    except _NonFiniteLoss:
+        print(f"  [lbfgs] non-finite loss after {len(iter_log)} closure calls — aborting step")
+
+    # A diverged line search can leave NaN in xy; project_to_mountain passes
+    # NaN through unsnapped, which would poison the ensemble alignment.
+    # Fall back to the (already mountain-projected) Adam-best init.
+    with torch.no_grad():
+        if not torch.isfinite(xy).all():
+            print("  [lbfgs] non-finite iterate — falling back to the Adam-best init")
+            xy.data = torch.cat([init_x.to(DEVICE), init_y.to(DEVICE)], dim=0)
 
     # Project the optimum to the mountain and re-score on the same fixed batch.
     with torch.no_grad():
