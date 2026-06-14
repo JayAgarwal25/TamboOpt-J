@@ -116,7 +116,11 @@ torch.set_float32_matmul_precision("high")
 
 import showerdata
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
-from modules_v6.constants import SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS
+from modules_v6.constants import (
+    LOG_E_MIN, LOG_E_MAX, 
+    ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
+    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS
+)
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
 from modules.generate_showers import GenerateShowers  # noqa: F401  (path injection)
@@ -150,6 +154,19 @@ GEN_BATCH     = 30                  # AllShowers gen batch (memory-bound; 30 mat
 CHUNK_SIZE    = 2000               # showers per streamed write-batch (bounds peak RAM)
 STAGE_ROOT    = os.path.join(RUN_LOCATION, "allshowers_staged")
 DEVICE        = torch.device("cuda")
+
+# Anti-clip resampling (mainly muons). PointCountFM predicts a per-shower total
+# point count; if it exceeds the species cap (`max_points`, 25088 for muons) the
+# generator TRUNCATES the tail — losing points turns a rod into a diffuse blob.
+# Because the clip is decided from num_points BEFORE the expensive AllShowers
+# generate, we cheaply re-roll the (stochastic) PointCountFM for over-cap showers.
+# Each re-roll replaces the previous draw, so a shower that comes back under the
+# threshold keeps that draw and stops; one that stays over cap for the whole
+# budget simply keeps its LAST re-roll and is truncated as before. MAX_CLIP_FRAC
+# = tolerable fraction of predicted points lost to the cap (0.0 = re-roll on any
+# clipping). Set MAX_PCFM_RETRIES = 0 to disable.
+MAX_CLIP_FRAC    = 0.10
+MAX_PCFM_RETRIES = 10
 
 # State-dict wrapper keys to probe when checkpoints/best_epoch_*.pt is not already
 # a flat tensor dict (the Generator wants the raw flow state_dict).
@@ -236,7 +253,57 @@ def _pad_points(samples, target_P):
     return out
 
 
-def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P):
+def resample_overclip(pcfm, energies, directions, labels, num_points, cap,
+                      max_clip_frac=MAX_CLIP_FRAC, max_retries=MAX_PCFM_RETRIES):
+    """Re-roll PointCountFM for showers whose predicted total point count would be
+    clipped by more than `max_clip_frac` at `cap` — truncation turns a rod into a
+    diffuse blob. PointCountFM samples noise per call, so re-running it for the
+    over-cap subset yields fresh counts; each re-roll REPLACES the previous draw
+    (several retries → keep the last). Only the failed subset is re-rolled, and
+    only the cheap CPU stage is touched (the GPU generate runs once afterward).
+    Mutates and returns `num_points`. No-op when max_retries <= 0.
+
+    Shared by the generation pipeline (`_gen_chunk`) and the angle-grid plots so
+    both apply the identical anti-clip policy."""
+    if max_retries <= 0:
+        return num_points
+
+    cap = int(cap)
+    n = int(num_points.shape[0])
+
+    def _clip_frac(npts):
+        totals = npts.sum(1).to(torch.float32)             # (m,) predicted total
+        return (totals - cap).clamp(min=0.0) / totals.clamp(min=1.0)
+
+    clip_frac = _clip_frac(num_points)
+    for attempt in range(1, max_retries + 1):
+        bad = clip_frac > max_clip_frac
+        nbad = int(bad.sum())
+        if nbad == 0:
+            break
+        idx = torch.nonzero(bad, as_tuple=False).flatten()
+        print(f"  [anti-clip {attempt}/{max_retries}] re-rolling PointCountFM "
+              f"for {nbad}/{n} shower(s) clipping >{max_clip_frac:.0%} (cap {cap})")
+        new_np = run_point_count_fm(
+            model_path=pcfm, energies=energies[idx], directions=directions[idx],
+            labels=labels[idx],
+        )
+        num_points[idx] = new_np                           # keep the latest draw
+        clip_frac = _clip_frac(num_points)
+
+    # Report only showers still ABOVE the re-roll threshold after the budget
+    # (these were actually re-rolled and kept their last draw). Showers over the
+    # cap but within max_clip_frac were intentionally never re-rolled — that
+    # truncation is tolerated, so don't flag it as a retry failure.
+    still = int((clip_frac > max_clip_frac).sum())
+    if still:
+        print(f"  [anti-clip] {still}/{n} shower(s) still clip >{max_clip_frac:.0%} "
+              f"(cap {cap}) after {max_retries} retries — truncated (kept last draw)")
+    return num_points
+
+
+def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P,
+               max_clip_frac=MAX_CLIP_FRAC, max_retries=MAX_PCFM_RETRIES):
     """Generate one chunk of showers for a species from PRE-SAMPLED primaries
     → a showerdata.Showers, padded to target_P. Bounded memory (only this
     chunk is held). Primaries come in as slices of the corpus-wide arrays so
@@ -252,7 +319,15 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P):
     num_points = run_point_count_fm(
         model_path=pcfm, energies=energies, directions=directions, labels=labels,
     )
-    
+
+    # Anti-clip re-roll for over-cap showers (mainly muons): re-roll only the
+    # failed subset on the cheap CPU stage so the single GPU generate below sees
+    # counts that mostly fit the cap (truncation → blob). See resample_overclip.
+    num_points = resample_overclip(
+        pcfm, energies, directions, labels, num_points,
+        cap=int(cfg["max_points"]), max_clip_frac=max_clip_frac, max_retries=max_retries,
+    )
+
     # Stage 2 — AllShowers on GPU (max_points already set on gen).
     samples = generate(
         generator=gen, energies=energies, num_points=num_points,
@@ -315,7 +390,12 @@ def main():
 
     # Sample the primaries ONCE — both species blocks reuse them, so row i and
     # row n_pairs+i are the two components of one physical event.
-    prim = sample_primary_particles(n=n_pairs, seed=args.seed)
+    prim = sample_primary_particles(
+        e_min=10**LOG_E_MIN, e_max=10**LOG_E_MAX, 
+        zenith_min=ZENITH_MIN, zenith_max=ZENITH_MAX,
+        azimuth_min=AZIMUTH_MIN, azimuth_max=AZIMUTH_MAX,
+        n=n_pairs, seed=args.seed
+        )
     energies_all, directions_all = prim["energies"], prim["directions"]
 
     print("=" * 72)
