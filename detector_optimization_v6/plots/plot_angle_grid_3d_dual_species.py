@@ -53,16 +53,18 @@ _GEN_DUAL_PATH = os.path.join(_V6, "00_generate_data_dual_species.py")
 _spec = importlib.util.spec_from_file_location("gen_dual_species", _GEN_DUAL_PATH)
 gen_dual = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gen_dual)
-SPECIES       = gen_dual.SPECIES
-stage_run_dir = gen_dual.stage_run_dir
-Generator     = gen_dual.Generator
-NUM_TIMESTEPS = gen_dual.NUM_TIMESTEPS
-SOLVER        = gen_dual.SOLVER
+SPECIES           = gen_dual.SPECIES
+stage_run_dir     = gen_dual.stage_run_dir
+Generator         = gen_dual.Generator
+NUM_TIMESTEPS     = gen_dual.NUM_TIMESTEPS
+SOLVER            = gen_dual.SOLVER
+resample_overclip = gen_dual.resample_overclip   # anti-clip re-roll (shared policy)
 
 # 00_generate_data.py uses GenerateShowers defaults for the sampling ranges:
-E_MIN, E_MAX = 1e5, 1e8           # GeV
-ZENITH_MIN, ZENITH_MAX = 60.0, 100.0
-AZIMUTH_MIN, AZIMUTH_MAX = 0.0, 360.0
+from modules_v6.constants import (
+LOG_E_MIN, LOG_E_MAX, ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX, 
+)
+E_MIN, E_MAX = 10**LOG_E_MIN, 10**LOG_E_MAX
 
 
 def main():
@@ -122,6 +124,11 @@ def main():
     # Stage 1 — PointCountFM on CPU (TorchScript device-baked → CUDA mismatches).
     num_points = run_point_count_fm(
         model_path=pcfm, energies=energies, directions=directions, labels=labels,
+    )
+    # Anti-clip re-roll over-cap cells (mainly muons at high E) so the plotted
+    # showers use the same truncation policy as the generated corpus.
+    num_points = resample_overclip(
+        pcfm, energies, directions, labels, num_points, cap=int(cfg["max_points"]),
     )
     # Stage 2 — AllShowers on the chosen device.
     samples = generate(

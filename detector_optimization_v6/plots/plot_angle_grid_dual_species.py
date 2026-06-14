@@ -63,9 +63,10 @@ NUM_TIMESTEPS = gen_dual.NUM_TIMESTEPS
 SOLVER        = gen_dual.SOLVER
 
 # 00_generate_data.py uses GenerateShowers defaults for the sampling ranges:
-E_MIN, E_MAX = 1e5, 1e8           # GeV
-ZENITH_MIN, ZENITH_MAX = 60.0, 100.0
-AZIMUTH_MIN, AZIMUTH_MAX = 0.0, 360.0
+from modules_v6.constants import (
+LOG_E_MIN, LOG_E_MAX, ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX, 
+)
+E_MIN, E_MAX = 10**LOG_E_MIN, 10**LOG_E_MAX
 
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (

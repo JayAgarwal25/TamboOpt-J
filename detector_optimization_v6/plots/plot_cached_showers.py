@@ -1,17 +1,23 @@
-"""Plot the first N showers from a cached shower checkpoint (no generation).
+"""Plot the first N electron and N muon showers from a cached shower checkpoint.
 
 Sibling of `plot_shower_realizations.py` — same overlay/profile figure, but the
 showers come from an existing showerdata cache (e.g. v6_run_00/cashed_showers_*.pt)
 instead of being generated. Light: just showerdata + matplotlib, no model, no GPU.
+
+Dual-species caches store electrons first, then muons. The boundary index can be
+passed via --muon-start; if omitted it defaults to the midpoint (second half = muons).
+For each species the leading N showers are plotted to a separate, species-suffixed file.
 
 Run:
 
     cd TambOpt/detector_optimization_v6
     python plots/plot_cached_showers.py --ckpt <path> --n 5
     python plots/plot_cached_showers.py --ckpt <path> --n 5 --mountain
+    python plots/plot_cached_showers.py --ckpt <path> --n 5 --muon-start 5000
 
-Note: showerdata.load reads the whole file — fine for normal caches, but don't
-point it at a 100s-of-GB corpus.
+Only the leading N showers of each species block are read from disk (via a
+showerdata.load(start, stop) row-range slice), so this is safe to point at the
+huge dual caches (1M showers × 25088 points) without OOM.
 """
 import argparse
 import os
@@ -33,7 +39,7 @@ from modules_v6.constants import (
 )
 from modules_v4.tr_geometry import load_tr_mountain
 
-_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_50.pt")
+_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_1000000.pt")
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
@@ -76,39 +82,68 @@ def _recenter_to_mountain(reals, mountain):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", type=str, default=_DEFAULT_CKPT, help="cached shower file")
-    ap.add_argument("--n", type=int, default=5, help="number of leading showers to plot")
+    ap.add_argument("--n", type=int, default=5, help="number of leading showers per species to plot")
     ap.add_argument("--bins", type=int, default=200, help="heatmap bins per axis")
+    ap.add_argument("--muon-start", type=int, default=None,
+                    help="dataset index where muon showers begin (electrons precede it). "
+                         "Defaults to the midpoint, i.e. the second half is treated as muons.")
     ap.add_argument("--mountain", action="store_true",
                     help="apply pipeline mountain normalization (recenter each shower's "
                          "energy-weighted centroid onto the mountain bbox centre) and "
                          "overlay the mountain footprint")
-    ap.add_argument("--out", type=str, default=os.path.join(_HERE, "cached_showers.png"))
+    ap.add_argument("--out", type=str, default=os.path.join(_HERE, "cached_showers.png"),
+                    help="output path; the species name is inserted before the extension")
     args = ap.parse_args()
 
+    # Only the file length is needed to locate the species blocks — never read
+    # the whole corpus (the dual caches are 1M showers × 25088 points and OOM
+    # the process). Each species' leading N showers are read with a row-range
+    # slice via showerdata.load(start, stop) below.
     print(f"[load] {args.ckpt}")
-    data = showerdata.load(args.ckpt)
-    points = np.asarray(data.points)                         # (N, P, 5): x,y,layer,e,t
-    pdg = np.asarray(data.pdg).reshape(-1)
-    n = min(args.n, len(points))
-    plabel = f"first {n} showers — {os.path.basename(args.ckpt)}"
-    print(f"[load] file has {len(points)} showers; plotting first {n}")
+    total = showerdata.get_file_length(args.ckpt)
 
-    # Split each shower into its real (non-padded) points.
-    reals = []
-    for k in range(n):
-        pts = points[k]
-        m = pts[:, 3] > 0                                    # energy>0 = real point
-        reals.append(pts[m])
-        print(f"  shower {k}: pdg={int(pdg[k])}  n_points={int(m.sum())}  E_tot={pts[m,3].sum():.3g}")
+    muon_start = args.muon_start if args.muon_start is not None else total // 2
+    muon_start = max(0, min(muon_start, total))
+    print(f"[load] file has {total} showers; "
+          f"electrons=[0:{muon_start}]  muons=[{muon_start}:{total}]")
 
     mountain = None
     if args.mountain:
         print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering to bbox centre")
         mountain = _load_mountain()
-        reals = _recenter_to_mountain(reals, mountain)
 
-    _plot(reals, pdg[:n], plabel, args.out, mountain=mountain, bins=args.bins)
-    print(f"[done] wrote {args.out}")
+    # (species name, [start, stop) row range of the leading N showers)
+    species = [
+        ("electron", 0, min(args.n, muon_start)),
+        ("muon", muon_start, min(muon_start + args.n, total)),
+    ]
+
+    base, ext = os.path.splitext(args.out)
+    for name, lo, hi in species:
+        if hi <= lo:
+            print(f"[{name}] no showers in this range — skipping")
+            continue
+
+        # Read ONLY this slice from disk (hi-lo ≤ args.n showers), not the corpus.
+        sub = showerdata.load(args.ckpt, start=lo, stop=hi)
+        points = np.asarray(sub.points)                      # (hi-lo, P, 5): x,y,layer,e,t
+        pdg = np.asarray(sub.pdg).reshape(-1)
+
+        reals = []
+        for j in range(len(points)):
+            pts = points[j]
+            m = pts[:, 3] > 0                                # energy>0 = real point
+            reals.append(pts[m])
+            print(f"  {name} shower {lo + j}: pdg={int(pdg[j])}  "
+                  f"n_points={int(m.sum())}  E_tot={pts[m, 3].sum():.3g}")
+
+        if mountain is not None:
+            reals = _recenter_to_mountain(reals, mountain)
+
+        plabel = f"first {len(points)} {name} showers — {os.path.basename(args.ckpt)}"
+        out = f"{base}_{name}{ext}"
+        _plot(reals, pdg, plabel, out, mountain=mountain, bins=args.bins)
+        print(f"[done] wrote {out}")
 
 
 def _plot(reals, pdg, plabel, out, mountain=None, bins=80):

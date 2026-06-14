@@ -19,6 +19,16 @@ Run from the v6 folder:
 
     cd TambOpt/detector_optimization_v6
     python plots/02_plot_nn_target_vs_pred.py
+    python plots/02_plot_nn_target_vs_pred.py --dual   # dual-species surrogate
+
+Dual mode (--dual): the FNN scatter is rendered PER SPECIES — each per-species
+DeepSets model (fnn_electron.pt / fnn_muon.pt) is compared against its own
+pdg-filtered corpus subset, since the corpus E/T ground truth is per-species.
+The recon scatter uses the combined DualSpeciesSurrogate on the full corpus,
+exactly as 03_train_recon.py does. Outputs:
+    FNN_FOLDER/fnn_electron_target_vs_pred.png
+    FNN_FOLDER/fnn_muon_target_vs_pred.png
+    RECON_FOLDER/recon_target_vs_pred.png
 """
 import os
 import sys
@@ -86,7 +96,7 @@ def _scatter(ax, x, y, title: str, vmin=None, vmax=None):
     empty bins blank so the y = x reference line stays readable. Pass
     `vmin` / `vmax` (in raw counts) to pin the colour scale across plots."""
     from matplotlib.colors import LogNorm, Normalize
-    lo = 0.0#float(min(x.min(), y.min()))
+    lo = 0.0
     hi = float(max(x.max(), y.max()))
     # norm = LogNorm(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else LogNorm()
     norm = Normalize(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else Normalize()
@@ -168,6 +178,27 @@ def load_recon() -> Reconstruction:
     return recon
 
 
+# --------------------------------------------------------------------------- #
+# Dual-species loading. Mirrors 02_train_fnn_deepsets.py (per-species FNN) and
+# 03_train_recon.py (combined dual surrogate for recon).
+# --------------------------------------------------------------------------- #
+SPECIES_TAGS = (("electron", 0.0), ("muon", 1.0))   # (tag, pdg feature value)
+
+
+def load_species_fnn(species: str):
+    """Load one per-species surrogate (fnn_electron.pt / fnn_muon.pt) from
+    FNN_FOLDER. Uses build_surrogate_from_ckpt so flat-MLP or DeepSets configs
+    both work, with the checkpoint's own per-species norm stats applied."""
+    from modules_v6.deepsets_surrogate import build_surrogate_from_ckpt
+    path = os.path.join(FNN_FOLDER, f"fnn_{species}.pt")
+    ckpt = torch.load(path, map_location=DEVICE, weights_only=False)
+    fnn = build_surrogate_from_ckpt(ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
+    cfg = ckpt.get("config", {})
+    print(f"[load] fnn_{species}.pt  model={cfg.get('model_type', 'fnn')}  "
+          f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}")
+    return fnn
+
+
 def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     """Pure rendering — no I/O for models or corpus. Caller supplies a loaded
     FNN in eval mode plus the in-memory tensors. T_true must already be
@@ -182,11 +213,11 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     # Pin the FNN heatmap colour scale to [10, 10000] counts so both panels
     # use the same scale and small ckpt changes are visually comparable.
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
-             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",
-             vmin=10, vmax=5000)
+             f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",)
+            #  vmin=10, vmax=5000) # TODO
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
-             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",
-             vmin=10, vmax=3000)
+             f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",)
+            #  vmin=10, vmax=3000) # TODO
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
@@ -223,7 +254,7 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
     vmax_s = (350, 350, 250, 600)
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
     for i, name in enumerate(labels):
-        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i])
+        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", )# vmin=vmin_s[i], vmax=vmax_s[i]) # TODO
     fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
@@ -305,12 +336,58 @@ def plot_recon_only(*, fnn=None, recon=None,
     _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path)
 
 
+def plot_fnn_dual(output_dir=None):
+    """Per-species FNN scatter for the dual-species surrogate. Each species'
+    DeepSets model is evaluated against its OWN pdg-filtered corpus subset
+    (the corpus E/T are per-species), reproducing 02_train_fnn_deepsets.py's
+    split. Writes FNN_FOLDER/fnn_<species>_target_vs_pred.png per species."""
+    primary, xy, E_true, T_true, strat_ids = _load_corpus()
+    if output_dir is None:
+        output_dir = FNN_FOLDER
+    os.makedirs(output_dir, exist_ok=True)
+
+    for tag, pdg_val in SPECIES_TAGS:
+        idx = torch.nonzero(primary[:, PRIMARY_DIM - 1] == pdg_val).squeeze(-1)
+        if idx.numel() == 0:
+            print(f"[skip] no {tag} rows (pdg feature {pdg_val}) in corpus")
+            continue
+        fnn = load_species_fnn(tag)
+        # val_idx is positional within the filtered subset; pass the subset
+        # tensors so _render_fnn_scatter indexes them consistently.
+        val_idx = shower_level_val_idx(strat_ids[idx], VAL_FRAC, FNN_VAL_SEED)
+        out = os.path.join(output_dir, f"fnn_{tag}_target_vs_pred.png")
+        _render_fnn_scatter(fnn, primary[idx], xy[idx],
+                            E_true[idx], T_true[idx], val_idx, out)
+
+
+def plot_recon_dual(output_path=None):
+    """Recon scatter for the dual-species surrogate. The combined
+    DualSpeciesSurrogate (fnn_electron.pt + fnn_muon.pt) feeds the recon on the
+    FULL corpus — identical to 03_train_recon.py. recon.pt itself is a single
+    (non-per-species) net, so load_recon() is reused unchanged."""
+    from modules_v6.dual_surrogate import load_dual_surrogate
+    dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
+    plot_recon_only(fnn=dual, output_path=output_path)
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dual", action="store_true",
+                    help="dual-species surrogate: per-species FNN scatters + "
+                         "combined-surrogate recon scatter")
+    args = ap.parse_args()
+
     print("=" * 72)
-    print("v6/plots/02_plot_nn_target_vs_pred.py")
+    print("v6/plots/02_plot_nn_target_vs_pred.py" + ("  [dual]" if args.dual else ""))
     print("=" * 72)
-    plot_fnn_only()
-    plot_recon_only()
+    if args.dual:
+        plot_fnn_dual()
+        plot_recon_dual()
+    else:
+        plot_fnn_only()
+        plot_recon_only()
 
 
 if __name__ == "__main__":
