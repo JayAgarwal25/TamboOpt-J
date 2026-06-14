@@ -1,0 +1,1576 @@
+>>> Skipping 00_generate_data_dual_species.py (already done)
+>>> Running 01_build_dataset_northeast.py 
+========================================================================
+v6/01_build_dataset_northeast.py
+========================================================================
+shower cache : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/v6_run_00/cashed_showers_dual_1000000.pt
+geometry     : /n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/colca_valley.h5
+output dir   : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_01_northeast
+batch size   : 20
+max showers  : 100000
+device       : cuda
+recenter     : True
+[load] mountain + surface in 1.6s
+  N=[-2497, 2474]  Up=[2442, 3886]  East=[-2019, 1182]
+[load] kept 50000/500000 per species -> 100000 rows of 1000000 (DATASET_FRACTION applied via max_showers)
+[recenter] shifted clouds to mountain center (-11.5, 3164.3)
+[build] strategy 1/7  grid_jit20          5000 batches of 20
+[build] strategy 2/7  grid_jit200         5000 batches of 20
+[build] strategy 3/7  center_gauss200     5000 batches of 20
+[build] strategy 4/7  center_gauss400     5000 batches of 20
+[build] strategy 5/7  rings_R300          5000 batches of 20
+[build] strategy 6/7  rings_R800          5000 batches of 20
+[build] strategy 7/7  rings_R1800         5000 batches of 20
+[build] training pairs in 686.3s
+  primary : (700000, 5)  dtype=torch.float32
+  xy      : (700000, 100, 2)       dtype=torch.float32   (North, East)
+  E       : (700000, 100)        dtype=torch.float32
+  T       : (700000, 100)        dtype=torch.float32
+  strat   : (700000,)    unique=[0, 1, 2, 3, 4, 5, 6]
+[log1p] E range [nan, nan]  T range [nan, nan]
+  samples with any nonzero E : 697600/700000
+[norm] in_mean[:5]  = [-0.018516598269343376, 0.001710529439151287, 0.16805154085159302, 0.5006755590438843, 0.5]
+[norm] in_std[:5]   = [0.6769450902938843, 0.6888908743858337, 0.19644080102443695, 0.2883204221725464, 0.5000003576278687]
+[norm] out_mean (E) = [nan, nan, nan, nan, nan] ...
+[norm] out_std  (E) = [nan, nan, nan, nan, nan] ...
+[save] tensors in 1.2s  ->  /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_01_northeast
+>>> Running 02_train_fnn_deepsets.py 
+========================================================================
+v6/02_train_fnn_deepsets.py — two parallel per-species DeepSets surrogates
+========================================================================
+data input dir  : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_01_recentered
+output dir      : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered
+device          : cuda
+species         : ['electron', 'muon']
+batch           : 256   epochs: 100   lbfgs iters: 1000
+lr              : 1e-05 -> 0.0003 -> 1e-06 OneCycleLR (pct_start=0.1)
+deepsets        : hidden=256 context=64 enc=3 dec=3 dropout=0.0
+augmentation    : NONE (equivariant by construction)
+[load] corpus in 0.2s  primary=(700, 5)
+========================================================================
+[electron] DeepSets surrogate on 350 rows
+========================================================================
+[log1p-T] applied log1p(T*1e+08); T mean=0.1922 std=0.5563
+[split] train pairs=315  val pairs=35
+[model] DeepSets params=298,562  (flat MLP was ~6.7M)
+[electron epoch   1/100] train=0.9979 (E=0.9881 T=1.0078)  val=1.0496 (E=1.1317 T=0.9675)  lr=1.8e-05  7.0s
+[electron epoch   2/100] train=0.9974 (E=0.9875 T=1.0073)  val=1.0488 (E=1.1307 T=0.9669)  lr=4.1e-05  0.0s
+[electron epoch   3/100] train=0.9963 (E=0.9862 T=1.0064)  val=1.0472 (E=1.1286 T=0.9657)  lr=7.6e-05  0.0s
+[electron epoch   4/100] train=0.9943 (E=0.9838 T=1.0048)  val=1.0446 (E=1.1254 T=0.9638)  lr=1.2e-04  0.0s
+[electron epoch   5/100] train=0.9910 (E=0.9800 T=1.0021)  val=1.0408 (E=1.1206 T=0.9610)  lr=1.7e-04  0.0s
+[electron epoch   6/100] train=0.9863 (E=0.9743 T=0.9983)  val=1.0350 (E=1.1133 T=0.9567)  lr=2.1e-04  0.0s
+[electron epoch   7/100] train=0.9792 (E=0.9660 T=0.9924)  val=1.0257 (E=1.1016 T=0.9499)  lr=2.5e-04  0.0s
+[electron epoch   8/100] train=0.9684 (E=0.9532 T=0.9836)  val=1.0104 (E=1.0819 T=0.9388)  lr=2.8e-04  0.0s
+[electron epoch   9/100] train=0.9510 (E=0.9328 T=0.9692)  val=0.9857 (E=1.0509 T=0.9205)  lr=3.0e-04  0.0s
+[electron epoch  10/100] train=0.9254 (E=0.9029 T=0.9480)  val=0.9510 (E=1.0074 T=0.8946)  lr=3.0e-04  0.0s
+[electron epoch  11/100] train=0.8907 (E=0.8619 T=0.9196)  val=0.9108 (E=0.9561 T=0.8655)  lr=3.0e-04  0.0s
+[electron epoch  12/100] train=0.8501 (E=0.8144 T=0.8858)  val=0.8741 (E=0.9037 T=0.8445)  lr=3.0e-04  0.0s
+[electron epoch  13/100] train=0.8172 (E=0.7735 T=0.8610)  val=0.8523 (E=0.8562 T=0.8483)  lr=3.0e-04  0.0s
+[electron epoch  14/100] train=0.8037 (E=0.7489 T=0.8586)  val=0.8346 (E=0.8274 T=0.8417)  lr=3.0e-04  0.0s
+[electron epoch  15/100] train=0.7865 (E=0.7281 T=0.8449)  val=0.8180 (E=0.8134 T=0.8225)  lr=3.0e-04  0.0s
+[electron epoch  16/100] train=0.7672 (E=0.7062 T=0.8281)  val=0.7986 (E=0.7871 T=0.8102)  lr=3.0e-04  0.0s
+[electron epoch  17/100] train=0.7452 (E=0.6804 T=0.8101)  val=0.7935 (E=0.7779 T=0.8092)  lr=2.9e-04  0.0s
+[electron epoch  18/100] train=0.7319 (E=0.6632 T=0.8006)  val=0.7925 (E=0.7795 T=0.8055)  lr=2.9e-04  0.0s
+[electron epoch  19/100] train=0.7178 (E=0.6453 T=0.7903)  val=0.7832 (E=0.7626 T=0.8038)  lr=2.9e-04  0.0s
+[electron epoch  20/100] train=0.7014 (E=0.6251 T=0.7778)  val=0.7734 (E=0.7464 T=0.8004)  lr=2.9e-04  0.0s
+[electron epoch  21/100] train=0.6886 (E=0.6098 T=0.7675)  val=0.7646 (E=0.7392 T=0.7899)  lr=2.9e-04  0.0s
+[electron epoch  22/100] train=0.6683 (E=0.5879 T=0.7488)  val=0.7555 (E=0.7256 T=0.7854)  lr=2.9e-04  0.0s
+[electron epoch  23/100] train=0.6547 (E=0.5715 T=0.7379)  val=0.7556 (E=0.7294 T=0.7819)  lr=2.8e-04  0.0s
+[electron epoch  24/100] train=0.6395 (E=0.5559 T=0.7231)  val=0.7524 (E=0.7267 T=0.7781)  lr=2.8e-04  0.0s
+[electron epoch  25/100] train=0.6275 (E=0.5415 T=0.7135)  val=0.7187 (E=0.6756 T=0.7617)  lr=2.8e-04  0.0s
+[electron epoch  26/100] train=0.6109 (E=0.5210 T=0.7008)  val=0.7122 (E=0.6651 T=0.7592)  lr=2.8e-04  0.0s
+[electron epoch  27/100] train=0.5921 (E=0.5005 T=0.6837)  val=0.7201 (E=0.6744 T=0.7659)  lr=2.7e-04  0.0s
+[electron epoch  28/100] train=0.5734 (E=0.4832 T=0.6636)  val=0.7146 (E=0.6526 T=0.7766)  lr=2.7e-04  0.0s
+[electron epoch  29/100] train=0.5658 (E=0.4733 T=0.6582)  val=0.7110 (E=0.6621 T=0.7598)  lr=2.7e-04  0.0s
+[electron epoch  30/100] train=0.5412 (E=0.4541 T=0.6283)  val=0.6847 (E=0.6315 T=0.7378)  lr=2.6e-04  0.0s
+[electron epoch  31/100] train=0.5219 (E=0.4337 T=0.6102)  val=0.6624 (E=0.5951 T=0.7296)  lr=2.6e-04  0.0s
+[electron epoch  32/100] train=0.5049 (E=0.4170 T=0.5927)  val=0.6780 (E=0.6248 T=0.7312)  lr=2.6e-04  0.0s
+[electron epoch  33/100] train=0.4973 (E=0.4138 T=0.5809)  val=0.6449 (E=0.5708 T=0.7191)  lr=2.5e-04  0.0s
+[electron epoch  34/100] train=0.4695 (E=0.3863 T=0.5527)  val=0.6330 (E=0.5517 T=0.7142)  lr=2.5e-04  0.0s
+[electron epoch  35/100] train=0.4570 (E=0.3752 T=0.5387)  val=0.6367 (E=0.5795 T=0.6940)  lr=2.4e-04  0.0s
+[electron epoch  36/100] train=0.4437 (E=0.3681 T=0.5194)  val=0.6105 (E=0.5309 T=0.6902)  lr=2.4e-04  0.0s
+[electron epoch  37/100] train=0.4236 (E=0.3468 T=0.5003)  val=0.6010 (E=0.5290 T=0.6730)  lr=2.4e-04  0.0s
+[electron epoch  38/100] train=0.4081 (E=0.3370 T=0.4792)  val=0.5920 (E=0.5219 T=0.6621)  lr=2.3e-04  0.0s
+[electron epoch  39/100] train=0.3956 (E=0.3256 T=0.4655)  val=0.5815 (E=0.4956 T=0.6673)  lr=2.3e-04  0.0s
+[electron epoch  40/100] train=0.3837 (E=0.3146 T=0.4527)  val=0.5620 (E=0.4869 T=0.6371)  lr=2.2e-04  0.0s
+[electron epoch  41/100] train=0.3694 (E=0.3047 T=0.4342)  val=0.5418 (E=0.4564 T=0.6273)  lr=2.2e-04  0.0s
+[electron epoch  42/100] train=0.3610 (E=0.2964 T=0.4255)  val=0.5315 (E=0.4583 T=0.6047)  lr=2.1e-04  0.0s
+[electron epoch  43/100] train=0.3504 (E=0.2913 T=0.4096)  val=0.5370 (E=0.4644 T=0.6096)  lr=2.1e-04  0.0s
+[electron epoch  44/100] train=0.3424 (E=0.2861 T=0.3987)  val=0.5419 (E=0.4536 T=0.6302)  lr=2.0e-04  0.0s
+[electron epoch  45/100] train=0.3336 (E=0.2780 T=0.3892)  val=0.5265 (E=0.4508 T=0.6021)  lr=2.0e-04  0.0s
+[electron epoch  46/100] train=0.3254 (E=0.2728 T=0.3779)  val=0.5067 (E=0.4293 T=0.5841)  lr=1.9e-04  0.0s
+[electron epoch  47/100] train=0.3165 (E=0.2656 T=0.3674)  val=0.4931 (E=0.4110 T=0.5751)  lr=1.9e-04  0.0s
+[electron epoch  48/100] train=0.3109 (E=0.2617 T=0.3600)  val=0.4888 (E=0.4128 T=0.5647)  lr=1.8e-04  0.0s
+[electron epoch  49/100] train=0.3049 (E=0.2582 T=0.3517)  val=0.4958 (E=0.4068 T=0.5847)  lr=1.8e-04  0.0s
+[electron epoch  50/100] train=0.2993 (E=0.2527 T=0.3459)  val=0.4889 (E=0.4047 T=0.5731)  lr=1.7e-04  0.0s
+[electron epoch  51/100] train=0.2923 (E=0.2488 T=0.3358)  val=0.4766 (E=0.4014 T=0.5517)  lr=1.7e-04  0.0s
+[electron epoch  52/100] train=0.2877 (E=0.2468 T=0.3286)  val=0.4706 (E=0.3880 T=0.5533)  lr=1.6e-04  0.0s
+[electron epoch  53/100] train=0.2828 (E=0.2430 T=0.3226)  val=0.4658 (E=0.3894 T=0.5423)  lr=1.6e-04  0.0s
+[electron epoch  54/100] train=0.2784 (E=0.2417 T=0.3151)  val=0.4641 (E=0.3867 T=0.5416)  lr=1.5e-04  0.0s
+[electron epoch  55/100] train=0.2733 (E=0.2372 T=0.3093)  val=0.4644 (E=0.3820 T=0.5467)  lr=1.5e-04  0.0s
+[electron epoch  56/100] train=0.2702 (E=0.2358 T=0.3046)  val=0.4627 (E=0.3897 T=0.5357)  lr=1.4e-04  0.0s
+[electron epoch  57/100] train=0.2668 (E=0.2337 T=0.2999)  val=0.4639 (E=0.3865 T=0.5413)  lr=1.4e-04  0.0s
+[electron epoch  58/100] train=0.2621 (E=0.2303 T=0.2939)  val=0.4654 (E=0.3808 T=0.5500)  lr=1.3e-04  0.0s
+[electron epoch  59/100] train=0.2602 (E=0.2281 T=0.2922)  val=0.4550 (E=0.3816 T=0.5284)  lr=1.3e-04  0.0s
+[electron epoch  60/100] train=0.2559 (E=0.2263 T=0.2855)  val=0.4501 (E=0.3797 T=0.5204)  lr=1.2e-04  0.0s
+[electron epoch  61/100] train=0.2536 (E=0.2255 T=0.2818)  val=0.4491 (E=0.3711 T=0.5271)  lr=1.2e-04  0.0s
+[electron epoch  62/100] train=0.2518 (E=0.2230 T=0.2805)  val=0.4469 (E=0.3744 T=0.5195)  lr=1.1e-04  0.0s
+[electron epoch  63/100] train=0.2483 (E=0.2223 T=0.2744)  val=0.4463 (E=0.3782 T=0.5144)  lr=1.1e-04  0.0s
+[electron epoch  64/100] train=0.2458 (E=0.2212 T=0.2703)  val=0.4454 (E=0.3749 T=0.5159)  lr=1.0e-04  0.0s
+[electron epoch  65/100] train=0.2431 (E=0.2187 T=0.2674)  val=0.4446 (E=0.3711 T=0.5182)  lr=9.7e-05  0.0s
+[electron epoch  66/100] train=0.2417 (E=0.2180 T=0.2655)  val=0.4411 (E=0.3676 T=0.5147)  lr=9.2e-05  0.0s
+[electron epoch  67/100] train=0.2395 (E=0.2162 T=0.2629)  val=0.4371 (E=0.3683 T=0.5060)  lr=8.7e-05  0.0s
+[electron epoch  68/100] train=0.2381 (E=0.2154 T=0.2609)  val=0.4375 (E=0.3684 T=0.5065)  lr=8.3e-05  0.0s
+[electron epoch  69/100] train=0.2365 (E=0.2143 T=0.2586)  val=0.4390 (E=0.3651 T=0.5130)  lr=7.8e-05  0.0s
+[electron epoch  70/100] train=0.2346 (E=0.2125 T=0.2568)  val=0.4380 (E=0.3635 T=0.5125)  lr=7.4e-05  0.0s
+[electron epoch  71/100] train=0.2337 (E=0.2115 T=0.2558)  val=0.4352 (E=0.3657 T=0.5047)  lr=6.9e-05  0.0s
+[electron epoch  72/100] train=0.2321 (E=0.2112 T=0.2530)  val=0.4344 (E=0.3672 T=0.5015)  lr=6.5e-05  0.0s
+[electron epoch  73/100] train=0.2309 (E=0.2108 T=0.2511)  val=0.4351 (E=0.3636 T=0.5067)  lr=6.1e-05  0.0s
+[electron epoch  74/100] train=0.2296 (E=0.2092 T=0.2500)  val=0.4382 (E=0.3608 T=0.5155)  lr=5.6e-05  0.0s
+[electron epoch  75/100] train=0.2296 (E=0.2085 T=0.2507)  val=0.4394 (E=0.3608 T=0.5180)  lr=5.2e-05  0.0s
+[electron epoch  76/100] train=0.2285 (E=0.2076 T=0.2494)  val=0.4371 (E=0.3637 T=0.5105)  lr=4.9e-05  0.0s
+[electron epoch  77/100] train=0.2271 (E=0.2075 T=0.2466)  val=0.4355 (E=0.3678 T=0.5032)  lr=4.5e-05  0.0s
+[electron epoch  78/100] train=0.2271 (E=0.2085 T=0.2457)  val=0.4342 (E=0.3676 T=0.5009)  lr=4.1e-05  0.0s
+[electron epoch  79/100] train=0.2266 (E=0.2082 T=0.2449)  val=0.4330 (E=0.3647 T=0.5013)  lr=3.8e-05  0.0s
+[electron epoch  80/100] train=0.2251 (E=0.2066 T=0.2436)  val=0.4333 (E=0.3613 T=0.5054)  lr=3.4e-05  0.0s
+[electron epoch  81/100] train=0.2242 (E=0.2053 T=0.2430)  val=0.4346 (E=0.3597 T=0.5096)  lr=3.1e-05  0.0s
+[electron epoch  82/100] train=0.2242 (E=0.2047 T=0.2436)  val=0.4344 (E=0.3596 T=0.5092)  lr=2.8e-05  0.0s
+[electron epoch  83/100] train=0.2236 (E=0.2043 T=0.2429)  val=0.4333 (E=0.3606 T=0.5059)  lr=2.5e-05  0.0s
+[electron epoch  84/100] train=0.2227 (E=0.2042 T=0.2413)  val=0.4328 (E=0.3625 T=0.5030)  lr=2.2e-05  0.0s
+[electron epoch  85/100] train=0.2222 (E=0.2041 T=0.2402)  val=0.4325 (E=0.3641 T=0.5009)  lr=2.0e-05  0.0s
+[electron epoch  86/100] train=0.2219 (E=0.2043 T=0.2396)  val=0.4321 (E=0.3651 T=0.4991)  lr=1.7e-05  0.0s
+[electron epoch  87/100] train=0.2219 (E=0.2045 T=0.2393)  val=0.4318 (E=0.3654 T=0.4982)  lr=1.5e-05  0.0s
+[electron epoch  88/100] train=0.2217 (E=0.2044 T=0.2389)  val=0.4317 (E=0.3649 T=0.4985)  lr=1.3e-05  0.0s
+[electron epoch  89/100] train=0.2213 (E=0.2041 T=0.2386)  val=0.4316 (E=0.3638 T=0.4994)  lr=1.1e-05  0.0s
+[electron epoch  90/100] train=0.2210 (E=0.2036 T=0.2383)  val=0.4317 (E=0.3628 T=0.5006)  lr=9.1e-06  0.0s
+[electron epoch  91/100] train=0.2208 (E=0.2033 T=0.2382)  val=0.4319 (E=0.3619 T=0.5019)  lr=7.5e-06  0.0s
+[electron epoch  92/100] train=0.2207 (E=0.2031 T=0.2382)  val=0.4320 (E=0.3613 T=0.5027)  lr=6.1e-06  0.0s
+[electron epoch  93/100] train=0.2206 (E=0.2030 T=0.2382)  val=0.4320 (E=0.3609 T=0.5031)  lr=4.8e-06  0.0s
+[electron epoch  94/100] train=0.2206 (E=0.2029 T=0.2382)  val=0.4319 (E=0.3606 T=0.5032)  lr=3.7e-06  0.0s
+[electron epoch  95/100] train=0.2205 (E=0.2028 T=0.2382)  val=0.4317 (E=0.3604 T=0.5031)  lr=2.8e-06  0.0s
+[electron epoch  96/100] train=0.2205 (E=0.2028 T=0.2381)  val=0.4316 (E=0.3604 T=0.5028)  lr=2.1e-06  0.0s
+[electron epoch  97/100] train=0.2204 (E=0.2028 T=0.2380)  val=0.4314 (E=0.3604 T=0.5025)  lr=1.6e-06  0.0s
+[electron epoch  98/100] train=0.2203 (E=0.2028 T=0.2379)  val=0.4313 (E=0.3604 T=0.5023)  lr=1.2e-06  0.0s
+[electron epoch  99/100] train=0.2203 (E=0.2028 T=0.2379)  val=0.4313 (E=0.3604 T=0.5021)  lr=1.0e-06  0.0s
+[electron epoch 100/100] train=0.2203 (E=0.2027 T=0.2378)  val=0.4312 (E=0.3604 T=0.5019)  lr=1.0e-06  0.0s
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_electron_train_curves.png
+[electron adam done] best val 0.4312 at epoch 100
+
+========================================================================
+[electron] Phase 2: L-BFGS fine-tuning (full-batch)
+========================================================================
+[lbfgs] loaded Adam best epoch=100 val=0.431178
+[lbfgs] full train batch on cuda: 315 samples
+  [lbfgs iter   0] loss=0.220234 (E=0.202741 T=0.237727)  val=0.431178 (E=0.360436 T=0.501920)
+  [lbfgs iter   1] loss=0.220180 (E=0.203385 T=0.236975)  val=0.430403 (E=0.363645 T=0.497161)  <- NEW BEST (saved)
+  [lbfgs iter   2] loss=0.219871 (E=0.202858 T=0.236884)  val=0.430749 (E=0.361967 T=0.499531)
+  [lbfgs iter   3] loss=0.219679 (E=0.202658 T=0.236700)  val=0.431119 (E=0.361347 T=0.500891)
+  [lbfgs iter   4] loss=0.219042 (E=0.202230 T=0.235855)  val=0.432607 (E=0.360325 T=0.504889)
+  [lbfgs iter   5] loss=0.218125 (E=0.201849 T=0.234402)  val=0.434646 (E=0.360062 T=0.509230)
+  [lbfgs iter   6] loss=0.215955 (E=0.201105 T=0.230805)  val=0.437876 (E=0.360354 T=0.515399)
+  [lbfgs iter   7] loss=0.211036 (E=0.199153 T=0.222919)  val=0.438811 (E=0.360660 T=0.516963)
+  [lbfgs iter   8] loss=0.202275 (E=0.200389 T=0.204161)  val=0.429874 (E=0.366994 T=0.492754)  <- NEW BEST (saved)
+  [lbfgs iter   9] loss=0.195991 (E=0.195059 T=0.196923)  val=0.424006 (E=0.366014 T=0.481998)  <- NEW BEST (saved)
+  [lbfgs iter  10] loss=0.191401 (E=0.190846 T=0.191956)  val=0.418752 (E=0.363896 T=0.473608)  <- NEW BEST (saved)
+  [lbfgs iter  11] loss=0.188678 (E=0.190032 T=0.187325)  val=0.415683 (E=0.365821 T=0.465545)  <- NEW BEST (saved)
+  [lbfgs iter  12] loss=0.186641 (E=0.187733 T=0.185548)  val=0.407724 (E=0.352134 T=0.463314)  <- NEW BEST (saved)
+  [lbfgs iter  13] loss=0.184760 (E=0.186717 T=0.182804)  val=0.409805 (E=0.354503 T=0.465107)
+  [lbfgs iter  14] loss=0.182994 (E=0.184991 T=0.180997)  val=0.414362 (E=0.356047 T=0.472677)
+  [lbfgs iter  15] loss=0.180517 (E=0.181967 T=0.179067)  val=0.416912 (E=0.356186 T=0.477639)
+  [lbfgs iter  16] loss=0.177891 (E=0.176911 T=0.178871)  val=0.428785 (E=0.359108 T=0.498461)
+  [lbfgs iter  17] loss=0.173566 (E=0.173128 T=0.174005)  val=0.422923 (E=0.354321 T=0.491524)
+  [lbfgs iter  18] loss=0.171924 (E=0.172289 T=0.171560)  val=0.416171 (E=0.351795 T=0.480547)
+  [lbfgs iter  19] loss=0.169568 (E=0.170788 T=0.168348)  val=0.411820 (E=0.349612 T=0.474028)
+  [lbfgs iter  20] loss=0.167781 (E=0.169458 T=0.166103)  val=0.405639 (E=0.350572 T=0.460706)  <- NEW BEST (saved)
+  [lbfgs iter  21] loss=0.166477 (E=0.168125 T=0.164828)  val=0.405237 (E=0.347744 T=0.462730)  <- NEW BEST (saved)
+  [lbfgs iter  22] loss=0.164670 (E=0.166200 T=0.163140)  val=0.406172 (E=0.346324 T=0.466019)
+  [lbfgs iter  23] loss=0.161851 (E=0.162701 T=0.161001)  val=0.394943 (E=0.338515 T=0.451371)  <- NEW BEST (saved)
+  [lbfgs iter  24] loss=0.160065 (E=0.161269 T=0.158861)  val=0.393014 (E=0.337863 T=0.448164)  <- NEW BEST (saved)
+  [lbfgs iter  25] loss=0.158855 (E=0.160338 T=0.157371)  val=0.391755 (E=0.336482 T=0.447027)  <- NEW BEST (saved)
+  [lbfgs iter  26] loss=0.157231 (E=0.159283 T=0.155180)  val=0.389225 (E=0.334613 T=0.443838)  <- NEW BEST (saved)
+  [lbfgs iter  27] loss=0.155725 (E=0.158164 T=0.153287)  val=0.390327 (E=0.334111 T=0.446543)
+  [lbfgs iter  28] loss=0.153641 (E=0.156011 T=0.151270)  val=0.388491 (E=0.332995 T=0.443988)  <- NEW BEST (saved)
+  [lbfgs iter  29] loss=0.152000 (E=0.153513 T=0.150488)  val=0.385344 (E=0.325855 T=0.444832)  <- NEW BEST (saved)
+  [lbfgs iter  30] loss=0.150805 (E=0.152074 T=0.149535)  val=0.382378 (E=0.327136 T=0.437621)  <- NEW BEST (saved)
+  [lbfgs iter  31] loss=0.150047 (E=0.151306 T=0.148788)  val=0.379330 (E=0.326654 T=0.432006)  <- NEW BEST (saved)
+  [lbfgs iter  32] loss=0.148717 (E=0.149742 T=0.147692)  val=0.373924 (E=0.324029 T=0.423820)  <- NEW BEST (saved)
+  [lbfgs iter  33] loss=0.147074 (E=0.148081 T=0.146068)  val=0.371305 (E=0.320137 T=0.422472)  <- NEW BEST (saved)
+  [lbfgs iter  34] loss=0.144864 (E=0.145741 T=0.143987)  val=0.368112 (E=0.316902 T=0.419322)  <- NEW BEST (saved)
+  [lbfgs iter  35] loss=0.143525 (E=0.143817 T=0.143234)  val=0.374799 (E=0.314005 T=0.435593)
+  [lbfgs iter  36] loss=0.140489 (E=0.142412 T=0.138566)  val=0.375681 (E=0.315616 T=0.435746)
+  [lbfgs iter  37] loss=0.139578 (E=0.142008 T=0.137148)  val=0.375575 (E=0.317614 T=0.433535)
+  [lbfgs iter  38] loss=0.138582 (E=0.141894 T=0.135270)  val=0.379410 (E=0.320617 T=0.438203)
+  [lbfgs iter  39] loss=0.136749 (E=0.141038 T=0.132461)  val=0.383419 (E=0.324601 T=0.442237)
+  [lbfgs iter  40] loss=0.135068 (E=0.140761 T=0.129376)  val=0.390990 (E=0.329300 T=0.452679)
+  [lbfgs iter  41] loss=0.134657 (E=0.138431 T=0.130882)  val=0.394647 (E=0.327011 T=0.462282)
+  [lbfgs iter  42] loss=0.133522 (E=0.138164 T=0.128881)  val=0.390923 (E=0.326221 T=0.455625)
+  [lbfgs iter  43] loss=0.133213 (E=0.137945 T=0.128481)  val=0.390965 (E=0.326451 T=0.455479)
+  [lbfgs iter  44] loss=0.132360 (E=0.137188 T=0.127531)  val=0.393408 (E=0.328583 T=0.458232)
+  [lbfgs iter  45] loss=0.131564 (E=0.136638 T=0.126489)  val=0.395555 (E=0.330085 T=0.461024)
+  [lbfgs iter  46] loss=0.130870 (E=0.136323 T=0.125417)  val=0.400859 (E=0.340245 T=0.461473)
+  [lbfgs iter  47] loss=0.129198 (E=0.135822 T=0.122574)  val=0.400836 (E=0.337839 T=0.463833)
+  [lbfgs iter  48] loss=0.128537 (E=0.135526 T=0.121547)  val=0.398415 (E=0.335349 T=0.461480)
+  [lbfgs iter  49] loss=0.127714 (E=0.135090 T=0.120339)  val=0.397808 (E=0.335026 T=0.460590)
+  [lbfgs iter  50] loss=0.126755 (E=0.134081 T=0.119428)  val=0.398131 (E=0.335613 T=0.460649)
+  [lbfgs iter  51] loss=0.124842 (E=0.131519 T=0.118166)  val=0.397142 (E=0.335416 T=0.458868)
+  [lbfgs iter  52] loss=0.126110 (E=0.130341 T=0.121878)  val=0.397086 (E=0.343685 T=0.450487)
+  [lbfgs iter  53] loss=0.124087 (E=0.130346 T=0.117827)  val=0.396221 (E=0.337945 T=0.454496)
+  [lbfgs iter  54] loss=0.122982 (E=0.128526 T=0.117439)  val=0.396024 (E=0.335998 T=0.456049)
+  [lbfgs iter  55] loss=0.123136 (E=0.128651 T=0.117621)  val=0.389419 (E=0.335707 T=0.443131)
+  [lbfgs iter  56] loss=0.122451 (E=0.128122 T=0.116779)  val=0.392570 (E=0.335558 T=0.449582)
+  [lbfgs iter  57] loss=0.121959 (E=0.127933 T=0.115985)  val=0.390407 (E=0.333478 T=0.447337)
+  [lbfgs iter  58] loss=0.121359 (E=0.127774 T=0.114945)  val=0.390347 (E=0.333030 T=0.447664)
+  [lbfgs iter  59] loss=0.120557 (E=0.127564 T=0.113551)  val=0.388923 (E=0.332760 T=0.445086)
+  [lbfgs iter  60] loss=0.119406 (E=0.127272 T=0.111539)  val=0.390330 (E=0.333410 T=0.447250)
+  [lbfgs iter  61] loss=0.118615 (E=0.126517 T=0.110713)  val=0.385299 (E=0.334379 T=0.436220)
+  [lbfgs iter  62] loss=0.117661 (E=0.125917 T=0.109405)  val=0.386341 (E=0.332764 T=0.439918)
+  [lbfgs iter  63] loss=0.117019 (E=0.125442 T=0.108597)  val=0.386894 (E=0.331907 T=0.441880)
+  [lbfgs iter  64] loss=0.116308 (E=0.124822 T=0.107794)  val=0.384408 (E=0.329998 T=0.438818)
+  [lbfgs iter  65] loss=0.115130 (E=0.123714 T=0.106547)  val=0.383029 (E=0.328812 T=0.437245)
+  [lbfgs iter  66] loss=0.114086 (E=0.122894 T=0.105279)  val=0.376520 (E=0.323931 T=0.429109)
+  [lbfgs iter  67] loss=0.113137 (E=0.122154 T=0.104120)  val=0.373411 (E=0.320759 T=0.426064)
+  [lbfgs iter  68] loss=0.113409 (E=0.122139 T=0.104680)  val=0.372095 (E=0.321962 T=0.422227)
+  [lbfgs iter  69] loss=0.112874 (E=0.121946 T=0.103803)  val=0.372612 (E=0.321090 T=0.424134)
+  [lbfgs iter  70] loss=0.112511 (E=0.121617 T=0.103404)  val=0.371857 (E=0.320049 T=0.423665)
+  [lbfgs iter  71] loss=0.112135 (E=0.121218 T=0.103051)  val=0.371512 (E=0.319449 T=0.423575)
+  [lbfgs iter  72] loss=0.111438 (E=0.120384 T=0.102493)  val=0.370767 (E=0.318255 T=0.423279)
+  [lbfgs iter  73] loss=0.110298 (E=0.119231 T=0.101365)  val=0.371141 (E=0.317619 T=0.424663)
+  [lbfgs iter  74] loss=0.110599 (E=0.117374 T=0.103824)  val=0.364482 (E=0.313506 T=0.415459)  <- NEW BEST (saved)
+  [lbfgs iter  75] loss=0.109423 (E=0.117686 T=0.101160)  val=0.367417 (E=0.315252 T=0.419581)
+  [lbfgs iter  76] loss=0.108380 (E=0.116838 T=0.099921)  val=0.369415 (E=0.315837 T=0.422994)
+  [lbfgs iter  77] loss=0.107600 (E=0.116176 T=0.099024)  val=0.370275 (E=0.316124 T=0.424427)
+  [lbfgs iter  78] loss=0.106603 (E=0.115212 T=0.097994)  val=0.371948 (E=0.316279 T=0.427616)
+  [lbfgs iter  79] loss=0.106005 (E=0.114133 T=0.097878)  val=0.377546 (E=0.324361 T=0.430730)
+  [lbfgs iter  80] loss=0.104721 (E=0.113166 T=0.096276)  val=0.379664 (E=0.321505 T=0.437823)
+  [lbfgs iter  81] loss=0.104124 (E=0.112618 T=0.095630)  val=0.382713 (E=0.321628 T=0.443798)
+  [lbfgs iter  82] loss=0.103823 (E=0.112508 T=0.095138)  val=0.388584 (E=0.326219 T=0.450948)
+  [lbfgs iter  83] loss=0.103356 (E=0.112095 T=0.094617)  val=0.388589 (E=0.325630 T=0.451548)
+  [lbfgs iter  84] loss=0.103101 (E=0.111921 T=0.094281)  val=0.388370 (E=0.326008 T=0.450731)
+  [lbfgs iter  85] loss=0.102481 (E=0.111416 T=0.093546)  val=0.389216 (E=0.327558 T=0.450873)
+  [lbfgs iter  86] loss=0.101416 (E=0.110422 T=0.092409)  val=0.386310 (E=0.326318 T=0.446302)
+  [lbfgs iter  87] loss=0.100370 (E=0.108537 T=0.092202)  val=0.388175 (E=0.325654 T=0.450696)
+  [lbfgs iter  88] loss=0.099743 (E=0.107882 T=0.091604)  val=0.393808 (E=0.326447 T=0.461168)
+  [lbfgs iter  89] loss=0.099334 (E=0.107754 T=0.090914)  val=0.391165 (E=0.324465 T=0.457866)
+  [lbfgs iter  90] loss=0.098843 (E=0.107387 T=0.090299)  val=0.390769 (E=0.323447 T=0.458091)
+  [lbfgs iter  91] loss=0.098219 (E=0.106844 T=0.089593)  val=0.391398 (E=0.322037 T=0.460759)
+  [lbfgs iter  92] loss=0.097339 (E=0.105892 T=0.088786)  val=0.390990 (E=0.321074 T=0.460906)
+  [lbfgs iter  93] loss=0.096681 (E=0.104844 T=0.088519)  val=0.388755 (E=0.316787 T=0.460723)
+  [lbfgs iter  94] loss=0.096201 (E=0.104457 T=0.087944)  val=0.391288 (E=0.319042 T=0.463534)
+  [lbfgs iter  95] loss=0.095963 (E=0.104537 T=0.087389)  val=0.393362 (E=0.323486 T=0.463238)
+  [lbfgs iter  96] loss=0.095585 (E=0.104237 T=0.086933)  val=0.393407 (E=0.322603 T=0.464211)
+  [lbfgs iter  97] loss=0.095109 (E=0.103839 T=0.086379)  val=0.394473 (E=0.321915 T=0.467031)
+  [lbfgs iter  98] loss=0.094609 (E=0.103520 T=0.085698)  val=0.396755 (E=0.321984 T=0.471526)
+  [lbfgs iter  99] loss=0.093863 (E=0.102970 T=0.084756)  val=0.402387 (E=0.322036 T=0.482738)
+  [lbfgs iter 100] loss=0.093238 (E=0.102830 T=0.083647)  val=0.404360 (E=0.321835 T=0.486884)
+  [lbfgs iter 101] loss=0.092774 (E=0.102497 T=0.083050)  val=0.406658 (E=0.322679 T=0.490637)
+  [lbfgs iter 102] loss=0.092057 (E=0.101867 T=0.082247)  val=0.408482 (E=0.323361 T=0.493603)
+  [lbfgs iter 103] loss=0.091447 (E=0.101264 T=0.081630)  val=0.408059 (E=0.322495 T=0.493624)
+  [lbfgs iter 104] loss=0.090621 (E=0.099552 T=0.081690)  val=0.403595 (E=0.319620 T=0.487570)
+  [lbfgs iter 105] loss=0.089844 (E=0.098610 T=0.081078)  val=0.404241 (E=0.316226 T=0.492255)
+  [lbfgs iter 106] loss=0.089336 (E=0.097977 T=0.080695)  val=0.402672 (E=0.314172 T=0.491172)
+  [lbfgs iter 107] loss=0.088474 (E=0.096480 T=0.080468)  val=0.401425 (E=0.313740 T=0.489109)
+  [lbfgs iter 108] loss=0.088448 (E=0.095737 T=0.081159)  val=0.403175 (E=0.309766 T=0.496585)
+  [lbfgs iter 109] loss=0.088135 (E=0.095944 T=0.080326)  val=0.402007 (E=0.311555 T=0.492459)
+  [lbfgs iter 110] loss=0.087839 (E=0.095643 T=0.080036)  val=0.403336 (E=0.312517 T=0.494155)
+  [lbfgs iter 111] loss=0.087367 (E=0.095267 T=0.079467)  val=0.406479 (E=0.315070 T=0.497887)
+  [lbfgs iter 112] loss=0.086969 (E=0.095014 T=0.078925)  val=0.409568 (E=0.317924 T=0.501212)
+  [lbfgs iter 113] loss=0.086618 (E=0.094429 T=0.078807)  val=0.418353 (E=0.324852 T=0.511854)
+  [lbfgs iter 114] loss=0.085914 (E=0.094447 T=0.077381)  val=0.417641 (E=0.325693 T=0.509588)
+  [lbfgs iter 115] loss=0.085635 (E=0.094537 T=0.076733)  val=0.417317 (E=0.325420 T=0.509214)
+  [lbfgs iter 116] loss=0.085342 (E=0.094465 T=0.076220)  val=0.418647 (E=0.326401 T=0.510894)
+  [lbfgs iter 117] loss=0.084712 (E=0.094026 T=0.075398)  val=0.417656 (E=0.326999 T=0.508312)
+  [lbfgs iter 118] loss=0.084475 (E=0.093610 T=0.075340)  val=0.426413 (E=0.328597 T=0.524228)
+  [lbfgs iter 119] loss=0.083850 (E=0.093060 T=0.074640)  val=0.422960 (E=0.328389 T=0.517531)
+  [lbfgs iter 120] loss=0.083499 (E=0.092542 T=0.074456)  val=0.422514 (E=0.328370 T=0.516657)
+  [lbfgs iter 121] loss=0.083118 (E=0.091668 T=0.074569)  val=0.423551 (E=0.330851 T=0.516251)
+  [lbfgs iter 122] loss=0.082618 (E=0.090979 T=0.074257)  val=0.426273 (E=0.330650 T=0.521896)
+  [lbfgs iter 123] loss=0.082248 (E=0.090603 T=0.073892)  val=0.430653 (E=0.332493 T=0.528814)
+  [lbfgs iter 124] loss=0.081896 (E=0.090548 T=0.073244)  val=0.433075 (E=0.334057 T=0.532093)
+  [lbfgs iter 125] loss=0.081471 (E=0.090520 T=0.072423)  val=0.437852 (E=0.337068 T=0.538636)
+  [lbfgs iter 126] loss=0.081701 (E=0.091467 T=0.071935)  val=0.434737 (E=0.338376 T=0.531097)
+  [lbfgs iter 127] loss=0.081286 (E=0.090738 T=0.071835)  val=0.436425 (E=0.337490 T=0.535360)
+  [lbfgs iter 128] loss=0.081020 (E=0.090786 T=0.071255)  val=0.435432 (E=0.336751 T=0.534113)
+  [lbfgs iter 129] loss=0.080630 (E=0.090701 T=0.070560)  val=0.433311 (E=0.335210 T=0.531413)
+  [lbfgs iter 130] loss=0.080334 (E=0.090394 T=0.070274)  val=0.433847 (E=0.335832 T=0.531863)
+  [lbfgs iter 131] loss=0.079977 (E=0.089980 T=0.069973)  val=0.431943 (E=0.334201 T=0.529684)
+  [lbfgs iter 132] loss=0.079481 (E=0.089258 T=0.069703)  val=0.431256 (E=0.333272 T=0.529240)
+  [lbfgs iter 133] loss=0.078989 (E=0.088451 T=0.069527)  val=0.428480 (E=0.331070 T=0.525891)
+  [lbfgs iter 134] loss=0.078603 (E=0.087879 T=0.069328)  val=0.427393 (E=0.332089 T=0.522698)
+  [lbfgs iter 135] loss=0.078334 (E=0.087808 T=0.068860)  val=0.427623 (E=0.331708 T=0.523538)
+  [lbfgs iter 136] loss=0.078024 (E=0.087730 T=0.068318)  val=0.428145 (E=0.331189 T=0.525100)
+  [lbfgs iter 137] loss=0.077675 (E=0.087406 T=0.067945)  val=0.430244 (E=0.331974 T=0.528514)
+  [lbfgs iter 138] loss=0.077094 (E=0.086400 T=0.067788)  val=0.436472 (E=0.335652 T=0.537293)
+  [lbfgs iter 139] loss=0.076917 (E=0.086210 T=0.067624)  val=0.438227 (E=0.339190 T=0.537265)
+  [lbfgs iter 140] loss=0.076567 (E=0.085907 T=0.067227)  val=0.438368 (E=0.338516 T=0.538219)
+  [lbfgs iter 141] loss=0.076330 (E=0.085687 T=0.066973)  val=0.438416 (E=0.338627 T=0.538206)
+  [lbfgs iter 142] loss=0.075900 (E=0.085321 T=0.066479)  val=0.439507 (E=0.339995 T=0.539019)
+  [lbfgs iter 143] loss=0.075498 (E=0.085073 T=0.065922)  val=0.440988 (E=0.340322 T=0.541654)
+  [lbfgs iter 144] loss=0.075148 (E=0.084816 T=0.065479)  val=0.449432 (E=0.345721 T=0.553142)
+  [lbfgs iter 145] loss=0.074913 (E=0.084701 T=0.065125)  val=0.450924 (E=0.345599 T=0.556249)
+  [lbfgs iter 146] loss=0.074542 (E=0.084533 T=0.064551)  val=0.454321 (E=0.346234 T=0.562409)
+  [lbfgs iter 147] loss=0.074246 (E=0.084220 T=0.064271)  val=0.457223 (E=0.346745 T=0.567700)
+  [lbfgs iter 148] loss=0.073777 (E=0.083529 T=0.064024)  val=0.462054 (E=0.348960 T=0.575149)
+  [lbfgs iter 149] loss=0.073559 (E=0.083094 T=0.064024)  val=0.464673 (E=0.349841 T=0.579506)
+  [lbfgs iter 150] loss=0.073369 (E=0.082800 T=0.063938)  val=0.464619 (E=0.350040 T=0.579198)
+  [lbfgs iter 151] loss=0.072881 (E=0.082195 T=0.063567)  val=0.465679 (E=0.350267 T=0.581090)
+  [lbfgs iter 152] loss=0.072563 (E=0.081778 T=0.063347)  val=0.465335 (E=0.350443 T=0.580228)
+  [lbfgs iter 153] loss=0.072273 (E=0.081730 T=0.062815)  val=0.465923 (E=0.349775 T=0.582071)
+  [lbfgs iter 154] loss=0.072068 (E=0.081727 T=0.062409)  val=0.467674 (E=0.350152 T=0.585197)
+  [lbfgs iter 155] loss=0.071708 (E=0.081649 T=0.061766)  val=0.470631 (E=0.351645 T=0.589616)
+  [lbfgs iter 156] loss=0.071356 (E=0.081571 T=0.061140)  val=0.471227 (E=0.353479 T=0.588975)
+  [lbfgs iter 157] loss=0.071003 (E=0.081436 T=0.060571)  val=0.475891 (E=0.357238 T=0.594545)
+  [lbfgs iter 158] loss=0.070850 (E=0.081283 T=0.060416)  val=0.474648 (E=0.356631 T=0.592666)
+  [lbfgs iter 159] loss=0.070617 (E=0.081023 T=0.060210)  val=0.471665 (E=0.355910 T=0.587420)
+  [lbfgs iter 160] loss=0.070343 (E=0.080615 T=0.060070)  val=0.473976 (E=0.356480 T=0.591473)
+  [lbfgs iter 161] loss=0.070004 (E=0.080336 T=0.059672)  val=0.472257 (E=0.356664 T=0.587849)
+  [lbfgs iter 162] loss=0.069626 (E=0.079962 T=0.059289)  val=0.472644 (E=0.357929 T=0.587358)
+  [lbfgs iter 163] loss=0.069471 (E=0.079787 T=0.059155)  val=0.473499 (E=0.358368 T=0.588629)
+  [lbfgs iter 164] loss=0.069076 (E=0.079261 T=0.058890)  val=0.476942 (E=0.359820 T=0.594065)
+  [lbfgs iter 165] loss=0.069073 (E=0.078935 T=0.059211)  val=0.480578 (E=0.363074 T=0.598083)
+  [lbfgs iter 166] loss=0.068860 (E=0.078965 T=0.058755)  val=0.478665 (E=0.361372 T=0.595958)
+  [lbfgs iter 167] loss=0.068652 (E=0.078781 T=0.058523)  val=0.479587 (E=0.361566 T=0.597608)
+  [lbfgs iter 168] loss=0.068411 (E=0.078613 T=0.058210)  val=0.479788 (E=0.361468 T=0.598109)
+  [lbfgs iter 169] loss=0.068230 (E=0.078494 T=0.057966)  val=0.479921 (E=0.361528 T=0.598314)
+  [lbfgs iter 170] loss=0.067751 (E=0.078143 T=0.057359)  val=0.478828 (E=0.361161 T=0.596495)
+  [lbfgs iter 171] loss=0.067371 (E=0.078004 T=0.056739)  val=0.484361 (E=0.364767 T=0.603956)
+  [lbfgs iter 172] loss=0.067055 (E=0.077833 T=0.056278)  val=0.482594 (E=0.363612 T=0.601577)
+  [lbfgs iter 173] loss=0.066811 (E=0.077759 T=0.055863)  val=0.480829 (E=0.363410 T=0.598248)
+  [lbfgs iter 174] loss=0.066693 (E=0.077671 T=0.055715)  val=0.482570 (E=0.363677 T=0.601463)
+  [lbfgs iter 175] loss=0.066533 (E=0.077556 T=0.055511)  val=0.482005 (E=0.363997 T=0.600013)
+  [lbfgs iter 176] loss=0.066365 (E=0.077361 T=0.055369)  val=0.481555 (E=0.364213 T=0.598898)
+  [lbfgs iter 177] loss=0.066177 (E=0.077151 T=0.055204)  val=0.480107 (E=0.363832 T=0.596382)
+  [lbfgs iter 178] loss=0.065681 (E=0.076674 T=0.054688)  val=0.478518 (E=0.362940 T=0.594096)
+  [lbfgs iter 179] loss=0.065663 (E=0.076230 T=0.055096)  val=0.471976 (E=0.363435 T=0.580517)
+  [lbfgs iter 180] loss=0.065363 (E=0.076281 T=0.054446)  val=0.475188 (E=0.363115 T=0.587262)
+  [lbfgs iter 181] loss=0.065082 (E=0.076074 T=0.054090)  val=0.475117 (E=0.362926 T=0.587308)
+  [lbfgs iter 182] loss=0.064884 (E=0.075962 T=0.053806)  val=0.475404 (E=0.363030 T=0.587777)
+  [lbfgs iter 183] loss=0.064695 (E=0.075851 T=0.053540)  val=0.475886 (E=0.363577 T=0.588194)
+  [lbfgs iter 184] loss=0.065748 (E=0.075921 T=0.055574)  val=0.470971 (E=0.362401 T=0.579542)
+  [lbfgs iter 185] loss=0.064590 (E=0.075712 T=0.053467)  val=0.474517 (E=0.363152 T=0.585882)
+  [lbfgs iter 186] loss=0.064320 (E=0.075530 T=0.053109)  val=0.475523 (E=0.364523 T=0.586523)
+  [lbfgs iter 187] loss=0.064136 (E=0.075352 T=0.052921)  val=0.475973 (E=0.365266 T=0.586679)
+  [lbfgs iter 188] loss=0.063857 (E=0.075059 T=0.052655)  val=0.477452 (E=0.366529 T=0.588375)
+  [lbfgs iter 189] loss=0.063523 (E=0.074722 T=0.052324)  val=0.481173 (E=0.368581 T=0.593765)
+  [lbfgs iter 190] loss=0.064025 (E=0.074546 T=0.053503)  val=0.496896 (E=0.373897 T=0.619896)
+  [lbfgs iter 191] loss=0.063377 (E=0.074527 T=0.052227)  val=0.486095 (E=0.370218 T=0.601973)
+  [lbfgs iter 192] loss=0.063102 (E=0.074238 T=0.051966)  val=0.490560 (E=0.372658 T=0.608461)
+  [lbfgs iter 193] loss=0.062909 (E=0.074040 T=0.051778)  val=0.495131 (E=0.374011 T=0.616251)
+  [lbfgs iter 194] loss=0.062719 (E=0.073970 T=0.051468)  val=0.501749 (E=0.377549 T=0.625950)
+  [lbfgs iter 195] loss=0.062508 (E=0.073827 T=0.051188)  val=0.503625 (E=0.377454 T=0.629796)
+  [lbfgs iter 196] loss=0.062356 (E=0.073759 T=0.050954)  val=0.503327 (E=0.377050 T=0.629604)
+  [lbfgs iter 197] loss=0.062032 (E=0.073554 T=0.050510)  val=0.503172 (E=0.376392 T=0.629953)
+  [lbfgs iter 198] loss=0.061996 (E=0.073206 T=0.050787)  val=0.498401 (E=0.375527 T=0.621275)
+  [lbfgs iter 199] loss=0.061851 (E=0.073279 T=0.050422)  val=0.500588 (E=0.375858 T=0.625318)
+  [lbfgs iter 200] loss=0.061567 (E=0.072950 T=0.050184)  val=0.502357 (E=0.377465 T=0.627250)
+  [lbfgs iter 201] loss=0.061403 (E=0.072731 T=0.050074)  val=0.502858 (E=0.378064 T=0.627652)
+  [lbfgs iter 202] loss=0.061154 (E=0.072407 T=0.049900)  val=0.501794 (E=0.378155 T=0.625432)
+  [lbfgs iter 203] loss=0.060819 (E=0.072079 T=0.049559)  val=0.497756 (E=0.377487 T=0.618025)
+  [lbfgs iter 204] loss=0.061429 (E=0.072257 T=0.050600)  val=0.496957 (E=0.374369 T=0.619545)
+  [lbfgs iter 205] loss=0.060684 (E=0.071958 T=0.049410)  val=0.497361 (E=0.376427 T=0.618296)
+  [lbfgs iter 206] loss=0.060461 (E=0.071751 T=0.049172)  val=0.491582 (E=0.374862 T=0.608303)
+  [lbfgs iter 207] loss=0.060306 (E=0.071572 T=0.049041)  val=0.490318 (E=0.374094 T=0.606543)
+  [lbfgs iter 208] loss=0.060004 (E=0.071215 T=0.048793)  val=0.488685 (E=0.374183 T=0.603187)
+  [lbfgs iter 209] loss=0.059898 (E=0.071060 T=0.048736)  val=0.492125 (E=0.373918 T=0.610332)
+  [lbfgs iter 210] loss=0.059736 (E=0.070971 T=0.048500)  val=0.491454 (E=0.374143 T=0.608764)
+  [lbfgs iter 211] loss=0.059551 (E=0.070781 T=0.048321)  val=0.491823 (E=0.375043 T=0.608604)
+  [lbfgs iter 212] loss=0.059335 (E=0.070486 T=0.048184)  val=0.492908 (E=0.376144 T=0.609672)
+  [lbfgs iter 213] loss=0.059110 (E=0.070196 T=0.048024)  val=0.494446 (E=0.376514 T=0.612377)
+  [lbfgs iter 214] loss=0.059208 (E=0.070039 T=0.048378)  val=0.499763 (E=0.377767 T=0.621760)
+  [lbfgs iter 215] loss=0.058982 (E=0.070029 T=0.047934)  val=0.496706 (E=0.376997 T=0.616415)
+  [lbfgs iter 216] loss=0.058818 (E=0.069877 T=0.047760)  val=0.497977 (E=0.376488 T=0.619465)
+  [lbfgs iter 217] loss=0.058716 (E=0.069787 T=0.047645)  val=0.498506 (E=0.375813 T=0.621199)
+  [lbfgs iter 218] loss=0.058579 (E=0.069696 T=0.047462)  val=0.498576 (E=0.375296 T=0.621856)
+  [lbfgs iter 219] loss=0.058289 (E=0.069436 T=0.047141)  val=0.498622 (E=0.374567 T=0.622676)
+  [lbfgs iter 220] loss=0.058316 (E=0.069384 T=0.047249)  val=0.495452 (E=0.375686 T=0.615219)
+  [lbfgs iter 221] loss=0.058125 (E=0.069306 T=0.046943)  val=0.497052 (E=0.375042 T=0.619062)
+  [lbfgs iter 222] loss=0.057948 (E=0.069198 T=0.046699)  val=0.496354 (E=0.374999 T=0.617709)
+  [lbfgs iter 223] loss=0.057777 (E=0.069098 T=0.046455)  val=0.495144 (E=0.374951 T=0.615337)
+  [lbfgs iter 224] loss=0.057598 (E=0.068966 T=0.046229)  val=0.493858 (E=0.374261 T=0.613454)
+[lbfgs] early stop: 150 closure calls with no val improvement (best val=0.364482 at iter 74)
+[lbfgs] 225 iterations in 3.5s
+[lbfgs] best val=0.364482 at iter 74 (Adam was 0.431178, gain=0.066696)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_electron_train_curves.png
+[electron done] best val 0.3645  -> /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_electron.pt
+[save] /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_electron_target_vs_pred.png
+========================================================================
+[muon] DeepSets surrogate on 350 rows
+========================================================================
+[log1p-T] applied log1p(T*1e+08); T mean=0.3648 std=0.8613
+[split] train pairs=315  val pairs=35
+[model] DeepSets params=298,562  (flat MLP was ~6.7M)
+[muon epoch   1/100] train=1.0581 (E=1.0800 T=1.0363)  val=0.5027 (E=0.2909 T=0.7144)  lr=1.8e-05  0.0s
+[muon epoch   2/100] train=1.0575 (E=1.0794 T=1.0357)  val=0.5020 (E=0.2903 T=0.7137)  lr=4.1e-05  0.0s
+[muon epoch   3/100] train=1.0564 (E=1.0784 T=1.0344)  val=0.5006 (E=0.2890 T=0.7123)  lr=7.6e-05  0.0s
+[muon epoch   4/100] train=1.0541 (E=1.0763 T=1.0319)  val=0.4984 (E=0.2867 T=0.7100)  lr=1.2e-04  0.0s
+[muon epoch   5/100] train=1.0505 (E=1.0732 T=1.0279)  val=0.4952 (E=0.2835 T=0.7069)  lr=1.7e-04  0.0s
+[muon epoch   6/100] train=1.0454 (E=1.0686 T=1.0222)  val=0.4907 (E=0.2792 T=0.7022)  lr=2.1e-04  0.0s
+[muon epoch   7/100] train=1.0379 (E=1.0619 T=1.0139)  val=0.4837 (E=0.2730 T=0.6945)  lr=2.5e-04  0.0s
+[muon epoch   8/100] train=1.0262 (E=1.0519 T=1.0004)  val=0.4733 (E=0.2646 T=0.6820)  lr=2.8e-04  0.0s
+[muon epoch   9/100] train=1.0082 (E=1.0368 T=0.9797)  val=0.4573 (E=0.2523 T=0.6622)  lr=3.0e-04  0.0s
+[muon epoch  10/100] train=0.9809 (E=1.0140 T=0.9478)  val=0.4346 (E=0.2349 T=0.6342)  lr=3.0e-04  0.0s
+[muon epoch  11/100] train=0.9430 (E=0.9841 T=0.9019)  val=0.4106 (E=0.2183 T=0.6029)  lr=3.0e-04  0.0s
+[muon epoch  12/100] train=0.8976 (E=0.9512 T=0.8440)  val=0.3888 (E=0.2062 T=0.5714)  lr=3.0e-04  0.0s
+[muon epoch  13/100] train=0.8506 (E=0.9161 T=0.7851)  val=0.3743 (E=0.1965 T=0.5521)  lr=3.0e-04  0.0s
+[muon epoch  14/100] train=0.8126 (E=0.8780 T=0.7472)  val=0.3792 (E=0.2047 T=0.5537)  lr=3.0e-04  0.0s
+[muon epoch  15/100] train=0.7758 (E=0.8463 T=0.7052)  val=0.3823 (E=0.2159 T=0.5487)  lr=3.0e-04  0.0s
+[muon epoch  16/100] train=0.7434 (E=0.8176 T=0.6692)  val=0.3798 (E=0.2223 T=0.5372)  lr=3.0e-04  0.0s
+[muon epoch  17/100] train=0.7114 (E=0.7921 T=0.6306)  val=0.3856 (E=0.2296 T=0.5416)  lr=2.9e-04  0.0s
+[muon epoch  18/100] train=0.6875 (E=0.7631 T=0.6119)  val=0.3943 (E=0.2441 T=0.5445)  lr=2.9e-04  0.0s
+[muon epoch  19/100] train=0.6681 (E=0.7402 T=0.5961)  val=0.4021 (E=0.2635 T=0.5407)  lr=2.9e-04  0.0s
+[muon epoch  20/100] train=0.6478 (E=0.7156 T=0.5801)  val=0.4172 (E=0.2893 T=0.5451)  lr=2.9e-04  0.0s
+[muon epoch  21/100] train=0.6331 (E=0.6958 T=0.5704)  val=0.4316 (E=0.3112 T=0.5520)  lr=2.9e-04  0.0s
+[muon epoch  22/100] train=0.6223 (E=0.6753 T=0.5694)  val=0.4423 (E=0.3230 T=0.5616)  lr=2.9e-04  0.0s
+[muon epoch  23/100] train=0.6058 (E=0.6545 T=0.5571)  val=0.4524 (E=0.3264 T=0.5784)  lr=2.8e-04  0.0s
+[muon epoch  24/100] train=0.5881 (E=0.6370 T=0.5392)  val=0.4516 (E=0.3117 T=0.5914)  lr=2.8e-04  0.0s
+[muon epoch  25/100] train=0.5730 (E=0.6190 T=0.5270)  val=0.4545 (E=0.3090 T=0.6001)  lr=2.8e-04  0.0s
+[muon epoch  26/100] train=0.5585 (E=0.5964 T=0.5205)  val=0.4588 (E=0.3169 T=0.6007)  lr=2.8e-04  0.0s
+[muon epoch  27/100] train=0.5410 (E=0.5689 T=0.5132)  val=0.4572 (E=0.3205 T=0.5940)  lr=2.7e-04  0.0s
+[muon epoch  28/100] train=0.5242 (E=0.5466 T=0.5018)  val=0.4548 (E=0.3250 T=0.5846)  lr=2.7e-04  0.0s
+[muon epoch  29/100] train=0.5183 (E=0.5340 T=0.5026)  val=0.4429 (E=0.3030 T=0.5828)  lr=2.7e-04  0.0s
+[muon epoch  30/100] train=0.4927 (E=0.4966 T=0.4889)  val=0.4426 (E=0.2775 T=0.6077)  lr=2.6e-04  0.0s
+[muon epoch  31/100] train=0.5033 (E=0.5020 T=0.5045)  val=0.4295 (E=0.2830 T=0.5760)  lr=2.6e-04  0.0s
+[muon epoch  32/100] train=0.4727 (E=0.4602 T=0.4852)  val=0.4380 (E=0.2905 T=0.5854)  lr=2.6e-04  0.0s
+[muon epoch  33/100] train=0.4695 (E=0.4494 T=0.4895)  val=0.4232 (E=0.2668 T=0.5795)  lr=2.5e-04  0.0s
+[muon epoch  34/100] train=0.4438 (E=0.4292 T=0.4585)  val=0.4367 (E=0.2593 T=0.6141)  lr=2.5e-04  0.0s
+[muon epoch  35/100] train=0.4615 (E=0.4315 T=0.4915)  val=0.4282 (E=0.2777 T=0.5788)  lr=2.4e-04  0.0s
+[muon epoch  36/100] train=0.4308 (E=0.4043 T=0.4573)  val=0.4341 (E=0.2950 T=0.5732)  lr=2.4e-04  0.0s
+[muon epoch  37/100] train=0.4344 (E=0.4074 T=0.4614)  val=0.4195 (E=0.2666 T=0.5725)  lr=2.4e-04  0.0s
+[muon epoch  38/100] train=0.4152 (E=0.3735 T=0.4568)  val=0.4123 (E=0.2556 T=0.5690)  lr=2.3e-04  0.0s
+[muon epoch  39/100] train=0.4168 (E=0.3927 T=0.4408)  val=0.4173 (E=0.2648 T=0.5698)  lr=2.3e-04  0.0s
+[muon epoch  40/100] train=0.3995 (E=0.3558 T=0.4432)  val=0.4181 (E=0.2776 T=0.5587)  lr=2.2e-04  0.0s
+[muon epoch  41/100] train=0.3944 (E=0.3514 T=0.4374)  val=0.4112 (E=0.2662 T=0.5562)  lr=2.2e-04  0.0s
+[muon epoch  42/100] train=0.3827 (E=0.3374 T=0.4280)  val=0.4054 (E=0.2492 T=0.5615)  lr=2.1e-04  0.0s
+[muon epoch  43/100] train=0.3763 (E=0.3282 T=0.4245)  val=0.4044 (E=0.2480 T=0.5609)  lr=2.1e-04  0.0s
+[muon epoch  44/100] train=0.3787 (E=0.3244 T=0.4329)  val=0.3995 (E=0.2457 T=0.5533)  lr=2.0e-04  0.0s
+[muon epoch  45/100] train=0.3703 (E=0.3157 T=0.4249)  val=0.3987 (E=0.2388 T=0.5587)  lr=2.0e-04  0.0s
+[muon epoch  46/100] train=0.3613 (E=0.3080 T=0.4147)  val=0.4017 (E=0.2438 T=0.5596)  lr=1.9e-04  0.0s
+[muon epoch  47/100] train=0.3554 (E=0.2987 T=0.4121)  val=0.4034 (E=0.2476 T=0.5592)  lr=1.9e-04  0.0s
+[muon epoch  48/100] train=0.3496 (E=0.2912 T=0.4079)  val=0.4035 (E=0.2487 T=0.5582)  lr=1.8e-04  0.0s
+[muon epoch  49/100] train=0.3456 (E=0.2868 T=0.4045)  val=0.4040 (E=0.2526 T=0.5554)  lr=1.8e-04  0.0s
+[muon epoch  50/100] train=0.3406 (E=0.2789 T=0.4023)  val=0.4032 (E=0.2548 T=0.5517)  lr=1.7e-04  0.0s
+[muon epoch  51/100] train=0.3379 (E=0.2767 T=0.3991)  val=0.4017 (E=0.2515 T=0.5520)  lr=1.7e-04  0.0s
+[muon epoch  52/100] train=0.3330 (E=0.2706 T=0.3953)  val=0.4020 (E=0.2443 T=0.5598)  lr=1.6e-04  0.0s
+[muon epoch  53/100] train=0.3310 (E=0.2666 T=0.3954)  val=0.4017 (E=0.2400 T=0.5634)  lr=1.6e-04  0.0s
+[muon epoch  54/100] train=0.3291 (E=0.2636 T=0.3945)  val=0.4001 (E=0.2429 T=0.5574)  lr=1.5e-04  0.0s
+[muon epoch  55/100] train=0.3212 (E=0.2544 T=0.3881)  val=0.3994 (E=0.2417 T=0.5572)  lr=1.5e-04  0.0s
+[muon epoch  56/100] train=0.3182 (E=0.2502 T=0.3861)  val=0.3979 (E=0.2405 T=0.5554)  lr=1.4e-04  0.0s
+[muon epoch  57/100] train=0.3145 (E=0.2461 T=0.3828)  val=0.3951 (E=0.2400 T=0.5503)  lr=1.4e-04  0.0s
+[muon epoch  58/100] train=0.3121 (E=0.2424 T=0.3819)  val=0.3919 (E=0.2373 T=0.5465)  lr=1.3e-04  0.0s
+[muon epoch  59/100] train=0.3089 (E=0.2383 T=0.3795)  val=0.3889 (E=0.2323 T=0.5455)  lr=1.3e-04  0.0s
+[muon epoch  60/100] train=0.3055 (E=0.2351 T=0.3759)  val=0.3870 (E=0.2303 T=0.5437)  lr=1.2e-04  0.0s
+[muon epoch  61/100] train=0.3025 (E=0.2327 T=0.3723)  val=0.3855 (E=0.2311 T=0.5399)  lr=1.2e-04  0.0s
+[muon epoch  62/100] train=0.2994 (E=0.2282 T=0.3705)  val=0.3844 (E=0.2313 T=0.5375)  lr=1.1e-04  0.0s
+[muon epoch  63/100] train=0.2969 (E=0.2252 T=0.3686)  val=0.3839 (E=0.2310 T=0.5368)  lr=1.1e-04  0.0s
+[muon epoch  64/100] train=0.2952 (E=0.2236 T=0.3667)  val=0.3840 (E=0.2310 T=0.5371)  lr=1.0e-04  0.0s
+[muon epoch  65/100] train=0.2923 (E=0.2200 T=0.3645)  val=0.3844 (E=0.2326 T=0.5361)  lr=9.7e-05  0.0s
+[muon epoch  66/100] train=0.2897 (E=0.2169 T=0.3625)  val=0.3850 (E=0.2338 T=0.5362)  lr=9.2e-05  0.0s
+[muon epoch  67/100] train=0.2882 (E=0.2153 T=0.3611)  val=0.3850 (E=0.2335 T=0.5366)  lr=8.7e-05  0.0s
+[muon epoch  68/100] train=0.2857 (E=0.2124 T=0.3589)  val=0.3844 (E=0.2301 T=0.5387)  lr=8.3e-05  0.0s
+[muon epoch  69/100] train=0.2835 (E=0.2097 T=0.3572)  val=0.3842 (E=0.2261 T=0.5424)  lr=7.8e-05  0.0s
+[muon epoch  70/100] train=0.2830 (E=0.2096 T=0.3564)  val=0.3842 (E=0.2247 T=0.5438)  lr=7.4e-05  0.0s
+[muon epoch  71/100] train=0.2814 (E=0.2078 T=0.3550)  val=0.3840 (E=0.2261 T=0.5419)  lr=6.9e-05  0.0s
+[muon epoch  72/100] train=0.2788 (E=0.2042 T=0.3534)  val=0.3841 (E=0.2281 T=0.5402)  lr=6.5e-05  0.0s
+[muon epoch  73/100] train=0.2771 (E=0.2025 T=0.3517)  val=0.3845 (E=0.2298 T=0.5393)  lr=6.1e-05  0.0s
+[muon epoch  74/100] train=0.2760 (E=0.2016 T=0.3504)  val=0.3848 (E=0.2310 T=0.5385)  lr=5.6e-05  0.0s
+[muon epoch  75/100] train=0.2747 (E=0.2002 T=0.3491)  val=0.3846 (E=0.2312 T=0.5380)  lr=5.2e-05  0.0s
+[muon epoch  76/100] train=0.2733 (E=0.1986 T=0.3480)  val=0.3840 (E=0.2309 T=0.5371)  lr=4.9e-05  0.0s
+[muon epoch  77/100] train=0.2721 (E=0.1974 T=0.3468)  val=0.3833 (E=0.2310 T=0.5357)  lr=4.5e-05  0.0s
+[muon epoch  78/100] train=0.2711 (E=0.1964 T=0.3458)  val=0.3828 (E=0.2310 T=0.5345)  lr=4.1e-05  0.0s
+[muon epoch  79/100] train=0.2703 (E=0.1955 T=0.3451)  val=0.3825 (E=0.2307 T=0.5342)  lr=3.8e-05  0.0s
+[muon epoch  80/100] train=0.2697 (E=0.1947 T=0.3447)  val=0.3824 (E=0.2301 T=0.5347)  lr=3.4e-05  0.0s
+[muon epoch  81/100] train=0.2689 (E=0.1939 T=0.3438)  val=0.3824 (E=0.2291 T=0.5357)  lr=3.1e-05  0.0s
+[muon epoch  82/100] train=0.2680 (E=0.1932 T=0.3428)  val=0.3823 (E=0.2282 T=0.5363)  lr=2.8e-05  0.0s
+[muon epoch  83/100] train=0.2673 (E=0.1925 T=0.3420)  val=0.3821 (E=0.2274 T=0.5367)  lr=2.5e-05  0.0s
+[muon epoch  84/100] train=0.2666 (E=0.1919 T=0.3413)  val=0.3819 (E=0.2267 T=0.5370)  lr=2.2e-05  0.0s
+[muon epoch  85/100] train=0.2660 (E=0.1914 T=0.3406)  val=0.3817 (E=0.2259 T=0.5375)  lr=2.0e-05  0.0s
+[muon epoch  86/100] train=0.2655 (E=0.1910 T=0.3400)  val=0.3816 (E=0.2253 T=0.5380)  lr=1.7e-05  0.0s
+[muon epoch  87/100] train=0.2651 (E=0.1906 T=0.3397)  val=0.3816 (E=0.2248 T=0.5384)  lr=1.5e-05  0.0s
+[muon epoch  88/100] train=0.2647 (E=0.1902 T=0.3392)  val=0.3815 (E=0.2247 T=0.5383)  lr=1.3e-05  0.0s
+[muon epoch  89/100] train=0.2645 (E=0.1900 T=0.3389)  val=0.3815 (E=0.2245 T=0.5385)  lr=1.1e-05  0.0s
+[muon epoch  90/100] train=0.2642 (E=0.1898 T=0.3386)  val=0.3816 (E=0.2244 T=0.5389)  lr=9.1e-06  0.0s
+[muon epoch  91/100] train=0.2641 (E=0.1896 T=0.3385)  val=0.3817 (E=0.2242 T=0.5391)  lr=7.5e-06  0.0s
+[muon epoch  92/100] train=0.2639 (E=0.1894 T=0.3383)  val=0.3817 (E=0.2242 T=0.5392)  lr=6.1e-06  0.0s
+[muon epoch  93/100] train=0.2637 (E=0.1893 T=0.3382)  val=0.3817 (E=0.2242 T=0.5393)  lr=4.8e-06  0.0s
+[muon epoch  94/100] train=0.2636 (E=0.1891 T=0.3381)  val=0.3817 (E=0.2241 T=0.5393)  lr=3.7e-06  0.0s
+[muon epoch  95/100] train=0.2635 (E=0.1890 T=0.3380)  val=0.3817 (E=0.2241 T=0.5393)  lr=2.8e-06  0.0s
+[muon epoch  96/100] train=0.2634 (E=0.1889 T=0.3379)  val=0.3817 (E=0.2241 T=0.5393)  lr=2.1e-06  0.0s
+[muon epoch  97/100] train=0.2634 (E=0.1889 T=0.3379)  val=0.3817 (E=0.2241 T=0.5393)  lr=1.6e-06  0.0s
+[muon epoch  98/100] train=0.2633 (E=0.1888 T=0.3378)  val=0.3817 (E=0.2241 T=0.5394)  lr=1.2e-06  0.0s
+[muon epoch  99/100] train=0.2633 (E=0.1888 T=0.3378)  val=0.3817 (E=0.2240 T=0.5394)  lr=1.0e-06  0.0s
+[muon epoch 100/100] train=0.2633 (E=0.1887 T=0.3378)  val=0.3817 (E=0.2240 T=0.5394)  lr=1.0e-06  0.0s
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_muon_train_curves.png
+[muon adam done] best val 0.3743 at epoch 13
+
+========================================================================
+[muon] Phase 2: L-BFGS fine-tuning (full-batch)
+========================================================================
+[lbfgs] loaded Adam best epoch=13 val=0.374267
+[lbfgs] full train batch on cuda: 315 samples
+  [lbfgs iter   0] loss=0.814651 (E=0.882926 T=0.746376)  val=0.374267 (E=0.196469 T=0.552066)
+  [lbfgs iter   1] loss=0.812845 (E=0.880790 T=0.744901)  val=0.373851 (E=0.196000 T=0.551703)  <- NEW BEST (saved)
+  [lbfgs iter   2] loss=0.805080 (E=0.871785 T=0.738375)  val=0.372289 (E=0.194421 T=0.550157)  <- NEW BEST (saved)
+  [lbfgs iter   3] loss=0.765259 (E=0.843241 T=0.687277)  val=0.384600 (E=0.227295 T=0.541906)
+  [lbfgs iter   4] loss=0.732371 (E=0.798461 T=0.666281)  val=0.384827 (E=0.222678 T=0.546977)
+  [lbfgs iter   5] loss=0.714577 (E=0.790778 T=0.638376)  val=0.383443 (E=0.230945 T=0.535941)
+  [lbfgs iter   6] loss=0.697984 (E=0.776116 T=0.619853)  val=0.395573 (E=0.247670 T=0.543476)
+  [lbfgs iter   7] loss=0.687673 (E=0.763868 T=0.611478)  val=0.393160 (E=0.247932 T=0.538388)
+  [lbfgs iter   8] loss=0.671510 (E=0.702410 T=0.640611)  val=0.424673 (E=0.281485 T=0.567861)
+  [lbfgs iter   9] loss=0.660308 (E=0.691388 T=0.629229)  val=0.403577 (E=0.263282 T=0.543871)
+  [lbfgs iter  10] loss=0.654548 (E=0.696272 T=0.612825)  val=0.400459 (E=0.259020 T=0.541898)
+  [lbfgs iter  11] loss=0.644765 (E=0.681782 T=0.607748)  val=0.408799 (E=0.268366 T=0.549232)
+  [lbfgs iter  12] loss=0.625831 (E=0.641850 T=0.609812)  val=0.458683 (E=0.324247 T=0.593118)
+  [lbfgs iter  13] loss=0.604402 (E=0.616354 T=0.592450)  val=0.505781 (E=0.374725 T=0.636837)
+  [lbfgs iter  14] loss=0.569512 (E=0.569005 T=0.570020)  val=0.551328 (E=0.383951 T=0.718706)
+  [lbfgs iter  15] loss=0.545177 (E=0.522094 T=0.568261)  val=0.601599 (E=0.398652 T=0.804546)
+  [lbfgs iter  16] loss=0.517333 (E=0.474195 T=0.560471)  val=0.581245 (E=0.367182 T=0.795307)
+  [lbfgs iter  17] loss=0.498640 (E=0.456809 T=0.540471)  val=0.550584 (E=0.364311 T=0.736857)
+  [lbfgs iter  18] loss=0.476769 (E=0.419843 T=0.533694)  val=0.538704 (E=0.360952 T=0.716456)
+  [lbfgs iter  19] loss=0.452657 (E=0.381257 T=0.524058)  val=0.469513 (E=0.305673 T=0.633354)
+  [lbfgs iter  20] loss=0.438181 (E=0.359854 T=0.516508)  val=0.506288 (E=0.351454 T=0.661121)
+  [lbfgs iter  21] loss=0.428582 (E=0.348463 T=0.508700)  val=0.502308 (E=0.332454 T=0.672162)
+  [lbfgs iter  22] loss=0.418999 (E=0.341547 T=0.496451)  val=0.499942 (E=0.301992 T=0.697891)
+  [lbfgs iter  23] loss=0.408614 (E=0.338436 T=0.478791)  val=0.498047 (E=0.271120 T=0.724973)
+  [lbfgs iter  24] loss=0.387548 (E=0.320070 T=0.455027)  val=0.493311 (E=0.245215 T=0.741406)
+  [lbfgs iter  25] loss=0.357431 (E=0.282636 T=0.432227)  val=0.497380 (E=0.226736 T=0.768024)
+  [lbfgs iter  26] loss=0.341026 (E=0.259577 T=0.422474)  val=0.463740 (E=0.254702 T=0.672778)
+  [lbfgs iter  27] loss=0.321013 (E=0.242477 T=0.399549)  val=0.459807 (E=0.281372 T=0.638243)
+  [lbfgs iter  28] loss=0.316767 (E=0.241885 T=0.391649)  val=0.461428 (E=0.291954 T=0.630902)
+  [lbfgs iter  29] loss=0.311803 (E=0.236622 T=0.386985)  val=0.454924 (E=0.292830 T=0.617019)
+  [lbfgs iter  30] loss=0.302919 (E=0.227230 T=0.378607)  val=0.458605 (E=0.297855 T=0.619356)
+  [lbfgs iter  31] loss=0.290155 (E=0.210435 T=0.369875)  val=0.442509 (E=0.281007 T=0.604011)
+  [lbfgs iter  32] loss=0.288711 (E=0.197342 T=0.380079)  val=0.445652 (E=0.255619 T=0.635685)
+  [lbfgs iter  33] loss=0.284914 (E=0.201199 T=0.368628)  val=0.441115 (E=0.266672 T=0.615558)
+  [lbfgs iter  34] loss=0.279772 (E=0.195946 T=0.363597)  val=0.427665 (E=0.256470 T=0.598860)
+  [lbfgs iter  35] loss=0.276343 (E=0.193284 T=0.359402)  val=0.417460 (E=0.246100 T=0.588820)
+  [lbfgs iter  36] loss=0.271523 (E=0.189094 T=0.353953)  val=0.408467 (E=0.243661 T=0.573273)
+  [lbfgs iter  37] loss=0.265647 (E=0.183694 T=0.347601)  val=0.398787 (E=0.233982 T=0.563591)
+  [lbfgs iter  38] loss=0.257844 (E=0.177582 T=0.338105)  val=0.396809 (E=0.225223 T=0.568395)
+  [lbfgs iter  39] loss=0.264915 (E=0.197020 T=0.332811)  val=0.402725 (E=0.222778 T=0.582673)
+  [lbfgs iter  40] loss=0.255576 (E=0.176189 T=0.334963)  val=0.398393 (E=0.224312 T=0.572475)
+  [lbfgs iter  41] loss=0.251430 (E=0.171351 T=0.331508)  val=0.405327 (E=0.222464 T=0.588189)
+  [lbfgs iter  42] loss=0.248220 (E=0.167374 T=0.329066)  val=0.416194 (E=0.225321 T=0.607067)
+  [lbfgs iter  43] loss=0.244756 (E=0.164459 T=0.325053)  val=0.425560 (E=0.228513 T=0.622607)
+  [lbfgs iter  44] loss=0.239030 (E=0.161344 T=0.316717)  val=0.437593 (E=0.233698 T=0.641488)
+  [lbfgs iter  45] loss=0.238661 (E=0.168925 T=0.308396)  val=0.443569 (E=0.265336 T=0.621802)
+  [lbfgs iter  46] loss=0.235825 (E=0.161798 T=0.309852)  val=0.438982 (E=0.248370 T=0.629594)
+  [lbfgs iter  47] loss=0.231686 (E=0.158471 T=0.304901)  val=0.450099 (E=0.249704 T=0.650494)
+  [lbfgs iter  48] loss=0.229617 (E=0.155798 T=0.303435)  val=0.440696 (E=0.246138 T=0.635254)
+  [lbfgs iter  49] loss=0.227275 (E=0.152518 T=0.302032)  val=0.429734 (E=0.240861 T=0.618608)
+  [lbfgs iter  50] loss=0.223679 (E=0.148430 T=0.298927)  val=0.420042 (E=0.234292 T=0.605792)
+  [lbfgs iter  51] loss=0.216851 (E=0.143442 T=0.290260)  val=0.413736 (E=0.223354 T=0.604119)
+  [lbfgs iter  52] loss=0.214771 (E=0.147092 T=0.282450)  val=0.436606 (E=0.220140 T=0.653071)
+  [lbfgs iter  53] loss=0.209405 (E=0.139978 T=0.278831)  val=0.438487 (E=0.214909 T=0.662064)
+  [lbfgs iter  54] loss=0.207932 (E=0.137566 T=0.278298)  val=0.435923 (E=0.218560 T=0.653287)
+  [lbfgs iter  55] loss=0.205912 (E=0.135813 T=0.276011)  val=0.437276 (E=0.221509 T=0.653043)
+  [lbfgs iter  56] loss=0.201863 (E=0.133133 T=0.270593)  val=0.430396 (E=0.225582 T=0.635210)
+  [lbfgs iter  57] loss=0.197702 (E=0.130187 T=0.265217)  val=0.420895 (E=0.228043 T=0.613747)
+  [lbfgs iter  58] loss=0.200056 (E=0.138365 T=0.261747)  val=0.418579 (E=0.231602 T=0.605556)
+  [lbfgs iter  59] loss=0.194625 (E=0.129438 T=0.259812)  val=0.417942 (E=0.229016 T=0.606868)
+  [lbfgs iter  60] loss=0.190074 (E=0.124816 T=0.255333)  val=0.415388 (E=0.238923 T=0.591853)
+  [lbfgs iter  61] loss=0.188438 (E=0.123508 T=0.253368)  val=0.420047 (E=0.239242 T=0.600851)
+  [lbfgs iter  62] loss=0.186700 (E=0.122386 T=0.251013)  val=0.427767 (E=0.239249 T=0.616284)
+  [lbfgs iter  63] loss=0.184382 (E=0.120663 T=0.248101)  val=0.437038 (E=0.239542 T=0.634535)
+  [lbfgs iter  64] loss=0.179581 (E=0.117491 T=0.241670)  val=0.437199 (E=0.238419 T=0.635980)
+  [lbfgs iter  65] loss=0.175157 (E=0.116341 T=0.233973)  val=0.435816 (E=0.242422 T=0.629209)
+  [lbfgs iter  66] loss=0.172027 (E=0.115596 T=0.228458)  val=0.421906 (E=0.248658 T=0.595155)
+  [lbfgs iter  67] loss=0.171073 (E=0.114715 T=0.227432)  val=0.412128 (E=0.249557 T=0.574699)
+  [lbfgs iter  68] loss=0.170392 (E=0.114030 T=0.226755)  val=0.410802 (E=0.248004 T=0.573601)
+  [lbfgs iter  69] loss=0.166260 (E=0.110526 T=0.221994)  val=0.405319 (E=0.240449 T=0.570189)
+  [lbfgs iter  70] loss=0.163212 (E=0.109145 T=0.217280)  val=0.405519 (E=0.228212 T=0.582825)
+  [lbfgs iter  71] loss=0.161664 (E=0.108761 T=0.214567)  val=0.410008 (E=0.218506 T=0.601510)
+  [lbfgs iter  72] loss=0.159938 (E=0.107026 T=0.212850)  val=0.408712 (E=0.222685 T=0.594739)
+  [lbfgs iter  73] loss=0.158504 (E=0.106301 T=0.210707)  val=0.408637 (E=0.224283 T=0.592991)
+  [lbfgs iter  74] loss=0.156472 (E=0.105440 T=0.207504)  val=0.408534 (E=0.224012 T=0.593057)
+  [lbfgs iter  75] loss=0.153304 (E=0.104039 T=0.202568)  val=0.410790 (E=0.224137 T=0.597442)
+  [lbfgs iter  76] loss=0.153491 (E=0.103959 T=0.203023)  val=0.411485 (E=0.221163 T=0.601807)
+  [lbfgs iter  77] loss=0.151839 (E=0.103086 T=0.200592)  val=0.410698 (E=0.222557 T=0.598838)
+  [lbfgs iter  78] loss=0.149590 (E=0.102507 T=0.196673)  val=0.419919 (E=0.220168 T=0.619670)
+  [lbfgs iter  79] loss=0.148602 (E=0.102398 T=0.194805)  val=0.424818 (E=0.219866 T=0.629770)
+  [lbfgs iter  80] loss=0.147360 (E=0.101814 T=0.192906)  val=0.424380 (E=0.221690 T=0.627069)
+  [lbfgs iter  81] loss=0.144699 (E=0.100896 T=0.188502)  val=0.421440 (E=0.227248 T=0.615632)
+  [lbfgs iter  82] loss=0.142109 (E=0.099932 T=0.184286)  val=0.417527 (E=0.231956 T=0.603099)
+  [lbfgs iter  83] loss=0.140384 (E=0.100045 T=0.180723)  val=0.411108 (E=0.232511 T=0.589704)
+  [lbfgs iter  84] loss=0.138931 (E=0.099112 T=0.178751)  val=0.410192 (E=0.230026 T=0.590357)
+  [lbfgs iter  85] loss=0.137666 (E=0.098596 T=0.176737)  val=0.412193 (E=0.225704 T=0.598683)
+  [lbfgs iter  86] loss=0.135746 (E=0.097417 T=0.174075)  val=0.414489 (E=0.221789 T=0.607188)
+  [lbfgs iter  87] loss=0.132101 (E=0.094454 T=0.169747)  val=0.417812 (E=0.215512 T=0.620112)
+  [lbfgs iter  88] loss=0.131216 (E=0.094308 T=0.168123)  val=0.441679 (E=0.221793 T=0.661566)
+  [lbfgs iter  89] loss=0.128161 (E=0.092039 T=0.164284)  val=0.442817 (E=0.214768 T=0.670867)
+  [lbfgs iter  90] loss=0.127029 (E=0.091358 T=0.162699)  val=0.428136 (E=0.214653 T=0.641619)
+  [lbfgs iter  91] loss=0.126322 (E=0.090943 T=0.161701)  val=0.427982 (E=0.214246 T=0.641718)
+  [lbfgs iter  92] loss=0.123394 (E=0.089773 T=0.157015)  val=0.418112 (E=0.204490 T=0.631734)
+  [lbfgs iter  93] loss=0.123969 (E=0.091756 T=0.156183)  val=0.423737 (E=0.194730 T=0.652743)
+  [lbfgs iter  94] loss=0.122052 (E=0.088924 T=0.155180)  val=0.420247 (E=0.199924 T=0.640569)
+  [lbfgs iter  95] loss=0.121280 (E=0.088468 T=0.154092)  val=0.416848 (E=0.197705 T=0.635990)
+  [lbfgs iter  96] loss=0.119938 (E=0.088137 T=0.151739)  val=0.408026 (E=0.193806 T=0.622245)
+  [lbfgs iter  97] loss=0.128133 (E=0.104734 T=0.151532)  val=0.394704 (E=0.189077 T=0.600332)
+  [lbfgs iter  98] loss=0.119364 (E=0.087840 T=0.150887)  val=0.405043 (E=0.192766 T=0.617320)
+  [lbfgs iter  99] loss=0.118408 (E=0.087011 T=0.149805)  val=0.400847 (E=0.193253 T=0.608441)
+  [lbfgs iter 100] loss=0.115925 (E=0.084920 T=0.146929)  val=0.395687 (E=0.196407 T=0.594967)
+  [lbfgs iter 101] loss=0.113949 (E=0.083767 T=0.144132)  val=0.391741 (E=0.199177 T=0.584305)
+  [lbfgs iter 102] loss=0.111217 (E=0.082880 T=0.139555)  val=0.381451 (E=0.202505 T=0.560398)
+  [lbfgs iter 103] loss=0.116959 (E=0.091517 T=0.142401)  val=0.394318 (E=0.198773 T=0.589862)
+  [lbfgs iter 104] loss=0.110390 (E=0.082668 T=0.138112)  val=0.384006 (E=0.201293 T=0.566718)
+  [lbfgs iter 105] loss=0.108805 (E=0.082353 T=0.135257)  val=0.377604 (E=0.202009 T=0.553199)
+  [lbfgs iter 106] loss=0.107403 (E=0.081467 T=0.133340)  val=0.378217 (E=0.200886 T=0.555548)
+  [lbfgs iter 107] loss=0.105467 (E=0.080113 T=0.130821)  val=0.382594 (E=0.202849 T=0.562338)
+  [lbfgs iter 108] loss=0.106688 (E=0.081868 T=0.131508)  val=0.404557 (E=0.202187 T=0.606926)
+  [lbfgs iter 109] loss=0.104747 (E=0.079561 T=0.129934)  val=0.390022 (E=0.202477 T=0.577568)
+  [lbfgs iter 110] loss=0.103674 (E=0.078465 T=0.128882)  val=0.393450 (E=0.203753 T=0.583146)
+  [lbfgs iter 111] loss=0.101954 (E=0.077085 T=0.126823)  val=0.397553 (E=0.205605 T=0.589500)
+  [lbfgs iter 112] loss=0.102879 (E=0.080417 T=0.125341)  val=0.399841 (E=0.206055 T=0.593627)
+  [lbfgs iter 113] loss=0.101124 (E=0.076642 T=0.125606)  val=0.398499 (E=0.205768 T=0.591230)
+  [lbfgs iter 114] loss=0.100020 (E=0.075931 T=0.124109)  val=0.395304 (E=0.206313 T=0.584296)
+  [lbfgs iter 115] loss=0.098676 (E=0.075404 T=0.121948)  val=0.390349 (E=0.203308 T=0.577389)
+  [lbfgs iter 116] loss=0.097421 (E=0.074796 T=0.120046)  val=0.388159 (E=0.198985 T=0.577332)
+  [lbfgs iter 117] loss=0.095625 (E=0.073398 T=0.117851)  val=0.385274 (E=0.195548 T=0.575000)
+  [lbfgs iter 118] loss=0.099800 (E=0.078969 T=0.120631)  val=0.421531 (E=0.189054 T=0.654007)
+  [lbfgs iter 119] loss=0.095144 (E=0.073177 T=0.117111)  val=0.392656 (E=0.193609 T=0.591704)
+  [lbfgs iter 120] loss=0.094091 (E=0.072269 T=0.115913)  val=0.394104 (E=0.194659 T=0.593549)
+  [lbfgs iter 121] loss=0.093012 (E=0.071709 T=0.114316)  val=0.400630 (E=0.197374 T=0.603887)
+  [lbfgs iter 122] loss=0.091549 (E=0.071188 T=0.111910)  val=0.408836 (E=0.203463 T=0.614209)
+  [lbfgs iter 123] loss=0.094842 (E=0.075061 T=0.114623)  val=0.405480 (E=0.209158 T=0.601803)
+  [lbfgs iter 124] loss=0.090958 (E=0.070977 T=0.110939)  val=0.407847 (E=0.205039 T=0.610655)
+  [lbfgs iter 125] loss=0.089777 (E=0.070223 T=0.109330)  val=0.414361 (E=0.208131 T=0.620592)
+  [lbfgs iter 126] loss=0.088793 (E=0.069882 T=0.107704)  val=0.414230 (E=0.209705 T=0.618755)
+  [lbfgs iter 127] loss=0.088595 (E=0.070632 T=0.106559)  val=0.418673 (E=0.209555 T=0.627791)
+  [lbfgs iter 128] loss=0.087866 (E=0.069303 T=0.106429)  val=0.414294 (E=0.208179 T=0.620410)
+  [lbfgs iter 129] loss=0.087364 (E=0.068766 T=0.105962)  val=0.411766 (E=0.207272 T=0.616259)
+  [lbfgs iter 130] loss=0.086686 (E=0.068222 T=0.105150)  val=0.410556 (E=0.206414 T=0.614699)
+  [lbfgs iter 131] loss=0.085800 (E=0.067512 T=0.104087)  val=0.410220 (E=0.205944 T=0.614496)
+  [lbfgs iter 132] loss=0.084860 (E=0.068105 T=0.101616)  val=0.399711 (E=0.202276 T=0.597146)
+  [lbfgs iter 133] loss=0.083654 (E=0.066893 T=0.100415)  val=0.415240 (E=0.200420 T=0.630061)
+  [lbfgs iter 134] loss=0.083037 (E=0.066165 T=0.099909)  val=0.410540 (E=0.201544 T=0.619536)
+  [lbfgs iter 135] loss=0.082513 (E=0.065627 T=0.099399)  val=0.407646 (E=0.201871 T=0.613421)
+  [lbfgs iter 136] loss=0.081831 (E=0.064922 T=0.098740)  val=0.405691 (E=0.202044 T=0.609339)
+  [lbfgs iter 137] loss=0.080772 (E=0.063974 T=0.097570)  val=0.405726 (E=0.201181 T=0.610272)
+  [lbfgs iter 138] loss=0.082050 (E=0.065370 T=0.098730)  val=0.401807 (E=0.199538 T=0.604077)
+  [lbfgs iter 139] loss=0.080324 (E=0.063620 T=0.097027)  val=0.404372 (E=0.200582 T=0.608161)
+  [lbfgs iter 140] loss=0.079722 (E=0.063349 T=0.096096)  val=0.405984 (E=0.199019 T=0.612950)
+  [lbfgs iter 141] loss=0.079159 (E=0.063166 T=0.095152)  val=0.409271 (E=0.197080 T=0.621462)
+  [lbfgs iter 142] loss=0.078661 (E=0.062987 T=0.094334)  val=0.409008 (E=0.195936 T=0.622080)
+  [lbfgs iter 143] loss=0.077967 (E=0.062405 T=0.093528)  val=0.411344 (E=0.195221 T=0.627467)
+  [lbfgs iter 144] loss=0.077343 (E=0.062068 T=0.092618)  val=0.410715 (E=0.195993 T=0.625436)
+  [lbfgs iter 145] loss=0.076861 (E=0.061917 T=0.091804)  val=0.408818 (E=0.197468 T=0.620169)
+  [lbfgs iter 146] loss=0.076494 (E=0.061599 T=0.091388)  val=0.412565 (E=0.198006 T=0.627124)
+  [lbfgs iter 147] loss=0.075930 (E=0.061254 T=0.090607)  val=0.420558 (E=0.198183 T=0.642932)
+  [lbfgs iter 148] loss=0.075448 (E=0.060953 T=0.089943)  val=0.427241 (E=0.197643 T=0.656839)
+  [lbfgs iter 149] loss=0.074909 (E=0.060533 T=0.089285)  val=0.431593 (E=0.196603 T=0.666582)
+  [lbfgs iter 150] loss=0.074176 (E=0.060051 T=0.088301)  val=0.437381 (E=0.196010 T=0.678752)
+  [lbfgs iter 151] loss=0.073818 (E=0.059835 T=0.087802)  val=0.446894 (E=0.194874 T=0.698914)
+  [lbfgs iter 152] loss=0.072919 (E=0.059237 T=0.086600)  val=0.440595 (E=0.196597 T=0.684594)
+[lbfgs] early stop: 150 closure calls with no val improvement (best val=0.372289 at iter 2)
+[lbfgs] 153 iterations in 1.9s
+[lbfgs] best val=0.372289 at iter 2 (Adam was 0.374267, gain=0.001979)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_muon_train_curves.png
+[muon done] best val 0.3723  -> /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_muon.pt
+[save] /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered/fnn_muon_target_vs_pred.png
+>>> Running 03_train_recon.py 
+========================================================================
+v6/03_train_recon.py — recon on combined dual-species predictions
+========================================================================
+training data   : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_01_recentered
+fnn checkpoints : /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_02_recentered  (fnn_electron.pt + fnn_muon.pt)
+device          : cuda
+batch           : 256
+epochs          : 300
+lr              : 3e-05
+feats/det       : 4  (x, y, E, T)
+seed            : 1
+[load] corpus in 0.0s  primary=(700, 5)
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.36448249220848083
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.3722887635231018
+[dual] combined predictions in 0.2s  E mean=2.74 std=2.78  T mean=0.447 std=0.524
+[target raw] dx in [-0.991, 0.984]  dy in [-0.992, 0.954]  dz in [-0.150, 0.490]  logE in [0.003, 0.997]
+[target stats] mean=[0.14582711458206177, -0.07772061228752136, 0.15879911184310913, 0.5268356204032898]  std=[0.7037233710289001, 0.6436468958854675, 0.19830374419689178, 0.2916623055934906]
+[split] train pairs=630  val pairs=70
+[norm] recon per-det stats (from combined predictions)  mean=[22.36530303955078, 3126.1298828125, 2.7445714473724365, 0.4473070502281189]  std=[857.2158203125, 378.3501281738281, 2.7811765670776367, 0.5244783163070679]
+[model] recon params=732,676
+[epoch   1/300] train=1.0296 val=1.0688 (dx=0.6730 dy=0.2612 dz=0.0529 logE=0.0817)  0.9s
+[epoch   2/300] train=1.0276 val=1.0694 (dx=0.6730 dy=0.2620 dz=0.0529 logE=0.0814)  0.0s
+[epoch   3/300] train=1.0291 val=1.0684 (dx=0.6716 dy=0.2625 dz=0.0530 logE=0.0813)  0.0s
+[epoch   4/300] train=1.0257 val=1.0674 (dx=0.6705 dy=0.2628 dz=0.0530 logE=0.0812)  0.0s
+[epoch   5/300] train=1.0261 val=1.0663 (dx=0.6694 dy=0.2627 dz=0.0530 logE=0.0811)  0.0s
+[epoch   6/300] train=1.0228 val=1.0645 (dx=0.6680 dy=0.2625 dz=0.0530 logE=0.0810)  0.0s
+[epoch   7/300] train=1.0222 val=1.0637 (dx=0.6674 dy=0.2623 dz=0.0531 logE=0.0809)  0.0s
+[epoch   8/300] train=1.0230 val=1.0623 (dx=0.6665 dy=0.2618 dz=0.0531 logE=0.0809)  0.0s
+[epoch   9/300] train=1.0174 val=1.0604 (dx=0.6648 dy=0.2617 dz=0.0531 logE=0.0808)  0.0s
+[epoch  10/300] train=1.0205 val=1.0586 (dx=0.6632 dy=0.2616 dz=0.0532 logE=0.0807)  0.0s
+[epoch  11/300] train=1.0166 val=1.0568 (dx=0.6615 dy=0.2615 dz=0.0532 logE=0.0806)  0.0s
+[epoch  12/300] train=1.0173 val=1.0545 (dx=0.6596 dy=0.2613 dz=0.0532 logE=0.0804)  0.0s
+[epoch  13/300] train=1.0127 val=1.0524 (dx=0.6574 dy=0.2614 dz=0.0532 logE=0.0803)  0.0s
+[epoch  14/300] train=1.0132 val=1.0492 (dx=0.6545 dy=0.2613 dz=0.0533 logE=0.0801)  0.0s
+[epoch  15/300] train=1.0119 val=1.0462 (dx=0.6520 dy=0.2610 dz=0.0533 logE=0.0799)  0.0s
+[epoch  16/300] train=1.0133 val=1.0433 (dx=0.6496 dy=0.2605 dz=0.0533 logE=0.0798)  0.0s
+[epoch  17/300] train=1.0083 val=1.0407 (dx=0.6475 dy=0.2602 dz=0.0533 logE=0.0797)  0.0s
+[epoch  18/300] train=1.0072 val=1.0384 (dx=0.6458 dy=0.2598 dz=0.0533 logE=0.0795)  0.0s
+[epoch  19/300] train=1.0039 val=1.0358 (dx=0.6439 dy=0.2592 dz=0.0534 logE=0.0793)  0.0s
+[epoch  20/300] train=1.0048 val=1.0330 (dx=0.6419 dy=0.2586 dz=0.0534 logE=0.0791)  0.0s
+[epoch  21/300] train=1.0043 val=1.0297 (dx=0.6397 dy=0.2577 dz=0.0534 logE=0.0789)  0.0s
+[epoch  22/300] train=0.9999 val=1.0269 (dx=0.6379 dy=0.2571 dz=0.0534 logE=0.0786)  0.0s
+[epoch  23/300] train=0.9976 val=1.0237 (dx=0.6359 dy=0.2562 dz=0.0534 logE=0.0783)  0.0s
+[epoch  24/300] train=0.9968 val=1.0194 (dx=0.6327 dy=0.2553 dz=0.0534 logE=0.0780)  0.0s
+[epoch  25/300] train=0.9965 val=1.0154 (dx=0.6298 dy=0.2545 dz=0.0534 logE=0.0777)  0.0s
+[epoch  26/300] train=0.9936 val=1.0107 (dx=0.6263 dy=0.2537 dz=0.0534 logE=0.0773)  0.0s
+[epoch  27/300] train=0.9916 val=1.0060 (dx=0.6227 dy=0.2529 dz=0.0534 logE=0.0769)  0.0s
+[epoch  28/300] train=0.9866 val=1.0022 (dx=0.6198 dy=0.2525 dz=0.0534 logE=0.0765)  0.0s
+[epoch  29/300] train=0.9883 val=0.9992 (dx=0.6171 dy=0.2526 dz=0.0534 logE=0.0760)  0.0s
+[epoch  30/300] train=0.9862 val=0.9959 (dx=0.6144 dy=0.2526 dz=0.0534 logE=0.0756)  0.0s
+[epoch  31/300] train=0.9826 val=0.9919 (dx=0.6109 dy=0.2525 dz=0.0534 logE=0.0751)  0.0s
+[epoch  32/300] train=0.9842 val=0.9872 (dx=0.6073 dy=0.2520 dz=0.0534 logE=0.0745)  0.0s
+[epoch  33/300] train=0.9780 val=0.9819 (dx=0.6031 dy=0.2515 dz=0.0534 logE=0.0740)  0.0s
+[epoch  34/300] train=0.9789 val=0.9765 (dx=0.5986 dy=0.2512 dz=0.0533 logE=0.0734)  0.0s
+[epoch  35/300] train=0.9774 val=0.9721 (dx=0.5949 dy=0.2511 dz=0.0533 logE=0.0728)  0.0s
+[epoch  36/300] train=0.9731 val=0.9677 (dx=0.5912 dy=0.2510 dz=0.0533 logE=0.0722)  0.0s
+[epoch  37/300] train=0.9682 val=0.9631 (dx=0.5873 dy=0.2510 dz=0.0532 logE=0.0716)  0.0s
+[epoch  38/300] train=0.9676 val=0.9588 (dx=0.5839 dy=0.2508 dz=0.0532 logE=0.0709)  0.0s
+[epoch  39/300] train=0.9697 val=0.9544 (dx=0.5805 dy=0.2505 dz=0.0531 logE=0.0703)  0.0s
+[epoch  40/300] train=0.9669 val=0.9509 (dx=0.5782 dy=0.2500 dz=0.0531 logE=0.0696)  0.0s
+[epoch  41/300] train=0.9680 val=0.9482 (dx=0.5762 dy=0.2500 dz=0.0530 logE=0.0689)  0.0s
+[epoch  42/300] train=0.9626 val=0.9461 (dx=0.5751 dy=0.2498 dz=0.0529 logE=0.0682)  0.0s
+[epoch  43/300] train=0.9638 val=0.9444 (dx=0.5740 dy=0.2499 dz=0.0528 logE=0.0676)  0.0s
+[epoch  44/300] train=0.9594 val=0.9422 (dx=0.5727 dy=0.2498 dz=0.0528 logE=0.0669)  0.0s
+[epoch  45/300] train=0.9571 val=0.9405 (dx=0.5717 dy=0.2499 dz=0.0527 logE=0.0663)  0.0s
+[epoch  46/300] train=0.9596 val=0.9382 (dx=0.5700 dy=0.2499 dz=0.0526 logE=0.0657)  0.0s
+[epoch  47/300] train=0.9583 val=0.9354 (dx=0.5679 dy=0.2500 dz=0.0526 logE=0.0650)  0.0s
+[epoch  48/300] train=0.9564 val=0.9330 (dx=0.5661 dy=0.2500 dz=0.0525 logE=0.0644)  0.0s
+[epoch  49/300] train=0.9499 val=0.9309 (dx=0.5646 dy=0.2500 dz=0.0524 logE=0.0638)  0.0s
+[epoch  50/300] train=0.9532 val=0.9275 (dx=0.5625 dy=0.2494 dz=0.0524 logE=0.0632)  0.0s
+[epoch  51/300] train=0.9534 val=0.9261 (dx=0.5617 dy=0.2493 dz=0.0523 logE=0.0627)  0.0s
+[epoch  52/300] train=0.9577 val=0.9245 (dx=0.5606 dy=0.2494 dz=0.0523 logE=0.0622)  0.0s
+[epoch  53/300] train=0.9514 val=0.9236 (dx=0.5601 dy=0.2496 dz=0.0522 logE=0.0617)  0.0s
+[epoch  54/300] train=0.9485 val=0.9235 (dx=0.5603 dy=0.2498 dz=0.0522 logE=0.0612)  0.0s
+[epoch  55/300] train=0.9519 val=0.9230 (dx=0.5605 dy=0.2497 dz=0.0521 logE=0.0607)  0.0s
+[epoch  56/300] train=0.9533 val=0.9224 (dx=0.5606 dy=0.2495 dz=0.0520 logE=0.0602)  0.0s
+[epoch  57/300] train=0.9476 val=0.9216 (dx=0.5604 dy=0.2496 dz=0.0520 logE=0.0597)  0.0s
+[epoch  58/300] train=0.9482 val=0.9214 (dx=0.5604 dy=0.2498 dz=0.0519 logE=0.0593)  0.0s
+[epoch  59/300] train=0.9528 val=0.9205 (dx=0.5597 dy=0.2500 dz=0.0518 logE=0.0589)  0.0s
+[epoch  60/300] train=0.9471 val=0.9190 (dx=0.5586 dy=0.2501 dz=0.0517 logE=0.0585)  0.0s
+[epoch  61/300] train=0.9480 val=0.9184 (dx=0.5582 dy=0.2503 dz=0.0517 logE=0.0582)  0.0s
+[epoch  62/300] train=0.9474 val=0.9173 (dx=0.5574 dy=0.2505 dz=0.0516 logE=0.0578)  0.0s
+[epoch  63/300] train=0.9437 val=0.9167 (dx=0.5569 dy=0.2508 dz=0.0516 logE=0.0575)  0.0s
+[epoch  64/300] train=0.9435 val=0.9159 (dx=0.5562 dy=0.2510 dz=0.0515 logE=0.0572)  0.0s
+[epoch  65/300] train=0.9390 val=0.9158 (dx=0.5563 dy=0.2511 dz=0.0515 logE=0.0569)  0.0s
+[epoch  66/300] train=0.9432 val=0.9145 (dx=0.5557 dy=0.2509 dz=0.0514 logE=0.0564)  0.0s
+[epoch  67/300] train=0.9393 val=0.9133 (dx=0.5553 dy=0.2506 dz=0.0514 logE=0.0560)  0.0s
+[epoch  68/300] train=0.9448 val=0.9116 (dx=0.5543 dy=0.2503 dz=0.0513 logE=0.0556)  0.0s
+[epoch  69/300] train=0.9386 val=0.9102 (dx=0.5540 dy=0.2498 dz=0.0513 logE=0.0551)  0.0s
+[epoch  70/300] train=0.9379 val=0.9084 (dx=0.5530 dy=0.2495 dz=0.0512 logE=0.0547)  0.0s
+[epoch  71/300] train=0.9406 val=0.9078 (dx=0.5532 dy=0.2492 dz=0.0512 logE=0.0543)  0.0s
+[epoch  72/300] train=0.9403 val=0.9080 (dx=0.5537 dy=0.2492 dz=0.0511 logE=0.0540)  0.0s
+[epoch  73/300] train=0.9406 val=0.9093 (dx=0.5551 dy=0.2493 dz=0.0511 logE=0.0538)  0.0s
+[epoch  74/300] train=0.9438 val=0.9113 (dx=0.5568 dy=0.2498 dz=0.0511 logE=0.0536)  0.0s
+[epoch  75/300] train=0.9367 val=0.9136 (dx=0.5589 dy=0.2502 dz=0.0510 logE=0.0534)  0.0s
+[epoch  76/300] train=0.9417 val=0.9148 (dx=0.5602 dy=0.2504 dz=0.0510 logE=0.0531)  0.0s
+[epoch  77/300] train=0.9336 val=0.9156 (dx=0.5610 dy=0.2507 dz=0.0510 logE=0.0529)  0.0s
+[epoch  78/300] train=0.9376 val=0.9159 (dx=0.5614 dy=0.2510 dz=0.0509 logE=0.0526)  0.0s
+[epoch  79/300] train=0.9368 val=0.9154 (dx=0.5609 dy=0.2512 dz=0.0509 logE=0.0522)  0.0s
+[epoch  80/300] train=0.9350 val=0.9134 (dx=0.5593 dy=0.2513 dz=0.0509 logE=0.0519)  0.0s
+[epoch  81/300] train=0.9388 val=0.9117 (dx=0.5582 dy=0.2511 dz=0.0508 logE=0.0516)  0.0s
+[epoch  82/300] train=0.9307 val=0.9097 (dx=0.5568 dy=0.2508 dz=0.0508 logE=0.0513)  0.0s
+[epoch  83/300] train=0.9334 val=0.9085 (dx=0.5561 dy=0.2505 dz=0.0508 logE=0.0511)  0.0s
+[epoch  84/300] train=0.9370 val=0.9068 (dx=0.5552 dy=0.2500 dz=0.0508 logE=0.0508)  0.0s
+[epoch  85/300] train=0.9348 val=0.9060 (dx=0.5549 dy=0.2497 dz=0.0508 logE=0.0506)  0.0s
+[epoch  86/300] train=0.9336 val=0.9055 (dx=0.5547 dy=0.2497 dz=0.0507 logE=0.0504)  0.0s
+[epoch  87/300] train=0.9331 val=0.9055 (dx=0.5545 dy=0.2500 dz=0.0507 logE=0.0502)  0.0s
+[epoch  88/300] train=0.9370 val=0.9059 (dx=0.5549 dy=0.2504 dz=0.0507 logE=0.0500)  0.0s
+[epoch  89/300] train=0.9343 val=0.9063 (dx=0.5552 dy=0.2506 dz=0.0507 logE=0.0498)  0.0s
+[epoch  90/300] train=0.9295 val=0.9063 (dx=0.5555 dy=0.2506 dz=0.0506 logE=0.0496)  0.0s
+[epoch  91/300] train=0.9319 val=0.9076 (dx=0.5570 dy=0.2507 dz=0.0506 logE=0.0494)  0.0s
+[epoch  92/300] train=0.9311 val=0.9086 (dx=0.5584 dy=0.2504 dz=0.0506 logE=0.0492)  0.0s
+[epoch  93/300] train=0.9319 val=0.9088 (dx=0.5592 dy=0.2501 dz=0.0505 logE=0.0490)  0.0s
+[epoch  94/300] train=0.9285 val=0.9089 (dx=0.5595 dy=0.2501 dz=0.0505 logE=0.0487)  0.0s
+[epoch  95/300] train=0.9254 val=0.9082 (dx=0.5594 dy=0.2499 dz=0.0504 logE=0.0485)  0.0s
+[epoch  96/300] train=0.9271 val=0.9081 (dx=0.5595 dy=0.2499 dz=0.0504 logE=0.0483)  0.0s
+[epoch  97/300] train=0.9318 val=0.9063 (dx=0.5581 dy=0.2498 dz=0.0503 logE=0.0481)  0.0s
+[epoch  98/300] train=0.9282 val=0.9037 (dx=0.5560 dy=0.2495 dz=0.0503 logE=0.0478)  0.0s
+[epoch  99/300] train=0.9314 val=0.9013 (dx=0.5543 dy=0.2491 dz=0.0503 logE=0.0476)  0.0s
+[epoch 100/300] train=0.9322 val=0.8997 (dx=0.5530 dy=0.2490 dz=0.0503 logE=0.0475)  0.0s
+[epoch 101/300] train=0.9246 val=0.9001 (dx=0.5527 dy=0.2496 dz=0.0503 logE=0.0475)  0.0s
+[epoch 102/300] train=0.9253 val=0.9016 (dx=0.5536 dy=0.2504 dz=0.0503 logE=0.0474)  0.0s
+[epoch 103/300] train=0.9243 val=0.9023 (dx=0.5539 dy=0.2508 dz=0.0502 logE=0.0474)  0.0s
+[epoch 104/300] train=0.9240 val=0.9027 (dx=0.5545 dy=0.2507 dz=0.0502 logE=0.0473)  0.0s
+[epoch 105/300] train=0.9293 val=0.9019 (dx=0.5537 dy=0.2509 dz=0.0502 logE=0.0471)  0.0s
+[epoch 106/300] train=0.9258 val=0.9015 (dx=0.5538 dy=0.2506 dz=0.0502 logE=0.0469)  0.0s
+[epoch 107/300] train=0.9187 val=0.9010 (dx=0.5541 dy=0.2501 dz=0.0502 logE=0.0467)  0.0s
+[epoch 108/300] train=0.9259 val=0.9002 (dx=0.5544 dy=0.2493 dz=0.0501 logE=0.0465)  0.0s
+[epoch 109/300] train=0.9247 val=0.8994 (dx=0.5541 dy=0.2490 dz=0.0501 logE=0.0462)  0.0s
+[epoch 110/300] train=0.9198 val=0.8990 (dx=0.5539 dy=0.2490 dz=0.0501 logE=0.0461)  0.0s
+[epoch 111/300] train=0.9321 val=0.8986 (dx=0.5533 dy=0.2493 dz=0.0500 logE=0.0460)  0.0s
+[epoch 112/300] train=0.9241 val=0.8982 (dx=0.5528 dy=0.2495 dz=0.0500 logE=0.0458)  0.0s
+[epoch 113/300] train=0.9249 val=0.8990 (dx=0.5537 dy=0.2495 dz=0.0500 logE=0.0458)  0.0s
+[epoch 114/300] train=0.9272 val=0.8994 (dx=0.5541 dy=0.2495 dz=0.0500 logE=0.0457)  0.0s
+[epoch 115/300] train=0.9183 val=0.9002 (dx=0.5550 dy=0.2495 dz=0.0500 logE=0.0457)  0.0s
+[epoch 116/300] train=0.9234 val=0.9000 (dx=0.5551 dy=0.2494 dz=0.0500 logE=0.0456)  0.0s
+[epoch 117/300] train=0.9216 val=0.8989 (dx=0.5544 dy=0.2491 dz=0.0500 logE=0.0454)  0.0s
+[epoch 118/300] train=0.9285 val=0.8990 (dx=0.5547 dy=0.2490 dz=0.0500 logE=0.0452)  0.0s
+[epoch 119/300] train=0.9243 val=0.8983 (dx=0.5544 dy=0.2488 dz=0.0500 logE=0.0451)  0.0s
+[epoch 120/300] train=0.9212 val=0.8966 (dx=0.5541 dy=0.2477 dz=0.0500 logE=0.0449)  0.0s
+[epoch 121/300] train=0.9205 val=0.8965 (dx=0.5547 dy=0.2471 dz=0.0500 logE=0.0448)  0.0s
+[epoch 122/300] train=0.9204 val=0.8971 (dx=0.5553 dy=0.2471 dz=0.0500 logE=0.0447)  0.0s
+[epoch 123/300] train=0.9197 val=0.8978 (dx=0.5558 dy=0.2473 dz=0.0500 logE=0.0448)  0.0s
+[epoch 124/300] train=0.9217 val=0.8983 (dx=0.5562 dy=0.2473 dz=0.0500 logE=0.0449)  0.0s
+[epoch 125/300] train=0.9179 val=0.8972 (dx=0.5550 dy=0.2474 dz=0.0500 logE=0.0448)  0.0s
+[epoch 126/300] train=0.9107 val=0.8951 (dx=0.5530 dy=0.2474 dz=0.0500 logE=0.0448)  0.0s
+[epoch 127/300] train=0.9198 val=0.8933 (dx=0.5512 dy=0.2475 dz=0.0499 logE=0.0447)  0.0s
+[epoch 128/300] train=0.9180 val=0.8924 (dx=0.5502 dy=0.2476 dz=0.0499 logE=0.0446)  0.0s
+[epoch 129/300] train=0.9233 val=0.8922 (dx=0.5504 dy=0.2474 dz=0.0499 logE=0.0445)  0.0s
+[epoch 130/300] train=0.9165 val=0.8925 (dx=0.5510 dy=0.2474 dz=0.0499 logE=0.0443)  0.0s
+[epoch 131/300] train=0.9194 val=0.8930 (dx=0.5516 dy=0.2473 dz=0.0499 logE=0.0442)  0.0s
+[epoch 132/300] train=0.9163 val=0.8933 (dx=0.5521 dy=0.2473 dz=0.0499 logE=0.0440)  0.0s
+[epoch 133/300] train=0.9171 val=0.8922 (dx=0.5520 dy=0.2466 dz=0.0498 logE=0.0439)  0.0s
+[epoch 134/300] train=0.9151 val=0.8924 (dx=0.5526 dy=0.2462 dz=0.0498 logE=0.0437)  0.0s
+[epoch 135/300] train=0.9136 val=0.8929 (dx=0.5532 dy=0.2462 dz=0.0498 logE=0.0437)  0.0s
+[epoch 136/300] train=0.9199 val=0.8928 (dx=0.5529 dy=0.2465 dz=0.0498 logE=0.0436)  0.0s
+[epoch 137/300] train=0.9190 val=0.8930 (dx=0.5527 dy=0.2470 dz=0.0499 logE=0.0435)  0.0s
+[epoch 138/300] train=0.9176 val=0.8931 (dx=0.5526 dy=0.2473 dz=0.0499 logE=0.0434)  0.0s
+[epoch 139/300] train=0.9161 val=0.8930 (dx=0.5524 dy=0.2475 dz=0.0498 logE=0.0433)  0.0s
+[epoch 140/300] train=0.9191 val=0.8937 (dx=0.5526 dy=0.2481 dz=0.0498 logE=0.0432)  0.0s
+[epoch 141/300] train=0.9154 val=0.8936 (dx=0.5521 dy=0.2485 dz=0.0498 logE=0.0431)  0.0s
+[epoch 142/300] train=0.9154 val=0.8933 (dx=0.5520 dy=0.2486 dz=0.0498 logE=0.0430)  0.0s
+[epoch 143/300] train=0.9133 val=0.8935 (dx=0.5520 dy=0.2488 dz=0.0498 logE=0.0429)  0.0s
+[epoch 144/300] train=0.9193 val=0.8940 (dx=0.5519 dy=0.2495 dz=0.0498 logE=0.0429)  0.0s
+[epoch 145/300] train=0.9116 val=0.8945 (dx=0.5519 dy=0.2501 dz=0.0498 logE=0.0428)  0.0s
+[epoch 146/300] train=0.9152 val=0.8942 (dx=0.5509 dy=0.2508 dz=0.0498 logE=0.0427)  0.0s
+[epoch 147/300] train=0.9169 val=0.8942 (dx=0.5506 dy=0.2512 dz=0.0498 logE=0.0426)  0.0s
+[epoch 148/300] train=0.9091 val=0.8920 (dx=0.5490 dy=0.2510 dz=0.0497 logE=0.0424)  0.0s
+[epoch 149/300] train=0.9161 val=0.8907 (dx=0.5478 dy=0.2510 dz=0.0497 logE=0.0422)  0.0s
+[epoch 150/300] train=0.9114 val=0.8922 (dx=0.5488 dy=0.2516 dz=0.0497 logE=0.0421)  0.0s
+[epoch 151/300] train=0.9108 val=0.8934 (dx=0.5495 dy=0.2522 dz=0.0497 logE=0.0420)  0.0s
+[epoch 152/300] train=0.9125 val=0.8934 (dx=0.5497 dy=0.2521 dz=0.0497 logE=0.0419)  0.0s
+[epoch 153/300] train=0.9175 val=0.8942 (dx=0.5505 dy=0.2522 dz=0.0497 logE=0.0419)  0.0s
+[epoch 154/300] train=0.9170 val=0.8943 (dx=0.5511 dy=0.2517 dz=0.0497 logE=0.0417)  0.0s
+[epoch 155/300] train=0.9176 val=0.8936 (dx=0.5511 dy=0.2511 dz=0.0497 logE=0.0416)  0.0s
+[epoch 156/300] train=0.9078 val=0.8922 (dx=0.5508 dy=0.2503 dz=0.0497 logE=0.0414)  0.0s
+[epoch 157/300] train=0.9189 val=0.8908 (dx=0.5500 dy=0.2498 dz=0.0497 logE=0.0413)  0.0s
+[epoch 158/300] train=0.9117 val=0.8894 (dx=0.5491 dy=0.2494 dz=0.0497 logE=0.0412)  0.0s
+[epoch 159/300] train=0.9090 val=0.8889 (dx=0.5485 dy=0.2496 dz=0.0497 logE=0.0411)  0.0s
+[epoch 160/300] train=0.9130 val=0.8888 (dx=0.5476 dy=0.2503 dz=0.0497 logE=0.0411)  0.0s
+[epoch 161/300] train=0.9137 val=0.8893 (dx=0.5475 dy=0.2511 dz=0.0497 logE=0.0411)  0.0s
+[epoch 162/300] train=0.9109 val=0.8902 (dx=0.5478 dy=0.2517 dz=0.0497 logE=0.0410)  0.0s
+[epoch 163/300] train=0.9108 val=0.8911 (dx=0.5482 dy=0.2522 dz=0.0497 logE=0.0410)  0.0s
+[epoch 164/300] train=0.9045 val=0.8915 (dx=0.5483 dy=0.2526 dz=0.0497 logE=0.0410)  0.0s
+[epoch 165/300] train=0.9071 val=0.8923 (dx=0.5489 dy=0.2528 dz=0.0497 logE=0.0409)  0.0s
+[epoch 166/300] train=0.9129 val=0.8933 (dx=0.5499 dy=0.2528 dz=0.0497 logE=0.0409)  0.0s
+[epoch 167/300] train=0.9069 val=0.8927 (dx=0.5502 dy=0.2520 dz=0.0497 logE=0.0408)  0.0s
+[epoch 168/300] train=0.9149 val=0.8916 (dx=0.5497 dy=0.2515 dz=0.0497 logE=0.0406)  0.0s
+[epoch 169/300] train=0.9130 val=0.8903 (dx=0.5492 dy=0.2510 dz=0.0496 logE=0.0404)  0.0s
+[epoch 170/300] train=0.9098 val=0.8902 (dx=0.5499 dy=0.2503 dz=0.0496 logE=0.0403)  0.0s
+[epoch 171/300] train=0.9068 val=0.8905 (dx=0.5509 dy=0.2498 dz=0.0496 logE=0.0402)  0.0s
+[epoch 172/300] train=0.9119 val=0.8917 (dx=0.5520 dy=0.2499 dz=0.0496 logE=0.0401)  0.0s
+[epoch 173/300] train=0.9054 val=0.8926 (dx=0.5528 dy=0.2501 dz=0.0496 logE=0.0401)  0.0s
+[epoch 174/300] train=0.9097 val=0.8925 (dx=0.5530 dy=0.2498 dz=0.0496 logE=0.0400)  0.0s
+[epoch 175/300] train=0.9073 val=0.8912 (dx=0.5521 dy=0.2495 dz=0.0496 logE=0.0399)  0.0s
+[epoch 176/300] train=0.9162 val=0.8903 (dx=0.5514 dy=0.2495 dz=0.0496 logE=0.0398)  0.0s
+[epoch 177/300] train=0.9114 val=0.8896 (dx=0.5505 dy=0.2497 dz=0.0496 logE=0.0398)  0.0s
+[epoch 178/300] train=0.9106 val=0.8907 (dx=0.5507 dy=0.2504 dz=0.0496 logE=0.0398)  0.0s
+[epoch 179/300] train=0.9072 val=0.8900 (dx=0.5501 dy=0.2505 dz=0.0496 logE=0.0398)  0.0s
+[epoch 180/300] train=0.9057 val=0.8899 (dx=0.5506 dy=0.2500 dz=0.0496 logE=0.0396)  0.0s
+[epoch 181/300] train=0.9051 val=0.8904 (dx=0.5515 dy=0.2498 dz=0.0496 logE=0.0395)  0.0s
+[epoch 182/300] train=0.9058 val=0.8911 (dx=0.5527 dy=0.2495 dz=0.0496 logE=0.0394)  0.0s
+[epoch 183/300] train=0.9080 val=0.8916 (dx=0.5536 dy=0.2491 dz=0.0495 logE=0.0393)  0.0s
+[epoch 184/300] train=0.9075 val=0.8926 (dx=0.5542 dy=0.2497 dz=0.0495 logE=0.0393)  0.0s
+[epoch 185/300] train=0.9025 val=0.8945 (dx=0.5549 dy=0.2508 dz=0.0495 logE=0.0393)  0.0s
+[epoch 186/300] train=0.9047 val=0.8943 (dx=0.5538 dy=0.2518 dz=0.0495 logE=0.0392)  0.0s
+[epoch 187/300] train=0.9066 val=0.8932 (dx=0.5523 dy=0.2523 dz=0.0495 logE=0.0391)  0.0s
+[epoch 188/300] train=0.9072 val=0.8924 (dx=0.5512 dy=0.2527 dz=0.0495 logE=0.0390)  0.0s
+[epoch 189/300] train=0.9050 val=0.8907 (dx=0.5501 dy=0.2523 dz=0.0495 logE=0.0388)  0.0s
+[epoch 190/300] train=0.9037 val=0.8898 (dx=0.5495 dy=0.2522 dz=0.0494 logE=0.0387)  0.0s
+[epoch 191/300] train=0.9058 val=0.8893 (dx=0.5492 dy=0.2521 dz=0.0494 logE=0.0385)  0.0s
+[epoch 192/300] train=0.9047 val=0.8896 (dx=0.5494 dy=0.2524 dz=0.0494 logE=0.0384)  0.0s
+[epoch 193/300] train=0.9005 val=0.8899 (dx=0.5494 dy=0.2528 dz=0.0494 logE=0.0383)  0.0s
+[epoch 194/300] train=0.8961 val=0.8893 (dx=0.5487 dy=0.2529 dz=0.0494 logE=0.0383)  0.0s
+[epoch 195/300] train=0.9044 val=0.8879 (dx=0.5470 dy=0.2532 dz=0.0494 logE=0.0383)  0.0s
+[epoch 196/300] train=0.9084 val=0.8875 (dx=0.5463 dy=0.2535 dz=0.0494 logE=0.0383)  0.0s
+[epoch 197/300] train=0.9047 val=0.8874 (dx=0.5456 dy=0.2540 dz=0.0494 logE=0.0383)  0.0s
+[epoch 198/300] train=0.9023 val=0.8875 (dx=0.5456 dy=0.2541 dz=0.0494 logE=0.0384)  0.0s
+[epoch 199/300] train=0.8936 val=0.8872 (dx=0.5458 dy=0.2537 dz=0.0494 logE=0.0384)  0.0s
+[epoch 200/300] train=0.9029 val=0.8872 (dx=0.5458 dy=0.2538 dz=0.0494 logE=0.0382)  0.0s
+[epoch 201/300] train=0.8971 val=0.8864 (dx=0.5456 dy=0.2534 dz=0.0494 logE=0.0381)  0.0s
+[epoch 202/300] train=0.9005 val=0.8863 (dx=0.5460 dy=0.2530 dz=0.0494 logE=0.0379)  0.0s
+[epoch 203/300] train=0.9024 val=0.8854 (dx=0.5456 dy=0.2526 dz=0.0494 logE=0.0378)  0.0s
+[epoch 204/300] train=0.8964 val=0.8847 (dx=0.5456 dy=0.2522 dz=0.0494 logE=0.0376)  0.0s
+[epoch 205/300] train=0.8996 val=0.8850 (dx=0.5464 dy=0.2519 dz=0.0494 logE=0.0374)  0.0s
+[epoch 206/300] train=0.8955 val=0.8839 (dx=0.5460 dy=0.2514 dz=0.0494 logE=0.0372)  0.0s
+[epoch 207/300] train=0.8982 val=0.8843 (dx=0.5465 dy=0.2514 dz=0.0494 logE=0.0371)  0.0s
+[epoch 208/300] train=0.9054 val=0.8843 (dx=0.5467 dy=0.2512 dz=0.0494 logE=0.0370)  0.0s
+[epoch 209/300] train=0.9027 val=0.8841 (dx=0.5465 dy=0.2513 dz=0.0493 logE=0.0370)  0.0s
+[epoch 210/300] train=0.8994 val=0.8834 (dx=0.5456 dy=0.2515 dz=0.0493 logE=0.0369)  0.0s
+[epoch 211/300] train=0.8958 val=0.8830 (dx=0.5449 dy=0.2519 dz=0.0493 logE=0.0368)  0.0s
+[epoch 212/300] train=0.9005 val=0.8829 (dx=0.5438 dy=0.2530 dz=0.0493 logE=0.0368)  0.0s
+[epoch 213/300] train=0.9010 val=0.8819 (dx=0.5424 dy=0.2535 dz=0.0493 logE=0.0366)  0.0s
+[epoch 214/300] train=0.9020 val=0.8815 (dx=0.5420 dy=0.2536 dz=0.0493 logE=0.0366)  0.0s
+[epoch 215/300] train=0.9075 val=0.8815 (dx=0.5414 dy=0.2542 dz=0.0493 logE=0.0365)  0.0s
+[epoch 216/300] train=0.9004 val=0.8835 (dx=0.5421 dy=0.2555 dz=0.0493 logE=0.0365)  0.0s
+[epoch 217/300] train=0.8972 val=0.8858 (dx=0.5436 dy=0.2564 dz=0.0493 logE=0.0365)  0.0s
+[epoch 218/300] train=0.8930 val=0.8878 (dx=0.5460 dy=0.2561 dz=0.0493 logE=0.0364)  0.0s
+[epoch 219/300] train=0.9013 val=0.8874 (dx=0.5465 dy=0.2554 dz=0.0493 logE=0.0362)  0.0s
+[epoch 220/300] train=0.8958 val=0.8858 (dx=0.5460 dy=0.2544 dz=0.0493 logE=0.0361)  0.0s
+[epoch 221/300] train=0.8951 val=0.8833 (dx=0.5447 dy=0.2534 dz=0.0493 logE=0.0359)  0.0s
+[epoch 222/300] train=0.8911 val=0.8801 (dx=0.5429 dy=0.2522 dz=0.0493 logE=0.0357)  0.0s
+[epoch 223/300] train=0.8958 val=0.8788 (dx=0.5423 dy=0.2515 dz=0.0493 logE=0.0356)  0.0s
+[epoch 224/300] train=0.8893 val=0.8792 (dx=0.5423 dy=0.2519 dz=0.0493 logE=0.0357)  0.0s
+[epoch 225/300] train=0.8958 val=0.8807 (dx=0.5429 dy=0.2528 dz=0.0493 logE=0.0358)  0.0s
+[epoch 226/300] train=0.8943 val=0.8811 (dx=0.5424 dy=0.2536 dz=0.0493 logE=0.0358)  0.0s
+[epoch 227/300] train=0.8950 val=0.8822 (dx=0.5426 dy=0.2545 dz=0.0493 logE=0.0358)  0.0s
+[epoch 228/300] train=0.8913 val=0.8828 (dx=0.5429 dy=0.2548 dz=0.0493 logE=0.0357)  0.0s
+[epoch 229/300] train=0.8994 val=0.8824 (dx=0.5425 dy=0.2550 dz=0.0493 logE=0.0356)  0.0s
+[epoch 230/300] train=0.8946 val=0.8813 (dx=0.5421 dy=0.2544 dz=0.0493 logE=0.0354)  0.0s
+[epoch 231/300] train=0.8895 val=0.8799 (dx=0.5415 dy=0.2539 dz=0.0493 logE=0.0352)  0.0s
+[epoch 232/300] train=0.8943 val=0.8797 (dx=0.5414 dy=0.2540 dz=0.0493 logE=0.0351)  0.0s
+[epoch 233/300] train=0.8967 val=0.8797 (dx=0.5413 dy=0.2541 dz=0.0493 logE=0.0350)  0.0s
+[epoch 234/300] train=0.8931 val=0.8810 (dx=0.5425 dy=0.2544 dz=0.0493 logE=0.0349)  0.0s
+[epoch 235/300] train=0.8910 val=0.8814 (dx=0.5426 dy=0.2546 dz=0.0493 logE=0.0350)  0.0s
+[epoch 236/300] train=0.8912 val=0.8830 (dx=0.5435 dy=0.2552 dz=0.0493 logE=0.0351)  0.0s
+[epoch 237/300] train=0.9007 val=0.8852 (dx=0.5450 dy=0.2557 dz=0.0493 logE=0.0352)  0.0s
+[epoch 238/300] train=0.8920 val=0.8872 (dx=0.5465 dy=0.2562 dz=0.0493 logE=0.0353)  0.0s
+[epoch 239/300] train=0.8958 val=0.8881 (dx=0.5472 dy=0.2564 dz=0.0493 logE=0.0352)  0.0s
+[epoch 240/300] train=0.8864 val=0.8878 (dx=0.5466 dy=0.2567 dz=0.0493 logE=0.0351)  0.0s
+[epoch 241/300] train=0.8921 val=0.8857 (dx=0.5457 dy=0.2558 dz=0.0493 logE=0.0349)  0.0s
+[epoch 242/300] train=0.8924 val=0.8826 (dx=0.5443 dy=0.2545 dz=0.0492 logE=0.0346)  0.0s
+[epoch 243/300] train=0.8904 val=0.8805 (dx=0.5434 dy=0.2536 dz=0.0492 logE=0.0344)  0.0s
+[epoch 244/300] train=0.8902 val=0.8788 (dx=0.5422 dy=0.2532 dz=0.0492 logE=0.0342)  0.0s
+[epoch 245/300] train=0.8892 val=0.8780 (dx=0.5414 dy=0.2533 dz=0.0492 logE=0.0342)  0.0s
+[epoch 246/300] train=0.8875 val=0.8787 (dx=0.5413 dy=0.2541 dz=0.0492 logE=0.0342)  0.0s
+[epoch 247/300] train=0.8900 val=0.8803 (dx=0.5419 dy=0.2550 dz=0.0492 logE=0.0343)  0.0s
+[epoch 248/300] train=0.8881 val=0.8821 (dx=0.5421 dy=0.2563 dz=0.0492 logE=0.0344)  0.0s
+[epoch 249/300] train=0.8873 val=0.8829 (dx=0.5414 dy=0.2578 dz=0.0492 logE=0.0345)  0.0s
+[epoch 250/300] train=0.8893 val=0.8808 (dx=0.5393 dy=0.2579 dz=0.0492 logE=0.0344)  0.0s
+[epoch 251/300] train=0.8901 val=0.8781 (dx=0.5375 dy=0.2573 dz=0.0492 logE=0.0341)  0.0s
+[epoch 252/300] train=0.8837 val=0.8762 (dx=0.5355 dy=0.2575 dz=0.0492 logE=0.0340)  0.0s
+[epoch 253/300] train=0.8884 val=0.8753 (dx=0.5351 dy=0.2571 dz=0.0492 logE=0.0339)  0.0s
+[epoch 254/300] train=0.8907 val=0.8743 (dx=0.5350 dy=0.2564 dz=0.0492 logE=0.0337)  0.0s
+[epoch 255/300] train=0.8907 val=0.8728 (dx=0.5350 dy=0.2551 dz=0.0492 logE=0.0335)  0.0s
+[epoch 256/300] train=0.8882 val=0.8727 (dx=0.5356 dy=0.2545 dz=0.0492 logE=0.0334)  0.0s
+[epoch 257/300] train=0.8845 val=0.8725 (dx=0.5357 dy=0.2543 dz=0.0492 logE=0.0333)  0.0s
+[epoch 258/300] train=0.8913 val=0.8732 (dx=0.5358 dy=0.2549 dz=0.0492 logE=0.0334)  0.0s
+[epoch 259/300] train=0.8918 val=0.8732 (dx=0.5356 dy=0.2550 dz=0.0492 logE=0.0334)  0.0s
+[epoch 260/300] train=0.8859 val=0.8735 (dx=0.5349 dy=0.2560 dz=0.0492 logE=0.0335)  0.0s
+[epoch 261/300] train=0.8830 val=0.8740 (dx=0.5348 dy=0.2565 dz=0.0492 logE=0.0335)  0.0s
+[epoch 262/300] train=0.8874 val=0.8744 (dx=0.5348 dy=0.2569 dz=0.0491 logE=0.0335)  0.0s
+[epoch 263/300] train=0.8834 val=0.8732 (dx=0.5342 dy=0.2565 dz=0.0491 logE=0.0334)  0.0s
+[epoch 264/300] train=0.8822 val=0.8715 (dx=0.5338 dy=0.2554 dz=0.0491 logE=0.0333)  0.0s
+[epoch 265/300] train=0.8848 val=0.8693 (dx=0.5330 dy=0.2541 dz=0.0491 logE=0.0331)  0.0s
+[epoch 266/300] train=0.8802 val=0.8684 (dx=0.5326 dy=0.2538 dz=0.0490 logE=0.0330)  0.0s
+[epoch 267/300] train=0.8829 val=0.8676 (dx=0.5323 dy=0.2534 dz=0.0490 logE=0.0328)  0.0s
+[epoch 268/300] train=0.8801 val=0.8676 (dx=0.5326 dy=0.2533 dz=0.0490 logE=0.0327)  0.0s
+[epoch 269/300] train=0.8761 val=0.8682 (dx=0.5327 dy=0.2538 dz=0.0490 logE=0.0327)  0.0s
+[epoch 270/300] train=0.8880 val=0.8703 (dx=0.5343 dy=0.2543 dz=0.0490 logE=0.0327)  0.0s
+[epoch 271/300] train=0.8795 val=0.8728 (dx=0.5358 dy=0.2553 dz=0.0490 logE=0.0327)  0.0s
+[epoch 272/300] train=0.8740 val=0.8760 (dx=0.5379 dy=0.2564 dz=0.0490 logE=0.0327)  0.0s
+[epoch 273/300] train=0.8794 val=0.8762 (dx=0.5377 dy=0.2569 dz=0.0490 logE=0.0326)  0.0s
+[epoch 274/300] train=0.8852 val=0.8737 (dx=0.5358 dy=0.2566 dz=0.0490 logE=0.0324)  0.0s
+[epoch 275/300] train=0.8745 val=0.8726 (dx=0.5350 dy=0.2564 dz=0.0490 logE=0.0322)  0.0s
+[epoch 276/300] train=0.8816 val=0.8710 (dx=0.5342 dy=0.2559 dz=0.0489 logE=0.0320)  0.0s
+[epoch 277/300] train=0.8800 val=0.8699 (dx=0.5350 dy=0.2543 dz=0.0489 logE=0.0317)  0.0s
+[epoch 278/300] train=0.8746 val=0.8698 (dx=0.5358 dy=0.2537 dz=0.0489 logE=0.0315)  0.0s
+[epoch 279/300] train=0.8865 val=0.8692 (dx=0.5358 dy=0.2531 dz=0.0489 logE=0.0313)  0.0s
+[epoch 280/300] train=0.8784 val=0.8686 (dx=0.5355 dy=0.2530 dz=0.0489 logE=0.0312)  0.0s
+[epoch 281/300] train=0.8796 val=0.8689 (dx=0.5364 dy=0.2526 dz=0.0489 logE=0.0311)  0.0s
+[epoch 282/300] train=0.8760 val=0.8689 (dx=0.5357 dy=0.2531 dz=0.0489 logE=0.0312)  0.0s
+[epoch 283/300] train=0.8737 val=0.8719 (dx=0.5378 dy=0.2539 dz=0.0489 logE=0.0313)  0.0s
+[epoch 284/300] train=0.8749 val=0.8753 (dx=0.5395 dy=0.2554 dz=0.0489 logE=0.0315)  0.0s
+[epoch 285/300] train=0.8796 val=0.8777 (dx=0.5410 dy=0.2561 dz=0.0489 logE=0.0316)  0.0s
+[epoch 286/300] train=0.8783 val=0.8797 (dx=0.5419 dy=0.2571 dz=0.0489 logE=0.0317)  0.0s
+[epoch 287/300] train=0.8806 val=0.8810 (dx=0.5427 dy=0.2577 dz=0.0489 logE=0.0317)  0.0s
+[epoch 288/300] train=0.8776 val=0.8832 (dx=0.5444 dy=0.2582 dz=0.0489 logE=0.0316)  0.0s
+[epoch 289/300] train=0.8790 val=0.8839 (dx=0.5451 dy=0.2583 dz=0.0489 logE=0.0315)  0.0s
+[epoch 290/300] train=0.8758 val=0.8824 (dx=0.5433 dy=0.2589 dz=0.0489 logE=0.0314)  0.0s
+[epoch 291/300] train=0.8727 val=0.8812 (dx=0.5418 dy=0.2593 dz=0.0489 logE=0.0312)  0.0s
+[epoch 292/300] train=0.8744 val=0.8801 (dx=0.5406 dy=0.2595 dz=0.0489 logE=0.0311)  0.0s
+[epoch 293/300] train=0.8761 val=0.8799 (dx=0.5415 dy=0.2586 dz=0.0489 logE=0.0310)  0.0s
+[epoch 294/300] train=0.8717 val=0.8806 (dx=0.5429 dy=0.2580 dz=0.0488 logE=0.0309)  0.0s
+[epoch 295/300] train=0.8739 val=0.8819 (dx=0.5449 dy=0.2574 dz=0.0488 logE=0.0308)  0.0s
+[epoch 296/300] train=0.8686 val=0.8822 (dx=0.5449 dy=0.2577 dz=0.0488 logE=0.0308)  0.0s
+[epoch 297/300] train=0.8710 val=0.8837 (dx=0.5451 dy=0.2589 dz=0.0488 logE=0.0309)  0.0s
+[epoch 298/300] train=0.8700 val=0.8846 (dx=0.5452 dy=0.2596 dz=0.0488 logE=0.0309)  0.0s
+[epoch 299/300] train=0.8787 val=0.8838 (dx=0.5442 dy=0.2599 dz=0.0488 logE=0.0309)  0.0s
+[epoch 300/300] train=0.8704 val=0.8832 (dx=0.5433 dy=0.2601 dz=0.0488 logE=0.0309)  0.0s
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_03_recentered/recon_train_curves.png
+[adam done] best recon val 0.8676 at epoch 267
+
+========================================================================
+Phase 2: L-BFGS fine-tuning (full-batch)
+========================================================================
+[lbfgs] loaded Adam best  epoch=267  val=0.867573
+[lbfgs] full train batch on cuda: 630 samples
+  [lbfgs iter   0] loss=0.870000 (dx=0.427966 dy=0.366008 dz=0.033159 logE=0.042867)  val=0.867573
+  [lbfgs iter   1] loss=0.869281 (dx=0.427782 dy=0.365565 dz=0.033153 logE=0.042781)  val=0.867389  <- NEW BEST (saved)
+  [lbfgs iter   2] loss=0.863143 (dx=0.426219 dy=0.361749 dz=0.033101 logE=0.042074)  val=0.865941  <- NEW BEST (saved)
+  [lbfgs iter   3] loss=0.819920 (dx=0.415120 dy=0.329060 dz=0.032475 logE=0.043265)  val=0.856322  <- NEW BEST (saved)
+  [lbfgs iter   4] loss=0.783512 (dx=0.403046 dy=0.308040 dz=0.032284 logE=0.040142)  val=0.847423  <- NEW BEST (saved)
+  [lbfgs iter   5] loss=0.752594 (dx=0.388843 dy=0.289432 dz=0.031891 logE=0.042428)  val=0.868674
+  [lbfgs iter   6] loss=0.724021 (dx=0.376057 dy=0.273833 dz=0.031442 logE=0.042689)  val=0.841785  <- NEW BEST (saved)
+  [lbfgs iter   7] loss=0.696542 (dx=0.360580 dy=0.262759 dz=0.030853 logE=0.042350)  val=0.830702  <- NEW BEST (saved)
+  [lbfgs iter   8] loss=0.668783 (dx=0.349553 dy=0.247083 dz=0.030429 logE=0.041717)  val=0.820044  <- NEW BEST (saved)
+  [lbfgs iter   9] loss=0.632047 (dx=0.318002 dy=0.238344 dz=0.029656 logE=0.046045)  val=0.815756  <- NEW BEST (saved)
+  [lbfgs iter  10] loss=0.598683 (dx=0.307039 dy=0.220666 dz=0.029370 logE=0.041608)  val=0.769087  <- NEW BEST (saved)
+  [lbfgs iter  11] loss=0.570442 (dx=0.292209 dy=0.212415 dz=0.028818 logE=0.037000)  val=0.742957  <- NEW BEST (saved)
+  [lbfgs iter  12] loss=0.538009 (dx=0.275191 dy=0.197334 dz=0.028491 logE=0.036993)  val=0.724384  <- NEW BEST (saved)
+  [lbfgs iter  13] loss=0.527163 (dx=0.262092 dy=0.194789 dz=0.027315 logE=0.042967)  val=0.760190
+  [lbfgs iter  14] loss=0.511896 (dx=0.255975 dy=0.188457 dz=0.027760 logE=0.039704)  val=0.727938
+  [lbfgs iter  15] loss=0.493513 (dx=0.241225 dy=0.181310 dz=0.027284 logE=0.043695)  val=0.747334
+  [lbfgs iter  16] loss=0.475621 (dx=0.234567 dy=0.176596 dz=0.027463 logE=0.036996)  val=0.735408
+  [lbfgs iter  17] loss=0.465392 (dx=0.229810 dy=0.173693 dz=0.027353 logE=0.034536)  val=0.724841
+  [lbfgs iter  18] loss=0.440797 (dx=0.213304 dy=0.164969 dz=0.027148 logE=0.035375)  val=0.719458  <- NEW BEST (saved)
+  [lbfgs iter  19] loss=0.407911 (dx=0.193020 dy=0.151289 dz=0.026245 logE=0.037357)  val=0.781562
+  [lbfgs iter  20] loss=0.382785 (dx=0.178675 dy=0.143061 dz=0.026355 logE=0.034694)  val=0.745543
+  [lbfgs iter  21] loss=0.362383 (dx=0.169287 dy=0.137498 dz=0.025966 logE=0.029633)  val=0.748750
+  [lbfgs iter  22] loss=0.351787 (dx=0.164251 dy=0.133794 dz=0.025741 logE=0.028000)  val=0.754864
+  [lbfgs iter  23] loss=0.340278 (dx=0.157950 dy=0.128739 dz=0.025529 logE=0.028060)  val=0.748828
+  [lbfgs iter  24] loss=0.317933 (dx=0.144650 dy=0.118920 dz=0.025018 logE=0.029345)  val=0.723822
+  [lbfgs iter  25] loss=0.302303 (dx=0.136772 dy=0.113387 dz=0.024677 logE=0.027467)  val=0.730067
+  [lbfgs iter  26] loss=0.282974 (dx=0.124912 dy=0.109085 dz=0.024471 logE=0.024506)  val=0.725985
+  [lbfgs iter  27] loss=0.265325 (dx=0.114457 dy=0.102893 dz=0.024244 logE=0.023731)  val=0.728663
+  [lbfgs iter  28] loss=0.256473 (dx=0.109325 dy=0.100050 dz=0.024053 logE=0.023044)  val=0.735169
+  [lbfgs iter  29] loss=0.246842 (dx=0.104033 dy=0.096494 dz=0.023948 logE=0.022367)  val=0.734763
+  [lbfgs iter  30] loss=0.232606 (dx=0.098828 dy=0.089503 dz=0.023670 logE=0.020606)  val=0.745816
+  [lbfgs iter  31] loss=0.224149 (dx=0.094104 dy=0.086594 dz=0.023485 logE=0.019966)  val=0.748374
+  [lbfgs iter  32] loss=0.214530 (dx=0.089663 dy=0.082481 dz=0.023205 logE=0.019181)  val=0.755902
+  [lbfgs iter  33] loss=0.199368 (dx=0.082126 dy=0.076497 dz=0.022717 logE=0.018029)  val=0.750711
+  [lbfgs iter  34] loss=0.186150 (dx=0.077146 dy=0.070576 dz=0.022089 logE=0.016339)  val=0.778126
+  [lbfgs iter  35] loss=0.175561 (dx=0.070366 dy=0.067548 dz=0.021903 logE=0.015744)  val=0.733341
+  [lbfgs iter  36] loss=0.169784 (dx=0.066829 dy=0.065875 dz=0.021761 logE=0.015320)  val=0.715511  <- NEW BEST (saved)
+  [lbfgs iter  37] loss=0.161860 (dx=0.062781 dy=0.063134 dz=0.021508 logE=0.014437)  val=0.696334  <- NEW BEST (saved)
+  [lbfgs iter  38] loss=0.155257 (dx=0.060822 dy=0.060779 dz=0.020893 logE=0.012762)  val=0.700141
+  [lbfgs iter  39] loss=0.145883 (dx=0.054462 dy=0.057796 dz=0.020809 logE=0.012816)  val=0.691918  <- NEW BEST (saved)
+  [lbfgs iter  40] loss=0.141996 (dx=0.052307 dy=0.056466 dz=0.020761 logE=0.012462)  val=0.698690
+  [lbfgs iter  41] loss=0.137820 (dx=0.050405 dy=0.054918 dz=0.020605 logE=0.011892)  val=0.712155
+  [lbfgs iter  42] loss=0.129928 (dx=0.046563 dy=0.051879 dz=0.020338 logE=0.011149)  val=0.718985
+  [lbfgs iter  43] loss=0.121957 (dx=0.042871 dy=0.048842 dz=0.019884 logE=0.010359)  val=0.723242
+  [lbfgs iter  44] loss=0.117191 (dx=0.040177 dy=0.047036 dz=0.019813 logE=0.010166)  val=0.702832
+  [lbfgs iter  45] loss=0.112754 (dx=0.038070 dy=0.045147 dz=0.019674 logE=0.009863)  val=0.691814  <- NEW BEST (saved)
+  [lbfgs iter  46] loss=0.106080 (dx=0.035244 dy=0.042188 dz=0.019333 logE=0.009314)  val=0.683235  <- NEW BEST (saved)
+  [lbfgs iter  47] loss=0.101566 (dx=0.032844 dy=0.040596 dz=0.019016 logE=0.009110)  val=0.686434
+  [lbfgs iter  48] loss=0.097596 (dx=0.031449 dy=0.038826 dz=0.018846 logE=0.008475)  val=0.698216
+  [lbfgs iter  49] loss=0.095104 (dx=0.030341 dy=0.037745 dz=0.018784 logE=0.008233)  val=0.698707
+  [lbfgs iter  50] loss=0.090720 (dx=0.028621 dy=0.035506 dz=0.018654 logE=0.007939)  val=0.697554
+  [lbfgs iter  51] loss=0.087017 (dx=0.026972 dy=0.033864 dz=0.018473 logE=0.007708)  val=0.689132
+  [lbfgs iter  52] loss=0.083927 (dx=0.025606 dy=0.032517 dz=0.018293 logE=0.007512)  val=0.686617
+  [lbfgs iter  53] loss=0.080163 (dx=0.024053 dy=0.030862 dz=0.018043 logE=0.007204)  val=0.687889
+  [lbfgs iter  54] loss=0.075905 (dx=0.022601 dy=0.028667 dz=0.017744 logE=0.006893)  val=0.694604
+  [lbfgs iter  55] loss=0.072462 (dx=0.021061 dy=0.027243 dz=0.017528 logE=0.006630)  val=0.705192
+  [lbfgs iter  56] loss=0.070302 (dx=0.020282 dy=0.026133 dz=0.017420 logE=0.006466)  val=0.710350
+  [lbfgs iter  57] loss=0.068706 (dx=0.019503 dy=0.025448 dz=0.017364 logE=0.006392)  val=0.711513
+  [lbfgs iter  58] loss=0.066903 (dx=0.018533 dy=0.024738 dz=0.017296 logE=0.006337)  val=0.708253
+  [lbfgs iter  59] loss=0.063681 (dx=0.017156 dy=0.023352 dz=0.017051 logE=0.006122)  val=0.700403
+  [lbfgs iter  60] loss=0.061142 (dx=0.016276 dy=0.022097 dz=0.016817 logE=0.005952)  val=0.699128
+  [lbfgs iter  61] loss=0.059451 (dx=0.015589 dy=0.021295 dz=0.016688 logE=0.005878)  val=0.694288
+  [lbfgs iter  62] loss=0.057414 (dx=0.014903 dy=0.020189 dz=0.016492 logE=0.005830)  val=0.696579
+  [lbfgs iter  63] loss=0.055632 (dx=0.014120 dy=0.019381 dz=0.016400 logE=0.005731)  val=0.699296
+  [lbfgs iter  64] loss=0.054226 (dx=0.013336 dy=0.018868 dz=0.016379 logE=0.005643)  val=0.703694
+  [lbfgs iter  65] loss=0.052116 (dx=0.012326 dy=0.017987 dz=0.016294 logE=0.005509)  val=0.717356
+  [lbfgs iter  66] loss=0.050863 (dx=0.012161 dy=0.017226 dz=0.016099 logE=0.005377)  val=0.735027
+  [lbfgs iter  67] loss=0.049537 (dx=0.011513 dy=0.016639 dz=0.016047 logE=0.005338)  val=0.736683
+  [lbfgs iter  68] loss=0.048493 (dx=0.011119 dy=0.016107 dz=0.015948 logE=0.005319)  val=0.742099
+  [lbfgs iter  69] loss=0.047816 (dx=0.010894 dy=0.015733 dz=0.015893 logE=0.005295)  val=0.744269
+  [lbfgs iter  70] loss=0.046191 (dx=0.010280 dy=0.014988 dz=0.015695 logE=0.005228)  val=0.753614
+  [lbfgs iter  71] loss=0.045120 (dx=0.009916 dy=0.014597 dz=0.015526 logE=0.005081)  val=0.757799
+  [lbfgs iter  72] loss=0.043996 (dx=0.009454 dy=0.013965 dz=0.015527 logE=0.005051)  val=0.755843
+  [lbfgs iter  73] loss=0.043368 (dx=0.009174 dy=0.013702 dz=0.015484 logE=0.005007)  val=0.756416
+  [lbfgs iter  74] loss=0.042622 (dx=0.008872 dy=0.013378 dz=0.015419 logE=0.004953)  val=0.756133
+  [lbfgs iter  75] loss=0.041421 (dx=0.008422 dy=0.012891 dz=0.015222 logE=0.004886)  val=0.763338
+  [lbfgs iter  76] loss=0.040452 (dx=0.008193 dy=0.012348 dz=0.015112 logE=0.004798)  val=0.759199
+  [lbfgs iter  77] loss=0.039820 (dx=0.007996 dy=0.012036 dz=0.015029 logE=0.004760)  val=0.760450
+  [lbfgs iter  78] loss=0.039105 (dx=0.007817 dy=0.011716 dz=0.014898 logE=0.004674)  val=0.763097
+  [lbfgs iter  79] loss=0.038379 (dx=0.007533 dy=0.011425 dz=0.014805 logE=0.004616)  val=0.763198
+  [lbfgs iter  80] loss=0.037644 (dx=0.007289 dy=0.011077 dz=0.014730 logE=0.004548)  val=0.762206
+  [lbfgs iter  81] loss=0.036546 (dx=0.006982 dy=0.010564 dz=0.014577 logE=0.004422)  val=0.762334
+  [lbfgs iter  82] loss=0.036433 (dx=0.007441 dy=0.010390 dz=0.014325 logE=0.004277)  val=0.757372
+  [lbfgs iter  83] loss=0.035997 (dx=0.006906 dy=0.010314 dz=0.014441 logE=0.004336)  val=0.759065
+  [lbfgs iter  84] loss=0.035361 (dx=0.006628 dy=0.010087 dz=0.014375 logE=0.004270)  val=0.758136
+  [lbfgs iter  85] loss=0.034532 (dx=0.006338 dy=0.009750 dz=0.014263 logE=0.004181)  val=0.757028
+  [lbfgs iter  86] loss=0.033665 (dx=0.006132 dy=0.009314 dz=0.014127 logE=0.004093)  val=0.756511
+  [lbfgs iter  87] loss=0.033213 (dx=0.006522 dy=0.008777 dz=0.013909 logE=0.004006)  val=0.759413
+  [lbfgs iter  88] loss=0.032257 (dx=0.005913 dy=0.008531 dz=0.013852 logE=0.003961)  val=0.755577
+  [lbfgs iter  89] loss=0.031906 (dx=0.005688 dy=0.008438 dz=0.013846 logE=0.003934)  val=0.756073
+  [lbfgs iter  90] loss=0.031358 (dx=0.005438 dy=0.008284 dz=0.013774 logE=0.003863)  val=0.759045
+  [lbfgs iter  91] loss=0.030780 (dx=0.005388 dy=0.007989 dz=0.013630 logE=0.003774)  val=0.765152
+  [lbfgs iter  92] loss=0.030263 (dx=0.005254 dy=0.007762 dz=0.013525 logE=0.003722)  val=0.767945
+  [lbfgs iter  93] loss=0.029260 (dx=0.005041 dy=0.007332 dz=0.013286 logE=0.003601)  val=0.773325
+  [lbfgs iter  94] loss=0.028635 (dx=0.004855 dy=0.007104 dz=0.013151 logE=0.003526)  val=0.776328
+  [lbfgs iter  95] loss=0.027784 (dx=0.004667 dy=0.006783 dz=0.012916 logE=0.003418)  val=0.781124
+  [lbfgs iter  96] loss=0.027416 (dx=0.004632 dy=0.006665 dz=0.012773 logE=0.003345)  val=0.783197
+  [lbfgs iter  97] loss=0.026887 (dx=0.004364 dy=0.006394 dz=0.012792 logE=0.003337)  val=0.781173
+  [lbfgs iter  98] loss=0.026596 (dx=0.004222 dy=0.006274 dz=0.012783 logE=0.003317)  val=0.780172
+  [lbfgs iter  99] loss=0.026293 (dx=0.004108 dy=0.006169 dz=0.012732 logE=0.003284)  val=0.780329
+  [lbfgs iter 100] loss=0.025684 (dx=0.003990 dy=0.005900 dz=0.012581 logE=0.003213)  val=0.780380
+  [lbfgs iter 101] loss=0.027764 (dx=0.005152 dy=0.007136 dz=0.012299 logE=0.003177)  val=0.791567
+  [lbfgs iter 102] loss=0.025471 (dx=0.003902 dy=0.005870 dz=0.012511 logE=0.003189)  val=0.782400
+  [lbfgs iter 103] loss=0.025050 (dx=0.003928 dy=0.005613 dz=0.012361 logE=0.003148)  val=0.782932
+  [lbfgs iter 104] loss=0.024722 (dx=0.003876 dy=0.005456 dz=0.012268 logE=0.003122)  val=0.781940
+  [lbfgs iter 105] loss=0.024232 (dx=0.003845 dy=0.005263 dz=0.012061 logE=0.003064)  val=0.782043
+  [lbfgs iter 106] loss=0.023771 (dx=0.003636 dy=0.005131 dz=0.011993 logE=0.003011)  val=0.778331
+  [lbfgs iter 107] loss=0.023424 (dx=0.003501 dy=0.004973 dz=0.011984 logE=0.002966)  val=0.777612
+  [lbfgs iter 108] loss=0.022986 (dx=0.003348 dy=0.004841 dz=0.011901 logE=0.002896)  val=0.777336
+  [lbfgs iter 109] loss=0.022635 (dx=0.003232 dy=0.004724 dz=0.011828 logE=0.002851)  val=0.780723
+  [lbfgs iter 110] loss=0.022300 (dx=0.003179 dy=0.004584 dz=0.011722 logE=0.002816)  val=0.784011
+  [lbfgs iter 111] loss=0.021886 (dx=0.003235 dy=0.004391 dz=0.011504 logE=0.002756)  val=0.789383
+  [lbfgs iter 112] loss=0.021635 (dx=0.003141 dy=0.004346 dz=0.011417 logE=0.002731)  val=0.791496
+  [lbfgs iter 113] loss=0.021429 (dx=0.003032 dy=0.004249 dz=0.011423 logE=0.002726)  val=0.789632
+  [lbfgs iter 114] loss=0.021124 (dx=0.002882 dy=0.004128 dz=0.011403 logE=0.002711)  val=0.787413
+  [lbfgs iter 115] loss=0.020899 (dx=0.002818 dy=0.004034 dz=0.011352 logE=0.002695)  val=0.787276
+  [lbfgs iter 116] loss=0.020539 (dx=0.002760 dy=0.003924 dz=0.011198 logE=0.002657)  val=0.788005
+  [lbfgs iter 117] loss=0.020476 (dx=0.003066 dy=0.003856 dz=0.010948 logE=0.002607)  val=0.790742
+  [lbfgs iter 118] loss=0.019956 (dx=0.002676 dy=0.003704 dz=0.010975 logE=0.002601)  val=0.790243
+  [lbfgs iter 119] loss=0.019764 (dx=0.002607 dy=0.003641 dz=0.010929 logE=0.002587)  val=0.791166
+  [lbfgs iter 120] loss=0.019479 (dx=0.002546 dy=0.003545 dz=0.010823 logE=0.002564)  val=0.793546
+  [lbfgs iter 121] loss=0.019231 (dx=0.002540 dy=0.003487 dz=0.010660 logE=0.002544)  val=0.796973
+  [lbfgs iter 122] loss=0.018934 (dx=0.002428 dy=0.003408 dz=0.010568 logE=0.002529)  val=0.799152
+  [lbfgs iter 123] loss=0.018739 (dx=0.002370 dy=0.003343 dz=0.010511 logE=0.002516)  val=0.799138
+  [lbfgs iter 124] loss=0.018484 (dx=0.002325 dy=0.003258 dz=0.010407 logE=0.002493)  val=0.798817
+  [lbfgs iter 125] loss=0.018330 (dx=0.002409 dy=0.003138 dz=0.010318 logE=0.002466)  val=0.795873
+  [lbfgs iter 126] loss=0.018083 (dx=0.002248 dy=0.003079 dz=0.010296 logE=0.002459)  val=0.796267
+  [lbfgs iter 127] loss=0.017879 (dx=0.002162 dy=0.003033 dz=0.010240 logE=0.002444)  val=0.796125
+  [lbfgs iter 128] loss=0.017718 (dx=0.002144 dy=0.002976 dz=0.010175 logE=0.002424)  val=0.795662
+  [lbfgs iter 129] loss=0.017360 (dx=0.002099 dy=0.002837 dz=0.010053 logE=0.002371)  val=0.795315
+  [lbfgs iter 130] loss=0.018515 (dx=0.003196 dy=0.003187 dz=0.009802 logE=0.002330)  val=0.805786
+  [lbfgs iter 131] loss=0.017240 (dx=0.002114 dy=0.002780 dz=0.009991 logE=0.002355)  val=0.797336
+  [lbfgs iter 132] loss=0.016984 (dx=0.002058 dy=0.002718 dz=0.009887 logE=0.002321)  val=0.797781
+  [lbfgs iter 133] loss=0.016794 (dx=0.002007 dy=0.002651 dz=0.009830 logE=0.002306)  val=0.798233
+  [lbfgs iter 134] loss=0.016548 (dx=0.001973 dy=0.002546 dz=0.009748 logE=0.002282)  val=0.799019
+  [lbfgs iter 135] loss=0.016470 (dx=0.002066 dy=0.002475 dz=0.009673 logE=0.002255)  val=0.800503
+  [lbfgs iter 136] loss=0.016226 (dx=0.001901 dy=0.002426 dz=0.009653 logE=0.002246)  val=0.799311
+  [lbfgs iter 137] loss=0.016083 (dx=0.001834 dy=0.002393 dz=0.009618 logE=0.002237)  val=0.798670
+  [lbfgs iter 138] loss=0.015912 (dx=0.001790 dy=0.002355 dz=0.009544 logE=0.002224)  val=0.798344
+  [lbfgs iter 139] loss=0.015692 (dx=0.001749 dy=0.002298 dz=0.009446 logE=0.002198)  val=0.798308
+  [lbfgs iter 140] loss=0.015598 (dx=0.001897 dy=0.002303 dz=0.009240 logE=0.002159)  val=0.797854
+  [lbfgs iter 141] loss=0.015267 (dx=0.001687 dy=0.002224 dz=0.009223 logE=0.002132)  val=0.796882
+  [lbfgs iter 142] loss=0.015155 (dx=0.001626 dy=0.002179 dz=0.009232 logE=0.002118)  val=0.796353
+  [lbfgs iter 143] loss=0.014999 (dx=0.001593 dy=0.002137 dz=0.009176 logE=0.002093)  val=0.795380
+  [lbfgs iter 144] loss=0.014804 (dx=0.001584 dy=0.002062 dz=0.009087 logE=0.002071)  val=0.795277
+  [lbfgs iter 145] loss=0.014619 (dx=0.001583 dy=0.002043 dz=0.008961 logE=0.002033)  val=0.795737
+  [lbfgs iter 146] loss=0.014463 (dx=0.001540 dy=0.002026 dz=0.008881 logE=0.002015)  val=0.796335
+  [lbfgs iter 147] loss=0.014306 (dx=0.001490 dy=0.001979 dz=0.008842 logE=0.001994)  val=0.798522
+  [lbfgs iter 148] loss=0.014117 (dx=0.001459 dy=0.001911 dz=0.008782 logE=0.001965)  val=0.801355
+  [lbfgs iter 149] loss=0.014131 (dx=0.001578 dy=0.002027 dz=0.008616 logE=0.001910)  val=0.806511
+  [lbfgs iter 150] loss=0.014000 (dx=0.001464 dy=0.001900 dz=0.008700 logE=0.001936)  val=0.803761
+  [lbfgs iter 151] loss=0.013805 (dx=0.001404 dy=0.001836 dz=0.008653 logE=0.001912)  val=0.805202
+  [lbfgs iter 152] loss=0.013635 (dx=0.001364 dy=0.001793 dz=0.008589 logE=0.001889)  val=0.805053
+  [lbfgs iter 153] loss=0.013463 (dx=0.001346 dy=0.001755 dz=0.008502 logE=0.001860)  val=0.804228
+  [lbfgs iter 154] loss=0.013274 (dx=0.001325 dy=0.001717 dz=0.008404 logE=0.001828)  val=0.804293
+  [lbfgs iter 155] loss=0.013330 (dx=0.001516 dy=0.001808 dz=0.008225 logE=0.001781)  val=0.802399
+  [lbfgs iter 156] loss=0.013166 (dx=0.001338 dy=0.001703 dz=0.008321 logE=0.001804)  val=0.803355
+  [lbfgs iter 157] loss=0.012974 (dx=0.001298 dy=0.001653 dz=0.008240 logE=0.001783)  val=0.805524
+  [lbfgs iter 158] loss=0.012840 (dx=0.001268 dy=0.001614 dz=0.008188 logE=0.001771)  val=0.808044
+  [lbfgs iter 159] loss=0.012698 (dx=0.001231 dy=0.001572 dz=0.008137 logE=0.001757)  val=0.810960
+  [lbfgs iter 160] loss=0.012532 (dx=0.001185 dy=0.001557 dz=0.008052 logE=0.001738)  val=0.813726
+  [lbfgs iter 161] loss=0.013421 (dx=0.002042 dy=0.001837 dz=0.007859 logE=0.001683)  val=0.816731
+  [lbfgs iter 162] loss=0.012465 (dx=0.001192 dy=0.001541 dz=0.008009 logE=0.001724)  val=0.814153
+  [lbfgs iter 163] loss=0.012324 (dx=0.001143 dy=0.001539 dz=0.007936 logE=0.001706)  val=0.814912
+  [lbfgs iter 164] loss=0.012204 (dx=0.001127 dy=0.001512 dz=0.007874 logE=0.001691)  val=0.814157
+  [lbfgs iter 165] loss=0.012080 (dx=0.001123 dy=0.001475 dz=0.007809 logE=0.001674)  val=0.812765
+  [lbfgs iter 166] loss=0.011911 (dx=0.001099 dy=0.001438 dz=0.007721 logE=0.001653)  val=0.811877
+  [lbfgs iter 167] loss=0.011946 (dx=0.001251 dy=0.001529 dz=0.007546 logE=0.001620)  val=0.812267
+  [lbfgs iter 168] loss=0.011800 (dx=0.001099 dy=0.001429 dz=0.007637 logE=0.001635)  val=0.811939
+  [lbfgs iter 169] loss=0.011625 (dx=0.001058 dy=0.001395 dz=0.007553 logE=0.001618)  val=0.812386
+  [lbfgs iter 170] loss=0.011491 (dx=0.001039 dy=0.001360 dz=0.007488 logE=0.001604)  val=0.813762
+  [lbfgs iter 171] loss=0.011381 (dx=0.001035 dy=0.001354 dz=0.007403 logE=0.001589)  val=0.815751
+  [lbfgs iter 172] loss=0.011271 (dx=0.000990 dy=0.001323 dz=0.007379 logE=0.001579)  val=0.816195
+  [lbfgs iter 173] loss=0.011163 (dx=0.000950 dy=0.001303 dz=0.007341 logE=0.001570)  val=0.815782
+  [lbfgs iter 174] loss=0.011035 (dx=0.000929 dy=0.001275 dz=0.007276 logE=0.001556)  val=0.814172
+  [lbfgs iter 175] loss=0.010887 (dx=0.000962 dy=0.001261 dz=0.007131 logE=0.001533)  val=0.812119
+  [lbfgs iter 176] loss=0.010765 (dx=0.000945 dy=0.001294 dz=0.007018 logE=0.001509)  val=0.808861
+  [lbfgs iter 177] loss=0.010654 (dx=0.000887 dy=0.001229 dz=0.007029 logE=0.001508)  val=0.809381
+  [lbfgs iter 178] loss=0.010565 (dx=0.000855 dy=0.001195 dz=0.007013 logE=0.001503)  val=0.810089
+  [lbfgs iter 179] loss=0.010500 (dx=0.000841 dy=0.001177 dz=0.006985 logE=0.001496)  val=0.810666
+  [lbfgs iter 180] loss=0.010292 (dx=0.000808 dy=0.001137 dz=0.006875 logE=0.001472)  val=0.812617
+  [lbfgs iter 181] loss=0.010094 (dx=0.000787 dy=0.001121 dz=0.006742 logE=0.001444)  val=0.813343
+  [lbfgs iter 182] loss=0.009909 (dx=0.000761 dy=0.001152 dz=0.006574 logE=0.001421)  val=0.816902
+  [lbfgs iter 183] loss=0.009849 (dx=0.000772 dy=0.001139 dz=0.006526 logE=0.001412)  val=0.814561
+  [lbfgs iter 184] loss=0.009757 (dx=0.000729 dy=0.001074 dz=0.006542 logE=0.001411)  val=0.814662
+  [lbfgs iter 185] loss=0.009690 (dx=0.000698 dy=0.001046 dz=0.006537 logE=0.001408)  val=0.814484
+  [lbfgs iter 186] loss=0.009610 (dx=0.000677 dy=0.001033 dz=0.006500 logE=0.001399)  val=0.814301
+  [lbfgs iter 187] loss=0.009595 (dx=0.000769 dy=0.001041 dz=0.006408 logE=0.001377)  val=0.814505
+  [lbfgs iter 188] loss=0.009469 (dx=0.000666 dy=0.001023 dz=0.006402 logE=0.001378)  val=0.814522
+  [lbfgs iter 189] loss=0.009428 (dx=0.000660 dy=0.001014 dz=0.006378 logE=0.001375)  val=0.814790
+  [lbfgs iter 190] loss=0.009368 (dx=0.000665 dy=0.001002 dz=0.006332 logE=0.001369)  val=0.815490
+  [lbfgs iter 191] loss=0.009270 (dx=0.000656 dy=0.000983 dz=0.006272 logE=0.001359)  val=0.816759
+  [lbfgs iter 192] loss=0.009095 (dx=0.000625 dy=0.000954 dz=0.006175 logE=0.001341)  val=0.818387
+  [lbfgs iter 193] loss=0.009908 (dx=0.001058 dy=0.001494 dz=0.006021 logE=0.001335)  val=0.825078
+  [lbfgs iter 194] loss=0.009052 (dx=0.000612 dy=0.000958 dz=0.006145 logE=0.001337)  val=0.819466
+  [lbfgs iter 195] loss=0.008953 (dx=0.000587 dy=0.000933 dz=0.006109 logE=0.001323)  val=0.819752
+  [lbfgs iter 196] loss=0.008879 (dx=0.000579 dy=0.000916 dz=0.006073 logE=0.001311)  val=0.819424
+  [lbfgs iter 197] loss=0.008778 (dx=0.000574 dy=0.000897 dz=0.006012 logE=0.001295)  val=0.818664
+  [lbfgs iter 198] loss=0.008683 (dx=0.000589 dy=0.000887 dz=0.005919 logE=0.001288)  val=0.818440
+  [lbfgs iter 199] loss=0.008587 (dx=0.000559 dy=0.000897 dz=0.005851 logE=0.001280)  val=0.817224
+  [lbfgs iter 200] loss=0.008517 (dx=0.000545 dy=0.000884 dz=0.005811 logE=0.001277)  val=0.817614
+  [lbfgs iter 201] loss=0.008433 (dx=0.000533 dy=0.000868 dz=0.005763 logE=0.001268)  val=0.817877
+  [lbfgs iter 202] loss=0.008348 (dx=0.000517 dy=0.000858 dz=0.005715 logE=0.001259)  val=0.819060
+  [lbfgs iter 203] loss=0.008231 (dx=0.000503 dy=0.000853 dz=0.005633 logE=0.001242)  val=0.820691
+  [lbfgs iter 204] loss=0.008119 (dx=0.000495 dy=0.000838 dz=0.005561 logE=0.001225)  val=0.822661
+  [lbfgs iter 205] loss=0.007990 (dx=0.000498 dy=0.000827 dz=0.005464 logE=0.001200)  val=0.823443
+  [lbfgs iter 206] loss=0.008056 (dx=0.000594 dy=0.000935 dz=0.005352 logE=0.001175)  val=0.830992
+  [lbfgs iter 207] loss=0.007930 (dx=0.000505 dy=0.000822 dz=0.005415 logE=0.001187)  val=0.826461
+  [lbfgs iter 208] loss=0.007864 (dx=0.000491 dy=0.000795 dz=0.005397 logE=0.001181)  val=0.826179
+  [lbfgs iter 209] loss=0.007789 (dx=0.000476 dy=0.000765 dz=0.005374 logE=0.001175)  val=0.825543
+  [lbfgs iter 210] loss=0.007736 (dx=0.000470 dy=0.000750 dz=0.005348 logE=0.001168)  val=0.825246
+  [lbfgs iter 211] loss=0.007594 (dx=0.000461 dy=0.000724 dz=0.005261 logE=0.001148)  val=0.824656
+  [lbfgs iter 212] loss=0.007414 (dx=0.000444 dy=0.000705 dz=0.005145 logE=0.001121)  val=0.824964
+  [lbfgs iter 213] loss=0.007566 (dx=0.000743 dy=0.000765 dz=0.004970 logE=0.001088)  val=0.824596
+  [lbfgs iter 214] loss=0.007325 (dx=0.000466 dy=0.000683 dz=0.005071 logE=0.001105)  val=0.824737
+  [lbfgs iter 215] loss=0.007225 (dx=0.000431 dy=0.000668 dz=0.005032 logE=0.001094)  val=0.825175
+  [lbfgs iter 216] loss=0.007183 (dx=0.000419 dy=0.000655 dz=0.005021 logE=0.001089)  val=0.825556
+  [lbfgs iter 217] loss=0.007134 (dx=0.000407 dy=0.000638 dz=0.005005 logE=0.001083)  val=0.825836
+  [lbfgs iter 218] loss=0.007029 (dx=0.000391 dy=0.000615 dz=0.004957 logE=0.001066)  val=0.825560
+  [lbfgs iter 219] loss=0.007038 (dx=0.000473 dy=0.000646 dz=0.004877 logE=0.001043)  val=0.826593
+  [lbfgs iter 220] loss=0.006978 (dx=0.000403 dy=0.000604 dz=0.004917 logE=0.001053)  val=0.826032
+  [lbfgs iter 221] loss=0.006907 (dx=0.000394 dy=0.000595 dz=0.004877 logE=0.001042)  val=0.824945
+  [lbfgs iter 222] loss=0.006850 (dx=0.000387 dy=0.000584 dz=0.004846 logE=0.001033)  val=0.824310
+  [lbfgs iter 223] loss=0.006777 (dx=0.000381 dy=0.000572 dz=0.004803 logE=0.001021)  val=0.823424
+  [lbfgs iter 224] loss=0.006713 (dx=0.000396 dy=0.000565 dz=0.004748 logE=0.001004)  val=0.823047
+  [lbfgs iter 225] loss=0.006641 (dx=0.000371 dy=0.000556 dz=0.004715 logE=0.000998)  val=0.822557
+  [lbfgs iter 226] loss=0.006582 (dx=0.000355 dy=0.000538 dz=0.004698 logE=0.000992)  val=0.822247
+  [lbfgs iter 227] loss=0.006521 (dx=0.000344 dy=0.000522 dz=0.004674 logE=0.000982)  val=0.821594
+  [lbfgs iter 228] loss=0.006455 (dx=0.000336 dy=0.000518 dz=0.004629 logE=0.000972)  val=0.820946
+  [lbfgs iter 229] loss=0.006391 (dx=0.000329 dy=0.000505 dz=0.004593 logE=0.000964)  val=0.820275
+  [lbfgs iter 230] loss=0.006305 (dx=0.000323 dy=0.000492 dz=0.004540 logE=0.000949)  val=0.820749
+  [lbfgs iter 231] loss=0.006230 (dx=0.000337 dy=0.000491 dz=0.004471 logE=0.000931)  val=0.821155
+  [lbfgs iter 232] loss=0.006175 (dx=0.000348 dy=0.000482 dz=0.004421 logE=0.000924)  val=0.824330
+  [lbfgs iter 233] loss=0.006132 (dx=0.000324 dy=0.000459 dz=0.004423 logE=0.000926)  val=0.824822
+  [lbfgs iter 234] loss=0.006079 (dx=0.000302 dy=0.000441 dz=0.004410 logE=0.000925)  val=0.825844
+  [lbfgs iter 235] loss=0.006015 (dx=0.000292 dy=0.000435 dz=0.004371 logE=0.000917)  val=0.826246
+  [lbfgs iter 236] loss=0.005901 (dx=0.000287 dy=0.000429 dz=0.004283 logE=0.000902)  val=0.825671
+  [lbfgs iter 237] loss=0.006468 (dx=0.000866 dy=0.000596 dz=0.004108 logE=0.000898)  val=0.827168
+  [lbfgs iter 238] loss=0.005871 (dx=0.000300 dy=0.000426 dz=0.004247 logE=0.000897)  val=0.825808
+  [lbfgs iter 239] loss=0.005822 (dx=0.000299 dy=0.000422 dz=0.004207 logE=0.000894)  val=0.825240
+  [lbfgs iter 240] loss=0.005782 (dx=0.000301 dy=0.000421 dz=0.004169 logE=0.000891)  val=0.824801
+  [lbfgs iter 241] loss=0.005746 (dx=0.000297 dy=0.000417 dz=0.004147 logE=0.000886)  val=0.824866
+  [lbfgs iter 242] loss=0.005665 (dx=0.000291 dy=0.000410 dz=0.004089 logE=0.000875)  val=0.825715
+  [lbfgs iter 243] loss=0.005979 (dx=0.000493 dy=0.000607 dz=0.004011 logE=0.000867)  val=0.826911
+  [lbfgs iter 244] loss=0.005647 (dx=0.000290 dy=0.000411 dz=0.004073 logE=0.000873)  val=0.825841
+  [lbfgs iter 245] loss=0.005603 (dx=0.000282 dy=0.000401 dz=0.004050 logE=0.000870)  val=0.826983
+  [lbfgs iter 246] loss=0.005557 (dx=0.000274 dy=0.000390 dz=0.004027 logE=0.000866)  val=0.827969
+  [lbfgs iter 247] loss=0.005490 (dx=0.000267 dy=0.000382 dz=0.003984 logE=0.000857)  val=0.829197
+  [lbfgs iter 248] loss=0.005430 (dx=0.000267 dy=0.000379 dz=0.003939 logE=0.000845)  val=0.829768
+  [lbfgs iter 249] loss=0.005396 (dx=0.000298 dy=0.000394 dz=0.003869 logE=0.000835)  val=0.829234
+  [lbfgs iter 250] loss=0.005344 (dx=0.000260 dy=0.000367 dz=0.003882 logE=0.000835)  val=0.828731
+  [lbfgs iter 251] loss=0.005316 (dx=0.000249 dy=0.000352 dz=0.003883 logE=0.000833)  val=0.828053
+  [lbfgs iter 252] loss=0.005271 (dx=0.000241 dy=0.000341 dz=0.003862 logE=0.000826)  val=0.827378
+  [lbfgs iter 253] loss=0.005184 (dx=0.000228 dy=0.000329 dz=0.003814 logE=0.000813)  val=0.827503
+  [lbfgs iter 254] loss=0.005511 (dx=0.000349 dy=0.000697 dz=0.003670 logE=0.000794)  val=0.826981
+  [lbfgs iter 255] loss=0.005157 (dx=0.000230 dy=0.000341 dz=0.003780 logE=0.000806)  val=0.827318
+  [lbfgs iter 256] loss=0.005092 (dx=0.000238 dy=0.000338 dz=0.003719 logE=0.000797)  val=0.827685
+  [lbfgs iter 257] loss=0.005065 (dx=0.000257 dy=0.000346 dz=0.003672 logE=0.000790)  val=0.830523
+  [lbfgs iter 258] loss=0.005028 (dx=0.000250 dy=0.000334 dz=0.003657 logE=0.000787)  val=0.830037
+  [lbfgs iter 259] loss=0.004997 (dx=0.000240 dy=0.000322 dz=0.003651 logE=0.000784)  val=0.830054
+  [lbfgs iter 260] loss=0.004954 (dx=0.000229 dy=0.000313 dz=0.003633 logE=0.000779)  val=0.830408
+  [lbfgs iter 261] loss=0.004882 (dx=0.000222 dy=0.000308 dz=0.003582 logE=0.000770)  val=0.830443
+  [lbfgs iter 262] loss=0.005102 (dx=0.000470 dy=0.000363 dz=0.003519 logE=0.000749)  val=0.829704
+  [lbfgs iter 263] loss=0.004857 (dx=0.000229 dy=0.000302 dz=0.003564 logE=0.000763)  val=0.830195
+  [lbfgs iter 264] loss=0.004813 (dx=0.000229 dy=0.000303 dz=0.003525 logE=0.000757)  val=0.830071
+  [lbfgs iter 265] loss=0.004790 (dx=0.000228 dy=0.000297 dz=0.003511 logE=0.000754)  val=0.829862
+  [lbfgs iter 266] loss=0.004733 (dx=0.000226 dy=0.000284 dz=0.003475 logE=0.000748)  val=0.829369
+  [lbfgs iter 267] loss=0.004661 (dx=0.000227 dy=0.000276 dz=0.003422 logE=0.000736)  val=0.829104
+  [lbfgs iter 268] loss=0.004666 (dx=0.000297 dy=0.000318 dz=0.003325 logE=0.000726)  val=0.829823
+  [lbfgs iter 269] loss=0.004617 (dx=0.000238 dy=0.000277 dz=0.003373 logE=0.000730)  val=0.829427
+  [lbfgs iter 270] loss=0.004567 (dx=0.000223 dy=0.000275 dz=0.003347 logE=0.000722)  val=0.829771
+  [lbfgs iter 271] loss=0.004539 (dx=0.000215 dy=0.000266 dz=0.003339 logE=0.000719)  val=0.830511
+  [lbfgs iter 272] loss=0.004501 (dx=0.000214 dy=0.000257 dz=0.003316 logE=0.000714)  val=0.831541
+  [lbfgs iter 273] loss=0.004458 (dx=0.000209 dy=0.000253 dz=0.003290 logE=0.000706)  val=0.832719
+  [lbfgs iter 274] loss=0.004417 (dx=0.000208 dy=0.000255 dz=0.003255 logE=0.000699)  val=0.832899
+  [lbfgs iter 275] loss=0.004387 (dx=0.000213 dy=0.000265 dz=0.003215 logE=0.000694)  val=0.834240
+  [lbfgs iter 276] loss=0.004361 (dx=0.000201 dy=0.000256 dz=0.003212 logE=0.000693)  val=0.833851
+  [lbfgs iter 277] loss=0.004306 (dx=0.000190 dy=0.000242 dz=0.003188 logE=0.000687)  val=0.833613
+  [lbfgs iter 278] loss=0.004266 (dx=0.000187 dy=0.000236 dz=0.003163 logE=0.000680)  val=0.834330
+  [lbfgs iter 279] loss=0.004207 (dx=0.000188 dy=0.000249 dz=0.003102 logE=0.000668)  val=0.836533
+  [lbfgs iter 280] loss=0.004169 (dx=0.000209 dy=0.000249 dz=0.003057 logE=0.000654)  val=0.837890
+  [lbfgs iter 281] loss=0.004140 (dx=0.000191 dy=0.000231 dz=0.003063 logE=0.000655)  val=0.837945
+  [lbfgs iter 282] loss=0.004118 (dx=0.000181 dy=0.000223 dz=0.003059 logE=0.000655)  val=0.837679
+  [lbfgs iter 283] loss=0.004092 (dx=0.000178 dy=0.000220 dz=0.003044 logE=0.000651)  val=0.837665
+  [lbfgs iter 284] loss=0.004052 (dx=0.000175 dy=0.000224 dz=0.003007 logE=0.000645)  val=0.835679
+  [lbfgs iter 285] loss=0.004017 (dx=0.000180 dy=0.000232 dz=0.002969 logE=0.000636)  val=0.834968
+  [lbfgs iter 286] loss=0.003988 (dx=0.000179 dy=0.000229 dz=0.002949 logE=0.000631)  val=0.833976
+  [lbfgs iter 287] loss=0.003965 (dx=0.000180 dy=0.000222 dz=0.002935 logE=0.000628)  val=0.833050
+  [lbfgs iter 288] loss=0.003945 (dx=0.000174 dy=0.000219 dz=0.002926 logE=0.000626)  val=0.832997
+  [lbfgs iter 289] loss=0.003900 (dx=0.000168 dy=0.000215 dz=0.002897 logE=0.000619)  val=0.832982
+  [lbfgs iter 290] loss=0.003868 (dx=0.000165 dy=0.000215 dz=0.002874 logE=0.000614)  val=0.832927
+  [lbfgs iter 291] loss=0.003838 (dx=0.000173 dy=0.000227 dz=0.002830 logE=0.000608)  val=0.833543
+  [lbfgs iter 292] loss=0.003796 (dx=0.000161 dy=0.000218 dz=0.002811 logE=0.000605)  val=0.833703
+  [lbfgs iter 293] loss=0.003774 (dx=0.000153 dy=0.000210 dz=0.002807 logE=0.000604)  val=0.833964
+  [lbfgs iter 294] loss=0.003732 (dx=0.000150 dy=0.000199 dz=0.002782 logE=0.000600)  val=0.834565
+  [lbfgs iter 295] loss=0.003745 (dx=0.000200 dy=0.000205 dz=0.002747 logE=0.000593)  val=0.835983
+  [lbfgs iter 296] loss=0.003712 (dx=0.000155 dy=0.000194 dz=0.002766 logE=0.000596)  val=0.835168
+  [lbfgs iter 297] loss=0.003680 (dx=0.000152 dy=0.000192 dz=0.002742 logE=0.000593)  val=0.835557
+  [lbfgs iter 298] loss=0.003645 (dx=0.000151 dy=0.000195 dz=0.002710 logE=0.000589)  val=0.835931
+  [lbfgs iter 299] loss=0.003616 (dx=0.000160 dy=0.000199 dz=0.002671 logE=0.000585)  val=0.835631
+  [lbfgs iter 300] loss=0.003580 (dx=0.000151 dy=0.000198 dz=0.002650 logE=0.000581)  val=0.835666
+  [lbfgs iter 301] loss=0.003553 (dx=0.000142 dy=0.000191 dz=0.002642 logE=0.000579)  val=0.835344
+  [lbfgs iter 302] loss=0.003518 (dx=0.000133 dy=0.000185 dz=0.002624 logE=0.000576)  val=0.835085
+  [lbfgs iter 303] loss=0.003514 (dx=0.000136 dy=0.000215 dz=0.002592 logE=0.000571)  val=0.834548
+  [lbfgs iter 304] loss=0.003496 (dx=0.000129 dy=0.000187 dz=0.002607 logE=0.000573)  val=0.834781
+  [lbfgs iter 305] loss=0.003463 (dx=0.000133 dy=0.000183 dz=0.002576 logE=0.000570)  val=0.834678
+  [lbfgs iter 306] loss=0.003438 (dx=0.000136 dy=0.000182 dz=0.002553 logE=0.000567)  val=0.834994
+  [lbfgs iter 307] loss=0.003404 (dx=0.000135 dy=0.000180 dz=0.002525 logE=0.000563)  val=0.835657
+  [lbfgs iter 308] loss=0.003362 (dx=0.000131 dy=0.000176 dz=0.002497 logE=0.000558)  val=0.836306
+  [lbfgs iter 309] loss=0.003434 (dx=0.000205 dy=0.000229 dz=0.002450 logE=0.000550)  val=0.838618
+  [lbfgs iter 310] loss=0.003344 (dx=0.000130 dy=0.000178 dz=0.002481 logE=0.000554)  val=0.836991
+  [lbfgs iter 311] loss=0.003314 (dx=0.000129 dy=0.000173 dz=0.002462 logE=0.000550)  val=0.837085
+  [lbfgs iter 312] loss=0.003297 (dx=0.000128 dy=0.000169 dz=0.002452 logE=0.000548)  val=0.836773
+  [lbfgs iter 313] loss=0.003270 (dx=0.000124 dy=0.000164 dz=0.002436 logE=0.000545)  val=0.835885
+  [lbfgs iter 314] loss=0.003234 (dx=0.000122 dy=0.000162 dz=0.002409 logE=0.000540)  val=0.834937
+  [lbfgs iter 315] loss=0.003329 (dx=0.000230 dy=0.000231 dz=0.002331 logE=0.000537)  val=0.832169
+  [lbfgs iter 316] loss=0.003219 (dx=0.000127 dy=0.000167 dz=0.002387 logE=0.000538)  val=0.834139
+  [lbfgs iter 317] loss=0.003185 (dx=0.000131 dy=0.000166 dz=0.002355 logE=0.000534)  val=0.833575
+  [lbfgs iter 318] loss=0.003166 (dx=0.000131 dy=0.000164 dz=0.002338 logE=0.000532)  val=0.833683
+  [lbfgs iter 319] loss=0.003145 (dx=0.000134 dy=0.000166 dz=0.002317 logE=0.000528)  val=0.834436
+  [lbfgs iter 320] loss=0.003125 (dx=0.000130 dy=0.000160 dz=0.002309 logE=0.000526)  val=0.835015
+  [lbfgs iter 321] loss=0.003100 (dx=0.000125 dy=0.000153 dz=0.002300 logE=0.000522)  val=0.835849
+  [lbfgs iter 322] loss=0.003076 (dx=0.000123 dy=0.000152 dz=0.002284 logE=0.000517)  val=0.836345
+  [lbfgs iter 323] loss=0.003052 (dx=0.000128 dy=0.000155 dz=0.002256 logE=0.000512)  val=0.836403
+  [lbfgs iter 324] loss=0.003031 (dx=0.000131 dy=0.000160 dz=0.002230 logE=0.000509)  val=0.836353
+  [lbfgs iter 325] loss=0.003010 (dx=0.000129 dy=0.000158 dz=0.002215 logE=0.000508)  val=0.836187
+  [lbfgs iter 326] loss=0.002984 (dx=0.000126 dy=0.000156 dz=0.002196 logE=0.000506)  val=0.836535
+  [lbfgs iter 327] loss=0.002959 (dx=0.000123 dy=0.000154 dz=0.002180 logE=0.000502)  val=0.837630
+  [lbfgs iter 328] loss=0.002945 (dx=0.000135 dy=0.000169 dz=0.002145 logE=0.000496)  val=0.839195
+  [lbfgs iter 329] loss=0.002915 (dx=0.000129 dy=0.000156 dz=0.002137 logE=0.000494)  val=0.840242
+  [lbfgs iter 330] loss=0.002902 (dx=0.000122 dy=0.000151 dz=0.002136 logE=0.000492)  val=0.840259
+  [lbfgs iter 331] loss=0.002869 (dx=0.000116 dy=0.000147 dz=0.002119 logE=0.000487)  val=0.840155
+  [lbfgs iter 332] loss=0.002830 (dx=0.000114 dy=0.000143 dz=0.002093 logE=0.000480)  val=0.839407
+  [lbfgs iter 333] loss=0.002893 (dx=0.000195 dy=0.000186 dz=0.002040 logE=0.000473)  val=0.835913
+  [lbfgs iter 334] loss=0.002815 (dx=0.000116 dy=0.000146 dz=0.002076 logE=0.000477)  val=0.838306
+  [lbfgs iter 335] loss=0.002789 (dx=0.000114 dy=0.000146 dz=0.002056 logE=0.000474)  val=0.837859
+  [lbfgs iter 336] loss=0.002773 (dx=0.000114 dy=0.000146 dz=0.002042 logE=0.000472)  val=0.837392
+  [lbfgs iter 337] loss=0.002757 (dx=0.000112 dy=0.000144 dz=0.002032 logE=0.000470)  val=0.837034
+  [lbfgs iter 338] loss=0.002725 (dx=0.000107 dy=0.000140 dz=0.002013 logE=0.000466)  val=0.836568
+  [lbfgs iter 339] loss=0.002793 (dx=0.000185 dy=0.000175 dz=0.001972 logE=0.000461)  val=0.834102
+  [lbfgs iter 340] loss=0.002715 (dx=0.000111 dy=0.000138 dz=0.002001 logE=0.000464)  val=0.835876
+  [lbfgs iter 341] loss=0.002688 (dx=0.000106 dy=0.000139 dz=0.001983 logE=0.000460)  val=0.835919
+  [lbfgs iter 342] loss=0.002670 (dx=0.000104 dy=0.000138 dz=0.001971 logE=0.000457)  val=0.835962
+  [lbfgs iter 343] loss=0.002647 (dx=0.000106 dy=0.000135 dz=0.001952 logE=0.000455)  val=0.836002
+  [lbfgs iter 344] loss=0.002621 (dx=0.000107 dy=0.000130 dz=0.001932 logE=0.000452)  val=0.836152
+  [lbfgs iter 345] loss=0.002650 (dx=0.000146 dy=0.000175 dz=0.001877 logE=0.000452)  val=0.835475
+  [lbfgs iter 346] loss=0.002605 (dx=0.000110 dy=0.000135 dz=0.001910 logE=0.000451)  val=0.835882
+  [lbfgs iter 347] loss=0.002581 (dx=0.000106 dy=0.000134 dz=0.001890 logE=0.000450)  val=0.836159
+  [lbfgs iter 348] loss=0.002567 (dx=0.000103 dy=0.000135 dz=0.001879 logE=0.000449)  val=0.836372
+  [lbfgs iter 349] loss=0.002553 (dx=0.000106 dy=0.000137 dz=0.001864 logE=0.000447)  val=0.836541
+  [lbfgs iter 350] loss=0.002536 (dx=0.000100 dy=0.000132 dz=0.001859 logE=0.000445)  val=0.836819
+  [lbfgs iter 351] loss=0.002515 (dx=0.000097 dy=0.000128 dz=0.001849 logE=0.000442)  val=0.837209
+  [lbfgs iter 352] loss=0.002500 (dx=0.000098 dy=0.000127 dz=0.001837 logE=0.000438)  val=0.837456
+  [lbfgs iter 353] loss=0.002479 (dx=0.000098 dy=0.000125 dz=0.001821 logE=0.000434)  val=0.837458
+  [lbfgs iter 354] loss=0.002512 (dx=0.000129 dy=0.000174 dz=0.001779 logE=0.000431)  val=0.837677
+  [lbfgs iter 355] loss=0.002468 (dx=0.000102 dy=0.000127 dz=0.001806 logE=0.000432)  val=0.837501
+  [lbfgs iter 356] loss=0.002446 (dx=0.000103 dy=0.000124 dz=0.001790 logE=0.000429)  val=0.837284
+  [lbfgs iter 357] loss=0.002428 (dx=0.000101 dy=0.000122 dz=0.001778 logE=0.000426)  val=0.837240
+  [lbfgs iter 358] loss=0.002401 (dx=0.000100 dy=0.000120 dz=0.001759 logE=0.000422)  val=0.837448
+  [lbfgs iter 359] loss=0.002381 (dx=0.000104 dy=0.000119 dz=0.001741 logE=0.000417)  val=0.838579
+  [lbfgs iter 360] loss=0.002359 (dx=0.000106 dy=0.000119 dz=0.001719 logE=0.000414)  val=0.839008
+  [lbfgs iter 361] loss=0.002347 (dx=0.000098 dy=0.000114 dz=0.001722 logE=0.000414)  val=0.839117
+  [lbfgs iter 362] loss=0.002325 (dx=0.000089 dy=0.000107 dz=0.001717 logE=0.000411)  val=0.839083
+  [lbfgs iter 363] loss=0.002297 (dx=0.000085 dy=0.000103 dz=0.001702 logE=0.000407)  val=0.838878
+  [lbfgs iter 364] loss=0.002331 (dx=0.000129 dy=0.000137 dz=0.001666 logE=0.000399)  val=0.837251
+  [lbfgs iter 365] loss=0.002286 (dx=0.000086 dy=0.000106 dz=0.001690 logE=0.000404)  val=0.838318
+  [lbfgs iter 366] loss=0.002260 (dx=0.000089 dy=0.000107 dz=0.001664 logE=0.000399)  val=0.838009
+  [lbfgs iter 367] loss=0.002241 (dx=0.000091 dy=0.000109 dz=0.001645 logE=0.000395)  val=0.837631
+  [lbfgs iter 368] loss=0.002213 (dx=0.000093 dy=0.000110 dz=0.001620 logE=0.000390)  val=0.836946
+  [lbfgs iter 369] loss=0.002189 (dx=0.000098 dy=0.000112 dz=0.001595 logE=0.000385)  val=0.836405
+  [lbfgs iter 370] loss=0.002163 (dx=0.000097 dy=0.000116 dz=0.001571 logE=0.000379)  val=0.835742
+  [lbfgs iter 371] loss=0.002150 (dx=0.000094 dy=0.000115 dz=0.001564 logE=0.000377)  val=0.835442
+  [lbfgs iter 372] loss=0.002132 (dx=0.000083 dy=0.000108 dz=0.001565 logE=0.000376)  val=0.835900
+  [lbfgs iter 373] loss=0.002120 (dx=0.000078 dy=0.000105 dz=0.001563 logE=0.000374)  val=0.836335
+  [lbfgs iter 374] loss=0.002108 (dx=0.000077 dy=0.000104 dz=0.001555 logE=0.000372)  val=0.836713
+  [lbfgs iter 375] loss=0.002093 (dx=0.000086 dy=0.000108 dz=0.001532 logE=0.000367)  val=0.837359
+  [lbfgs iter 376] loss=0.002079 (dx=0.000081 dy=0.000107 dz=0.001525 logE=0.000365)  val=0.837261
+  [lbfgs iter 377] loss=0.002070 (dx=0.000079 dy=0.000106 dz=0.001520 logE=0.000364)  val=0.836992
+  [lbfgs iter 378] loss=0.002056 (dx=0.000078 dy=0.000103 dz=0.001512 logE=0.000363)  val=0.836720
+  [lbfgs iter 379] loss=0.002068 (dx=0.000089 dy=0.000129 dz=0.001492 logE=0.000358)  val=0.835213
+  [lbfgs iter 380] loss=0.002044 (dx=0.000077 dy=0.000104 dz=0.001503 logE=0.000360)  val=0.836088
+  [lbfgs iter 381] loss=0.002025 (dx=0.000077 dy=0.000102 dz=0.001489 logE=0.000357)  val=0.835874
+  [lbfgs iter 382] loss=0.002010 (dx=0.000076 dy=0.000102 dz=0.001477 logE=0.000355)  val=0.835827
+  [lbfgs iter 383] loss=0.001995 (dx=0.000076 dy=0.000101 dz=0.001465 logE=0.000354)  val=0.835696
+  [lbfgs iter 384] loss=0.001999 (dx=0.000097 dy=0.000111 dz=0.001440 logE=0.000351)  val=0.836052
+  [lbfgs iter 385] loss=0.001987 (dx=0.000080 dy=0.000101 dz=0.001453 logE=0.000352)  val=0.835843
+  [lbfgs iter 386] loss=0.001974 (dx=0.000079 dy=0.000099 dz=0.001445 logE=0.000352)  val=0.835673
+  [lbfgs iter 387] loss=0.001961 (dx=0.000078 dy=0.000097 dz=0.001436 logE=0.000350)  val=0.835555
+  [lbfgs iter 388] loss=0.001946 (dx=0.000076 dy=0.000096 dz=0.001426 logE=0.000349)  val=0.835485
+  [lbfgs iter 389] loss=0.001938 (dx=0.000087 dy=0.000102 dz=0.001403 logE=0.000346)  val=0.834508
+  [lbfgs iter 390] loss=0.001915 (dx=0.000078 dy=0.000096 dz=0.001398 logE=0.000344)  val=0.834627
+  [lbfgs iter 391] loss=0.001903 (dx=0.000075 dy=0.000092 dz=0.001394 logE=0.000343)  val=0.834436
+  [lbfgs iter 392] loss=0.001888 (dx=0.000073 dy=0.000090 dz=0.001384 logE=0.000340)  val=0.833791
+  [lbfgs iter 393] loss=0.001871 (dx=0.000072 dy=0.000090 dz=0.001372 logE=0.000338)  val=0.833024
+  [lbfgs iter 394] loss=0.001846 (dx=0.000074 dy=0.000090 dz=0.001349 logE=0.000333)  val=0.832708
+  [lbfgs iter 395] loss=0.001845 (dx=0.000095 dy=0.000111 dz=0.001309 logE=0.000331)  val=0.831972
+  [lbfgs iter 396] loss=0.001827 (dx=0.000074 dy=0.000094 dz=0.001328 logE=0.000332)  val=0.832311
+  [lbfgs iter 397] loss=0.001815 (dx=0.000070 dy=0.000089 dz=0.001324 logE=0.000332)  val=0.832608
+  [lbfgs iter 398] loss=0.001798 (dx=0.000066 dy=0.000086 dz=0.001315 logE=0.000331)  val=0.833063
+  [lbfgs iter 399] loss=0.001783 (dx=0.000065 dy=0.000084 dz=0.001306 logE=0.000329)  val=0.833193
+  [lbfgs iter 400] loss=0.001757 (dx=0.000063 dy=0.000083 dz=0.001286 logE=0.000325)  val=0.833524
+  [lbfgs iter 401] loss=0.001798 (dx=0.000103 dy=0.000125 dz=0.001247 logE=0.000324)  val=0.833480
+  [lbfgs iter 402] loss=0.001748 (dx=0.000064 dy=0.000086 dz=0.001273 logE=0.000324)  val=0.833494
+  [lbfgs iter 403] loss=0.001735 (dx=0.000064 dy=0.000084 dz=0.001264 logE=0.000323)  val=0.833293
+  [lbfgs iter 404] loss=0.001724 (dx=0.000063 dy=0.000083 dz=0.001257 logE=0.000321)  val=0.833014
+  [lbfgs iter 405] loss=0.001712 (dx=0.000062 dy=0.000081 dz=0.001249 logE=0.000320)  val=0.832845
+  [lbfgs iter 406] loss=0.001693 (dx=0.000063 dy=0.000081 dz=0.001232 logE=0.000317)  val=0.832335
+  [lbfgs iter 407] loss=0.001690 (dx=0.000072 dy=0.000098 dz=0.001206 logE=0.000315)  val=0.833015
+  [lbfgs iter 408] loss=0.001667 (dx=0.000060 dy=0.000079 dz=0.001213 logE=0.000315)  val=0.832731
+  [lbfgs iter 409] loss=0.001660 (dx=0.000057 dy=0.000075 dz=0.001213 logE=0.000314)  val=0.832735
+  [lbfgs iter 410] loss=0.001653 (dx=0.000057 dy=0.000074 dz=0.001208 logE=0.000314)  val=0.832937
+  [lbfgs iter 411] loss=0.001642 (dx=0.000060 dy=0.000074 dz=0.001197 logE=0.000311)  val=0.833073
+  [lbfgs iter 412] loss=0.001629 (dx=0.000060 dy=0.000074 dz=0.001185 logE=0.000310)  val=0.833332
+  [lbfgs iter 413] loss=0.001613 (dx=0.000062 dy=0.000075 dz=0.001169 logE=0.000308)  val=0.833844
+  [lbfgs iter 414] loss=0.001605 (dx=0.000064 dy=0.000075 dz=0.001160 logE=0.000306)  val=0.833860
+  [lbfgs iter 415] loss=0.001595 (dx=0.000063 dy=0.000073 dz=0.001154 logE=0.000305)  val=0.834310
+  [lbfgs iter 416] loss=0.001582 (dx=0.000060 dy=0.000071 dz=0.001149 logE=0.000303)  val=0.834405
+  [lbfgs iter 417] loss=0.001569 (dx=0.000057 dy=0.000071 dz=0.001140 logE=0.000301)  val=0.834485
+  [lbfgs iter 418] loss=0.001557 (dx=0.000056 dy=0.000071 dz=0.001130 logE=0.000300)  val=0.834313
+  [lbfgs iter 419] loss=0.001551 (dx=0.000068 dy=0.000076 dz=0.001109 logE=0.000298)  val=0.834079
+  [lbfgs iter 420] loss=0.001535 (dx=0.000060 dy=0.000072 dz=0.001105 logE=0.000298)  val=0.833933
+  [lbfgs iter 421] loss=0.001528 (dx=0.000058 dy=0.000070 dz=0.001103 logE=0.000297)  val=0.833884
+  [lbfgs iter 422] loss=0.001516 (dx=0.000056 dy=0.000070 dz=0.001095 logE=0.000296)  val=0.834005
+  [lbfgs iter 423] loss=0.001499 (dx=0.000053 dy=0.000068 dz=0.001083 logE=0.000294)  val=0.834539
+  [lbfgs iter 424] loss=0.001497 (dx=0.000071 dy=0.000085 dz=0.001048 logE=0.000293)  val=0.835211
+  [lbfgs iter 425] loss=0.001488 (dx=0.000058 dy=0.000073 dz=0.001064 logE=0.000293)  val=0.834872
+  [lbfgs iter 426] loss=0.001472 (dx=0.000059 dy=0.000071 dz=0.001051 logE=0.000291)  val=0.835624
+  [lbfgs iter 427] loss=0.001461 (dx=0.000056 dy=0.000070 dz=0.001045 logE=0.000291)  val=0.835846
+  [lbfgs iter 428] loss=0.001453 (dx=0.000052 dy=0.000069 dz=0.001042 logE=0.000290)  val=0.835780
+  [lbfgs iter 429] loss=0.001441 (dx=0.000051 dy=0.000067 dz=0.001034 logE=0.000289)  val=0.835521
+  [lbfgs iter 430] loss=0.001419 (dx=0.000051 dy=0.000068 dz=0.001013 logE=0.000286)  val=0.835690
+  [lbfgs iter 431] loss=0.001411 (dx=0.000061 dy=0.000076 dz=0.000988 logE=0.000287)  val=0.834547
+  [lbfgs iter 432] loss=0.001397 (dx=0.000052 dy=0.000066 dz=0.000993 logE=0.000285)  val=0.834929
+  [lbfgs iter 433] loss=0.001392 (dx=0.000049 dy=0.000064 dz=0.000993 logE=0.000285)  val=0.835040
+  [lbfgs iter 434] loss=0.001384 (dx=0.000048 dy=0.000064 dz=0.000988 logE=0.000284)  val=0.835143
+  [lbfgs iter 435] loss=0.001372 (dx=0.000051 dy=0.000063 dz=0.000977 logE=0.000281)  val=0.835376
+  [lbfgs iter 436] loss=0.001365 (dx=0.000058 dy=0.000069 dz=0.000958 logE=0.000281)  val=0.835682
+  [lbfgs iter 437] loss=0.001358 (dx=0.000053 dy=0.000065 dz=0.000960 logE=0.000280)  val=0.835657
+  [lbfgs iter 438] loss=0.001354 (dx=0.000051 dy=0.000064 dz=0.000959 logE=0.000280)  val=0.835686
+  [lbfgs iter 439] loss=0.001350 (dx=0.000051 dy=0.000063 dz=0.000956 logE=0.000279)  val=0.835714
+  [lbfgs iter 440] loss=0.001337 (dx=0.000051 dy=0.000063 dz=0.000946 logE=0.000277)  val=0.835783
+  [lbfgs iter 441] loss=0.001360 (dx=0.000048 dy=0.000092 dz=0.000947 logE=0.000273)  val=0.835280
+  [lbfgs iter 442] loss=0.001331 (dx=0.000047 dy=0.000063 dz=0.000946 logE=0.000275)  val=0.835619
+  [lbfgs iter 443] loss=0.001318 (dx=0.000050 dy=0.000063 dz=0.000933 logE=0.000273)  val=0.835577
+  [lbfgs iter 444] loss=0.001309 (dx=0.000050 dy=0.000062 dz=0.000926 logE=0.000271)  val=0.835548
+  [lbfgs iter 445] loss=0.001301 (dx=0.000050 dy=0.000061 dz=0.000922 logE=0.000269)  val=0.835176
+  [lbfgs iter 446] loss=0.001293 (dx=0.000048 dy=0.000059 dz=0.000919 logE=0.000267)  val=0.834978
+  [lbfgs iter 447] loss=0.001276 (dx=0.000045 dy=0.000057 dz=0.000911 logE=0.000263)  val=0.834185
+  [lbfgs iter 448] loss=0.001290 (dx=0.000061 dy=0.000072 dz=0.000896 logE=0.000260)  val=0.833374
+  [lbfgs iter 449] loss=0.001271 (dx=0.000046 dy=0.000057 dz=0.000906 logE=0.000262)  val=0.833902
+  [lbfgs iter 450] loss=0.001263 (dx=0.000045 dy=0.000056 dz=0.000901 logE=0.000261)  val=0.833462
+  [lbfgs iter 451] loss=0.001254 (dx=0.000046 dy=0.000057 dz=0.000892 logE=0.000259)  val=0.833261
+  [lbfgs iter 452] loss=0.001243 (dx=0.000046 dy=0.000056 dz=0.000884 logE=0.000257)  val=0.833166
+  [lbfgs iter 453] loss=0.001232 (dx=0.000045 dy=0.000056 dz=0.000876 logE=0.000256)  val=0.833456
+  [lbfgs iter 454] loss=0.001215 (dx=0.000044 dy=0.000054 dz=0.000864 logE=0.000254)  val=0.833971
+  [lbfgs iter 455] loss=0.001203 (dx=0.000047 dy=0.000056 dz=0.000848 logE=0.000251)  val=0.834220
+  [lbfgs iter 456] loss=0.001192 (dx=0.000049 dy=0.000055 dz=0.000840 logE=0.000249)  val=0.835153
+  [lbfgs iter 457] loss=0.001186 (dx=0.000045 dy=0.000052 dz=0.000840 logE=0.000249)  val=0.834854
+  [lbfgs iter 458] loss=0.001177 (dx=0.000041 dy=0.000050 dz=0.000836 logE=0.000249)  val=0.834420
+  [lbfgs iter 459] loss=0.001168 (dx=0.000040 dy=0.000050 dz=0.000830 logE=0.000248)  val=0.834253
+  [lbfgs iter 460] loss=0.001149 (dx=0.000039 dy=0.000049 dz=0.000815 logE=0.000245)  val=0.834105
+  [lbfgs iter 461] loss=0.001344 (dx=0.000213 dy=0.000096 dz=0.000792 logE=0.000243)  val=0.835190
+  [lbfgs iter 462] loss=0.001147 (dx=0.000041 dy=0.000049 dz=0.000813 logE=0.000245)  val=0.834171
+  [lbfgs iter 463] loss=0.001137 (dx=0.000040 dy=0.000051 dz=0.000802 logE=0.000243)  val=0.834403
+  [lbfgs iter 464] loss=0.001128 (dx=0.000041 dy=0.000052 dz=0.000793 logE=0.000242)  val=0.834805
+  [lbfgs iter 465] loss=0.001116 (dx=0.000041 dy=0.000052 dz=0.000783 logE=0.000240)  val=0.834998
+  [lbfgs iter 466] loss=0.001114 (dx=0.000044 dy=0.000059 dz=0.000773 logE=0.000239)  val=0.835038
+  [lbfgs iter 467] loss=0.001103 (dx=0.000041 dy=0.000050 dz=0.000774 logE=0.000238)  val=0.834895
+  [lbfgs iter 468] loss=0.001099 (dx=0.000039 dy=0.000049 dz=0.000774 logE=0.000237)  val=0.834675
+  [lbfgs iter 469] loss=0.001090 (dx=0.000037 dy=0.000047 dz=0.000770 logE=0.000236)  val=0.834342
+  [lbfgs iter 470] loss=0.001075 (dx=0.000035 dy=0.000045 dz=0.000762 logE=0.000234)  val=0.834044
+  [lbfgs iter 471] loss=0.001105 (dx=0.000074 dy=0.000068 dz=0.000736 logE=0.000227)  val=0.835014
+  [lbfgs iter 472] loss=0.001069 (dx=0.000038 dy=0.000046 dz=0.000754 logE=0.000231)  val=0.834300
+  [lbfgs iter 473] loss=0.001056 (dx=0.000037 dy=0.000047 dz=0.000745 logE=0.000228)  val=0.834464
+  [lbfgs iter 474] loss=0.001050 (dx=0.000037 dy=0.000048 dz=0.000740 logE=0.000225)  val=0.834727
+  [lbfgs iter 475] loss=0.001044 (dx=0.000038 dy=0.000049 dz=0.000734 logE=0.000223)  val=0.835217
+  [lbfgs iter 476] loss=0.001039 (dx=0.000036 dy=0.000046 dz=0.000734 logE=0.000223)  val=0.835267
+  [lbfgs iter 477] loss=0.001029 (dx=0.000034 dy=0.000042 dz=0.000732 logE=0.000221)  val=0.835319
+  [lbfgs iter 478] loss=0.001024 (dx=0.000034 dy=0.000042 dz=0.000728 logE=0.000220)  val=0.835179
+  [lbfgs iter 479] loss=0.001008 (dx=0.000035 dy=0.000042 dz=0.000715 logE=0.000215)  val=0.834572
+  [lbfgs iter 480] loss=0.001049 (dx=0.000054 dy=0.000085 dz=0.000698 logE=0.000212)  val=0.834177
+  [lbfgs iter 481] loss=0.001003 (dx=0.000035 dy=0.000044 dz=0.000711 logE=0.000213)  val=0.834452
+  [lbfgs iter 482] loss=0.000995 (dx=0.000036 dy=0.000043 dz=0.000704 logE=0.000211)  val=0.833849
+  [lbfgs iter 483] loss=0.000990 (dx=0.000036 dy=0.000043 dz=0.000701 logE=0.000211)  val=0.833556
+  [lbfgs iter 484] loss=0.000981 (dx=0.000034 dy=0.000042 dz=0.000695 logE=0.000209)  val=0.833277
+  [lbfgs iter 485] loss=0.000969 (dx=0.000034 dy=0.000042 dz=0.000685 logE=0.000207)  val=0.833173
+  [lbfgs iter 486] loss=0.001007 (dx=0.000077 dy=0.000058 dz=0.000669 logE=0.000203)  val=0.833156
+  [lbfgs iter 487] loss=0.000964 (dx=0.000035 dy=0.000042 dz=0.000681 logE=0.000206)  val=0.833149
+  [lbfgs iter 488] loss=0.000955 (dx=0.000035 dy=0.000042 dz=0.000674 logE=0.000204)  val=0.833433
+  [lbfgs iter 489] loss=0.000950 (dx=0.000034 dy=0.000042 dz=0.000670 logE=0.000203)  val=0.833770
+  [lbfgs iter 490] loss=0.000944 (dx=0.000033 dy=0.000042 dz=0.000667 logE=0.000202)  val=0.834031
+  [lbfgs iter 491] loss=0.000937 (dx=0.000032 dy=0.000044 dz=0.000661 logE=0.000201)  val=0.834011
+  [lbfgs iter 492] loss=0.000930 (dx=0.000033 dy=0.000044 dz=0.000654 logE=0.000199)  val=0.834094
+  [lbfgs iter 493] loss=0.000925 (dx=0.000032 dy=0.000041 dz=0.000654 logE=0.000199)  val=0.833813
+  [lbfgs iter 494] loss=0.000918 (dx=0.000031 dy=0.000039 dz=0.000650 logE=0.000198)  val=0.833415
+  [lbfgs iter 495] loss=0.000911 (dx=0.000030 dy=0.000039 dz=0.000645 logE=0.000197)  val=0.833394
+  [lbfgs iter 496] loss=0.000896 (dx=0.000031 dy=0.000041 dz=0.000630 logE=0.000194)  val=0.833862
+  [lbfgs iter 497] loss=0.000893 (dx=0.000039 dy=0.000046 dz=0.000616 logE=0.000191)  val=0.834345
+  [lbfgs iter 498] loss=0.000882 (dx=0.000030 dy=0.000040 dz=0.000620 logE=0.000191)  val=0.834472
+  [lbfgs iter 499] loss=0.000878 (dx=0.000029 dy=0.000038 dz=0.000620 logE=0.000191)  val=0.834526
+  [lbfgs iter 500] loss=0.000873 (dx=0.000029 dy=0.000037 dz=0.000616 logE=0.000190)  val=0.834804
+  [lbfgs iter 501] loss=0.000866 (dx=0.000030 dy=0.000037 dz=0.000611 logE=0.000189)  val=0.834419
+  [lbfgs iter 502] loss=0.000860 (dx=0.000029 dy=0.000036 dz=0.000607 logE=0.000188)  val=0.834303
+  [lbfgs iter 503] loss=0.000852 (dx=0.000029 dy=0.000038 dz=0.000598 logE=0.000186)  val=0.834005
+  [lbfgs iter 504] loss=0.000847 (dx=0.000029 dy=0.000038 dz=0.000595 logE=0.000186)  val=0.834035
+  [lbfgs iter 505] loss=0.000860 (dx=0.000039 dy=0.000061 dz=0.000577 logE=0.000182)  val=0.833958
+  [lbfgs iter 506] loss=0.000842 (dx=0.000029 dy=0.000040 dz=0.000588 logE=0.000184)  val=0.833988
+  [lbfgs iter 507] loss=0.000831 (dx=0.000028 dy=0.000039 dz=0.000582 logE=0.000182)  val=0.834487
+  [lbfgs iter 508] loss=0.000828 (dx=0.000028 dy=0.000038 dz=0.000580 logE=0.000182)  val=0.834726
+  [lbfgs iter 509] loss=0.000820 (dx=0.000026 dy=0.000037 dz=0.000576 logE=0.000181)  val=0.835088
+  [lbfgs iter 510] loss=0.000811 (dx=0.000026 dy=0.000037 dz=0.000569 logE=0.000179)  val=0.835260
+  [lbfgs iter 511] loss=0.000809 (dx=0.000037 dy=0.000040 dz=0.000557 logE=0.000175)  val=0.835389
+  [lbfgs iter 512] loss=0.000793 (dx=0.000028 dy=0.000038 dz=0.000553 logE=0.000175)  val=0.835127
+  [lbfgs iter 513] loss=0.000790 (dx=0.000026 dy=0.000036 dz=0.000554 logE=0.000175)  val=0.834887
+  [lbfgs iter 514] loss=0.000784 (dx=0.000026 dy=0.000035 dz=0.000550 logE=0.000174)  val=0.834576
+  [lbfgs iter 515] loss=0.000777 (dx=0.000025 dy=0.000033 dz=0.000545 logE=0.000173)  val=0.834440
+  [lbfgs iter 516] loss=0.000775 (dx=0.000031 dy=0.000043 dz=0.000531 logE=0.000170)  val=0.834605
+  [lbfgs iter 517] loss=0.000763 (dx=0.000028 dy=0.000034 dz=0.000531 logE=0.000170)  val=0.834614
+  [lbfgs iter 518] loss=0.000761 (dx=0.000026 dy=0.000033 dz=0.000532 logE=0.000170)  val=0.834808
+  [lbfgs iter 519] loss=0.000754 (dx=0.000026 dy=0.000032 dz=0.000527 logE=0.000169)  val=0.835064
+  [lbfgs iter 520] loss=0.000748 (dx=0.000029 dy=0.000035 dz=0.000517 logE=0.000167)  val=0.835512
+  [lbfgs iter 521] loss=0.000742 (dx=0.000027 dy=0.000033 dz=0.000515 logE=0.000167)  val=0.835191
+  [lbfgs iter 522] loss=0.000738 (dx=0.000026 dy=0.000032 dz=0.000514 logE=0.000167)  val=0.834918
+  [lbfgs iter 523] loss=0.000733 (dx=0.000026 dy=0.000031 dz=0.000511 logE=0.000166)  val=0.834739
+  [lbfgs iter 524] loss=0.000726 (dx=0.000026 dy=0.000031 dz=0.000506 logE=0.000164)  val=0.834514
+  [lbfgs iter 525] loss=0.000728 (dx=0.000034 dy=0.000039 dz=0.000495 logE=0.000161)  val=0.835165
+  [lbfgs iter 526] loss=0.000722 (dx=0.000027 dy=0.000033 dz=0.000500 logE=0.000162)  val=0.834814
+  [lbfgs iter 527] loss=0.000718 (dx=0.000026 dy=0.000032 dz=0.000499 logE=0.000162)  val=0.834975
+  [lbfgs iter 528] loss=0.000713 (dx=0.000025 dy=0.000031 dz=0.000497 logE=0.000161)  val=0.835310
+  [lbfgs iter 529] loss=0.000710 (dx=0.000024 dy=0.000030 dz=0.000495 logE=0.000160)  val=0.835443
+  [lbfgs iter 530] loss=0.000701 (dx=0.000026 dy=0.000030 dz=0.000487 logE=0.000158)  val=0.835651
+  [lbfgs iter 531] loss=0.000717 (dx=0.000035 dy=0.000048 dz=0.000480 logE=0.000155)  val=0.836468
+  [lbfgs iter 532] loss=0.000698 (dx=0.000026 dy=0.000031 dz=0.000485 logE=0.000157)  val=0.835886
+  [lbfgs iter 533] loss=0.000693 (dx=0.000026 dy=0.000031 dz=0.000481 logE=0.000156)  val=0.835877
+  [lbfgs iter 534] loss=0.000688 (dx=0.000026 dy=0.000031 dz=0.000477 logE=0.000155)  val=0.835849
+  [lbfgs iter 535] loss=0.000684 (dx=0.000026 dy=0.000031 dz=0.000473 logE=0.000154)  val=0.835896
+  [lbfgs iter 536] loss=0.000681 (dx=0.000032 dy=0.000033 dz=0.000464 logE=0.000152)  val=0.836064
+  [lbfgs iter 537] loss=0.000674 (dx=0.000028 dy=0.000032 dz=0.000462 logE=0.000152)  val=0.836126
+  [lbfgs iter 538] loss=0.000671 (dx=0.000027 dy=0.000030 dz=0.000462 logE=0.000152)  val=0.836148
+  [lbfgs iter 539] loss=0.000666 (dx=0.000026 dy=0.000030 dz=0.000459 logE=0.000151)  val=0.836062
+  [lbfgs iter 540] loss=0.000661 (dx=0.000026 dy=0.000030 dz=0.000455 logE=0.000150)  val=0.835675
+  [lbfgs iter 541] loss=0.000666 (dx=0.000029 dy=0.000046 dz=0.000443 logE=0.000148)  val=0.835174
+  [lbfgs iter 542] loss=0.000657 (dx=0.000026 dy=0.000032 dz=0.000450 logE=0.000149)  val=0.835476
+[lbfgs] 543 iterations in 5.0s
+[lbfgs] best val=0.683235 at iter 46 (Adam was 0.867573, gain=0.184338)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_03_recentered/recon_train_curves.png
+[done] best recon val 0.6832  -> /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_03_recentered
+[save] /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/test_v6_run_03_recentered/recon_target_vs_pred.png
+>>> Running 04_optimize_lbfgs_ensemble.py 
+========================================================================
+v6/04_optimize_lbfgs_ensemble.py — Adam warm-start + L-BFGS ensemble
+========================================================================
+device       : cuda
+init schemes : ('grid', 'center')
+chains (K)   : 15  (init σ=1000.0 m)
+Adam epochs  : 5000  (primaries/step=256)
+L-BFGS       : max_iter=1500  batch=512
+[load] 700 primaries
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.36448249220848083
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.3722887635231018
+[load] recon.pt  epoch=301  val=0.6832345128059387
+
+========================================================================
+init scheme: grid
+========================================================================
+Traceback (most recent call last):
+  File "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/04_optimize_lbfgs_ensemble.py", line 986, in <module>
+    main()
+    ~~~~^^
+  File "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/04_optimize_lbfgs_ensemble.py", line 958, in main
+    per_scheme[scheme] = _perturbed_adam_runs(
+                         ~~~~~~~~~~~~~~~~~~~~^
+        scheme, N_CHAINS, g, mountain, fnn, recon, primary_all, n_total_primaries,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/04_optimize_lbfgs_ensemble.py", line 307, in _perturbed_adam_runs
+    xk, yk = project_to_mountain_ne(mountain, xk, yk)
+             ^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'project_to_mountain_ne' is not defined
