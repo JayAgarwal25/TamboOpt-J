@@ -110,6 +110,20 @@ def build_training_pairs(mountain, surface,
     points[k_sp:] = torch.as_tensor(m.points, dtype=torch.float32)
     del m
 
+    # The muon generator overflows float32 in its energy de-transform, baking
+    # +Inf into the energy column of ~1% of muon showers (electron block is
+    # clean). In the kernel that Inf meets a far-away spatial weight of ~0, so
+    # Inf*0 = NaN poisons E (and the energy-weighted T). Treat any point with a
+    # non-finite component as padding: zero the whole 5-vector so energy<=0 drops
+    # it from both the recenter mask and the kernel sums.
+    bad = ~torch.isfinite(points).all(dim=-1)            # (N, P)
+    n_bad = int(bad.sum())
+    if n_bad:
+        points[bad] = 0.0
+        if verbose:
+            print(f"[sanitize] zeroed {n_bad} non-finite points "
+                  f"in {int(bad.any(dim=1).sum())} showers (float32 energy overflow)")
+
     keep_idx = np.concatenate([np.arange(0, k_sp),
                                np.arange(per_sp, per_sp + k_sp)])
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (2*k_sp, 3)
@@ -173,6 +187,11 @@ def build_training_pairs(mountain, surface,
             E, T = compute_labels_batch(
                 clouds, x_det, y_det, surface,
             )
+            # Defensive guard: a detector with no signal has E=T=0, so map any
+            # residual non-finite label to 0 rather than letting it poison norm
+            # stats / training (input points are already sanitized above).
+            E = torch.nan_to_num(E, nan=0.0, posinf=0.0, neginf=0.0)
+            T = torch.nan_to_num(T, nan=0.0, posinf=0.0, neginf=0.0)
 
             # Slot into CPU output arrays
             dst = slice(s_idx * n_showers + lo, s_idx * n_showers + hi)
