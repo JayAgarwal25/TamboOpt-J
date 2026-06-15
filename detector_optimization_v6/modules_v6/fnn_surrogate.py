@@ -96,7 +96,8 @@ def build_training_pairs(mountain, surface,
                          seed:              int = 0,
                          device:            torch.device = torch.device("cpu"),
                          verbose:           bool = True,
-                         recenter_to_mountain: bool = False):
+                         recenter_to_mountain: bool = False,
+                         load_chunk:        int = 4096):
     """Build (primary, xy, E, T) training tensors from the cached shower corpus.
 
     For every shower in the cache, one layout per strategy in `_STRATEGIES` is
@@ -106,13 +107,26 @@ def build_training_pairs(mountain, surface,
 
     The kernel runs on `device` (GPU if available); outputs are returned on CPU.
 
+    **Bounded-memory streaming.** The point clouds are NEVER loaded whole — a
+    dense `(2N, 25088, 5)` corpus is ~301 GB at 300k pairs (OOM). Only the tiny
+    metadata (dir/energy/pdg) is read up front; the clouds are streamed in
+    chunks of `load_chunk` showers (loaded → used for all strategies → freed),
+    so peak RAM is one chunk (~2 GB at 4096) regardless of corpus size. The two
+    species blocks (electron rows [0, per_sp), muon rows [per_sp, 2·per_sp)) are
+    each kept to a balanced prefix of `max_showers/2` rows so Step 2's pdg-split
+    stays balanced — this matches `fnn_surrogate_ne.build_training_pairs` and
+    differs from the old "first `max_showers` file rows" behaviour (identical
+    when `max_showers` == full corpus). The per-(strategy, batch) random layouts
+    are drawn in chunk-major order, so for a fixed seed the layout *assignment*
+    differs from the old strategy-major loop (the distribution is unchanged).
+
     If `recenter_to_mountain` is True, each shower's particle-cloud xy is
-    shifted so its energy-weighted centroid lands on the mountain bbox center.
-    The cache has most clouds at x in [-11k, 0], y in [-5k, 0] while the
-    mountain bbox is roughly (-2.5k..+2.5k, +2.4k..+3.9k), so ~77% of raw
-    showers don't trigger any detector. Recentering turns every shower into a
-    useful training signal at the cost of decoupling impact point from
-    primary direction.
+    shifted so its energy-weighted centroid lands on the mountain bbox center
+    (done per chunk, in place). The cache has most clouds at x in [-11k, 0],
+    y in [-5k, 0] while the mountain bbox is roughly (-2.5k..+2.5k, +2.4k..+3.9k),
+    so ~77% of raw showers don't trigger any detector. Recentering turns every
+    shower into a useful training signal at the cost of decoupling impact point
+    from primary direction.
 
     Returns:
         primaries : (N_pairs, 5)   float32
@@ -122,43 +136,27 @@ def build_training_pairs(mountain, surface,
         strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
     """
     import showerdata
-    data = showerdata.load(shower_cache_path)
 
-    points = torch.as_tensor(data.points,     dtype=torch.float32)  # (N, P, 5)
-    dirs   = torch.as_tensor(data.directions, dtype=torch.float32)  # (N, 3)
-    energs = torch.as_tensor(data.energies,   dtype=torch.float32)  # (N, 1)
-    pdg    = torch.as_tensor(data.pdg,        dtype=torch.long)     # (N,)
-    n_showers = points.shape[0]
-    if max_showers is not None:
-        n_showers = min(n_showers, int(max_showers))
-        points = points[:n_showers]
-        dirs   = dirs[:n_showers]
-        energs = energs[:n_showers]
-        pdg    = pdg[:n_showers]
+    # Metadata only (tiny); the dense point clouds are streamed in chunks below.
+    meta   = showerdata.load_inc_particles(shower_cache_path)
+    n_file = meta.pdg.shape[0]
+    per_sp = n_file // 2                                  # electron / muon block size
+    keep   = n_file if not max_showers else min(int(max_showers), n_file)
+    k_sp   = keep // 2                                    # rows kept per species
+    n_showers = 2 * k_sp
+
+    # Dataset row d → file row: electron block d∈[0,k_sp) → file d; muon block
+    # d∈[k_sp,2k_sp) → file per_sp+(d-k_sp). Build metadata in dataset order.
+    keep_idx = np.concatenate([np.arange(0, k_sp),
+                               np.arange(per_sp, per_sp + k_sp)])
+    dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (n_showers, 3)
+    energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)  # (n_showers, 1)
+    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (n_showers,)
+    primaries_all = encode_primary(dirs, energs, pdg)                         # (n_showers, 5)
 
     if recenter_to_mountain:
-        # Energy-weighted centroid (ignore padded entries via the energy mask)
-        # so each shower's bulk lands at mountain center. Padded particles
-        # (all-zero rows) stay at (0, 0) — they're outside the detector
-        # neighborhood (mountain is at ~(0, 3164)) so the kernel ignores them.
         mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
         mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
-        mask    = (points[:, :, 3] > 0).float()                  # (N, P)
-        w_sum   = mask.sum(dim=1).clamp(min=1.0)                 # (N,)
-        cx = (points[:, :, 0] * mask).sum(dim=1) / w_sum         # (N,)
-        cy = (points[:, :, 1] * mask).sum(dim=1) / w_sum
-        dx = (mtn_cx - cx).view(-1, 1)                           # (N, 1)
-        dy = (mtn_cy - cy).view(-1, 1)
-        points = points.clone()
-        points[..., 0] = points[..., 0] + dx * mask
-        points[..., 1] = points[..., 1] + dy * mask
-        if verbose:
-            print(f"[recenter] shifted clouds to mountain center "
-                  f"({mtn_cx:.1f}, {mtn_cy:.1f}); "
-                  f"per-shower shift dx in [{float(dx.min()):.1f}, {float(dx.max()):.1f}]  "
-                  f"dy in [{float(dy.min()):.1f}, {float(dy.max()):.1f}]")
-
-    primaries_all = encode_primary(dirs, energs, pdg)   # (N, 5)
 
     n_strat = len(_STRATEGIES)
     n_pairs = n_showers * n_strat
@@ -170,39 +168,82 @@ def build_training_pairs(mountain, surface,
     out_T       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
     out_strat   = torch.empty((n_pairs,),              dtype=torch.int64)
 
+    # Keep chunks a multiple of batch_size so no shared-layout batch is split
+    # across a chunk boundary (only a block's final batch may be short).
+    load_chunk = max(int(batch_size), (int(load_chunk) // int(batch_size)) * int(batch_size))
+    if verbose:
+        print(f"[load] streaming {n_showers} rows ({k_sp}/species) of {n_file} "
+              f"in chunks of {load_chunk}; peak RAM ≈ one chunk, not the corpus")
+
     rng = np.random.default_rng(seed)
+    n_sanitized = 0
 
-    for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
-        fn = _STRATEGY_FNS[fn_name]
-        n_batches = (n_showers + batch_size - 1) // batch_size
-        if verbose:
-            print(f"[build] strategy {s_idx+1}/{n_strat}  {s_name:<18}  "
-                  f"{n_batches} batches of {batch_size}")
+    # Per species block: file rows are one contiguous slice (single disk read).
+    for tag, file_start, ds_start in (("e", 0, 0), ("mu", per_sp, k_sp)):
+        for c_lo in range(0, k_sp, load_chunk):
+            c_hi = min(c_lo + load_chunk, k_sp)
+            csz  = c_hi - c_lo
 
-        for b in range(n_batches):
-            lo = b * batch_size
-            hi = min(lo + batch_size, n_showers)
-            B  = hi - lo
+            # Stream this chunk's clouds; reused across all strategies, then freed.
+            sub = showerdata.load(shower_cache_path,
+                                  start=file_start + c_lo, stop=file_start + c_hi)
+            clouds_chunk = torch.as_tensor(sub.points, dtype=torch.float32)   # (csz, P, 5)
+            del sub
 
-            # Fresh layout for this batch
-            x_det, y_det = fn(mountain, n_det=n_det, rng=rng, **kwargs)
-            x_det = x_det.float().to(device)
-            y_det = y_det.float().to(device)
+            # float32 energy de-transform overflows to +Inf in ~1% of muon
+            # showers; in the kernel Inf·0 = NaN poisons E/T and NaN-trains the
+            # surrogate. Treat any non-finite point as padding (zero its 5-vector
+            # → energy<=0 drops it from the recenter mask and the kernel sums).
+            bad = ~torch.isfinite(clouds_chunk).all(dim=-1)        # (csz, P)
+            nb  = int(bad.sum())
+            if nb:
+                clouds_chunk[bad] = 0.0
+                n_sanitized += nb
 
-            # Shared-layout kernel call (batch slice moved to device)
-            clouds = points[lo:hi].to(device)              # (B, P, 5)
-            E, T = compute_labels_batch(
-                clouds, x_det, y_det, surface,
-            )
+            if recenter_to_mountain:
+                # Energy-weighted centroid over real points (padded rows stay 0).
+                mask  = (clouds_chunk[:, :, 3] > 0).float()        # (csz, P)
+                w_sum = mask.sum(dim=1).clamp(min=1.0)             # (csz,)
+                cx = (clouds_chunk[:, :, 0] * mask).sum(dim=1) / w_sum
+                cy = (clouds_chunk[:, :, 1] * mask).sum(dim=1) / w_sum
+                dx = (mtn_cx - cx).view(-1, 1)
+                dy = (mtn_cy - cy).view(-1, 1)
+                clouds_chunk[..., 0] = clouds_chunk[..., 0] + dx * mask
+                clouds_chunk[..., 1] = clouds_chunk[..., 1] + dy * mask
 
-            # Slot into CPU output arrays
-            dst = slice(s_idx * n_showers + lo, s_idx * n_showers + hi)
-            out_primary[dst] = primaries_all[lo:hi]
-            out_xy[dst, :, 0] = x_det.cpu().unsqueeze(0).expand(B, -1)
-            out_xy[dst, :, 1] = y_det.cpu().unsqueeze(0).expand(B, -1)
-            out_E[dst] = E.cpu()
-            out_T[dst] = T.cpu()
-            out_strat[dst] = s_idx
+            for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
+                fn = _STRATEGY_FNS[fn_name]
+                for sb_lo in range(0, csz, batch_size):
+                    sb_hi = min(sb_lo + batch_size, csz)
+                    B = sb_hi - sb_lo
+
+                    # Fresh shared layout for this batch
+                    x_det, y_det = fn(mountain, n_det=n_det, rng=rng, **kwargs)
+                    x_det = x_det.float().to(device)
+                    y_det = y_det.float().to(device)
+
+                    clouds = clouds_chunk[sb_lo:sb_hi].to(device)   # (B, P, 5)
+                    E, T = compute_labels_batch(clouds, x_det, y_det, surface)
+
+                    ds_lo = ds_start + c_lo + sb_lo
+                    ds_hi = ds_start + c_lo + sb_hi
+                    dst = slice(s_idx * n_showers + ds_lo, s_idx * n_showers + ds_hi)
+                    out_primary[dst]  = primaries_all[ds_lo:ds_hi]
+                    out_xy[dst, :, 0] = x_det.cpu().unsqueeze(0).expand(B, -1)
+                    out_xy[dst, :, 1] = y_det.cpu().unsqueeze(0).expand(B, -1)
+                    out_E[dst] = E.cpu()
+                    out_T[dst] = T.cpu()
+                    out_strat[dst] = s_idx
+
+            del clouds_chunk
+            if verbose:
+                print(f"[build] {tag} rows {c_lo}-{c_hi}/{k_sp} done "
+                      f"(×{n_strat} strategies)")
+
+    if recenter_to_mountain and verbose:
+        print(f"[recenter] shifted clouds to mountain center ({mtn_cx:.1f}, {mtn_cy:.1f})")
+    if verbose and n_sanitized:
+        print(f"[sanitize] zeroed {n_sanitized} non-finite points (float32 energy overflow)")
 
     return out_primary, out_xy, out_E, out_T, out_strat
 

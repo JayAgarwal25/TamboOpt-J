@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p gpu_requeue 	
-#SBATCH --mem=100g        			
+#SBATCH --mem=64g        			
 #SBATCH --time=1-10:00:00 			
 #SBATCH -c 32            			
 #SBATCH --gres=gpu:1        
@@ -31,14 +31,14 @@ run_step () {
     python -c "import json; d=json.load(open('$STATUS_FILE')); d['$step']='done'; json.dump(d, open('$STATUS_FILE','w'), indent=2)"
 }
 
-# Step-0 resume: continue the a crashed run (slurm-21376182) into the existing
-# corpus file from this row — electron block complete + 20k muons = last
-# logged "file offset". Set to 0 for a FRESH corpus (re-preallocates the
-# file)
-RESUME_ROW=520000
+# # Step-0 resume: continue the a crashed run (slurm-21376182) into the existing
+# # corpus file from this row — electron block complete + 20k muons = last
+# # logged "file offset". Set to 0 for a FRESH corpus (re-preallocates the
+# # file)
+# RESUME_ROW=520000
 
 # run_step 00_generate_data.py
-run_step 00_generate_data_dual_species.py --resume-at-row "$RESUME_ROW"
+run_step 00_generate_data_dual_species.py
 run_step 01_build_dataset_northeast.py
 run_step 02_train_fnn_deepsets.py
 run_step 03_train_recon.py

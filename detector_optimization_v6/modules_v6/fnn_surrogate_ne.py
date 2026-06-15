@@ -110,6 +110,9 @@ def build_training_pairs(mountain, surface,
     points[k_sp:] = torch.as_tensor(m.points, dtype=torch.float32)
     del m
 
+    # TODO(dedupe): this non-finite sanitization is now duplicated in
+    # fnn_surrogate.build_training_pairs (North, Up, added 2026-06-14). Factor
+    # into a shared `_sanitize_nonfinite_(points)` helper used by both builders.
     # The muon generator overflows float32 in its energy de-transform, baking
     # +Inf into the energy column of ~1% of muon showers (electron block is
     # clean). In the kernel that Inf meets a far-away spatial weight of ~0, so
