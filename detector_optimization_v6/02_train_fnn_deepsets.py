@@ -58,7 +58,7 @@ from modules_v6.constants import (
 # FNN_FOLDER — they cannot clobber a legacy single-model fnn.pt, and stages 3-4
 # load the pair from there via dual_surrogate.load_dual_surrogate.
 OUTPUT_FOLDER = FNN_FOLDER
-SPECIES_TAGS  = (("electron", 0.0), ("muon", 1.0))   # (tag, pdg feature value)
+SPECIES_TAGS  = (("electron", 0), ("muon", 1))   # (tag, species id: 0=electron, 1=muon)
 
 BATCH_SIZE          = 256
 N_EPOCHS            = 100
@@ -613,17 +613,22 @@ def main():
     E_all     = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
     T_all     = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
     strat_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
+    species_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt")).long()
     print(f"[load] corpus in {time.time()-t0:.1f}s  primary={tuple(primary.shape)}")
 
     n_strat = int(strat_ids.max().item() + 1)
-    for tag, pdg_val in SPECIES_TAGS:
+    for tag, species_val in SPECIES_TAGS:
         if tag not in wanted:
             continue
-        idx = torch.nonzero(primary[:, PRIMARY_DIM - 1] == pdg_val).squeeze(-1)
+        # Split on the Step-1 species sidecar (0=electron, 1=muon). The primary's
+        # 5th feature is now the EM/hadronic class (a real input the model learns),
+        # not the species, so it must NOT be used to route rows here.
+        idx = torch.nonzero(species_ids == species_val).squeeze(-1)
         if idx.numel() == 0:
             raise SystemExit(
-                f"no rows with species id {pdg_val} ({tag}) in the dataset — "
-                f"was 01_build_dataset.py run on the paired dual-species corpus?")
+                f"no rows with species id {species_val} ({tag}) in the dataset — "
+                f"was 01_build_dataset.py run on the paired dual-species corpus "
+                f"(and did it write species_ids.pt)?")
         # shower_level_split relies on strategy-major contiguous blocks; the
         # species filter preserves that as long as every strategy block holds
         # the same per-species rows (true for the paired corpus).

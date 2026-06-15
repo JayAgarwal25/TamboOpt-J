@@ -335,7 +335,8 @@ def main():
           f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
 
     # Recon targets = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw
-    # units (pdg dropped — the combined response describes the whole event).
+    # units (the 5th feature — the EM/hadronic class — is an input, not a
+    # reconstruction target).
     # z-score stats are computed directly from the data being trained on; they
     # ship inside recon.pt, so stage 4 stays consistent automatically.
     target   = primary[:, :4].clone().float()                                # (N, 4)

@@ -42,8 +42,6 @@ from .deepsets_surrogate import build_surrogate_from_ckpt
 ELECTRON_CKPT = "fnn_electron.pt"
 MUON_CKPT     = "fnn_muon.pt"
 
-_PDG_FEATURE = PRIMARY_DIM - 1   # primary = [dir_x, dir_y, dir_z, log_e_norm, pdg]
-
 
 def combine_species_outputs(pred_e: torch.Tensor,
                             pred_mu: torch.Tensor) -> torch.Tensor:
@@ -69,12 +67,11 @@ def combine_species_outputs(pred_e: torch.Tensor,
 class DualSpeciesSurrogate(nn.Module):
     """Two frozen per-species surrogates behind the single-surrogate contract.
 
-    forward(primary, xy) evaluates the electron model with the pdg feature
-    forced to 0 and the muon model with it forced to 1 (each model was trained
-    on its species subset where that feature is constant), then combines the
-    outputs physically. The pdg value of the INCOMING primary is ignored — a
-    primary describes one complete event, and both components are always part
-    of it.
+    forward(primary, xy) evaluates BOTH per-species models on the SAME primary
+    (whose pdg feature is the real EM/hadronic class each model was trained on)
+    and combines their outputs physically — a primary describes one complete
+    event, and both the electron and muon components are always part of it.
+    Routing is by model identity (electron vs muon), not by the pdg feature.
     """
 
     def __init__(self, electron: nn.Module, muon: nn.Module):
@@ -83,24 +80,19 @@ class DualSpeciesSurrogate(nn.Module):
         self.muon     = muon
         self.n_det    = getattr(electron, "n_det", N_DETECTORS)
 
-    @staticmethod
-    def _with_pdg(primary: torch.Tensor, value: float) -> torch.Tensor:
-        p = primary.clone()
-        p[:, _PDG_FEATURE] = value
-        return p
-
     def forward(self, primary: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            primary : (B, PRIMARY_DIM) — pdg feature is overridden per branch.
+            primary : (B, PRIMARY_DIM) — passed unchanged to both models; its
+                      pdg feature is the EM/hadronic class both were trained on.
             xy      : (B, n_det, 2) — shared layout, stays in the autograd graph
                       of BOTH branches.
         Returns:
             (B, n_det, 2) combined event response — col 0 = log1p(N_tot),
             col 1 = log1p(t_tot * T_LOG_SCALE).
         """
-        pred_e  = self.electron(self._with_pdg(primary, 0.0), xy)
-        pred_mu = self.muon(self._with_pdg(primary, 1.0), xy)
+        pred_e  = self.electron(primary, xy)
+        pred_mu = self.muon(primary, xy)
         return combine_species_outputs(pred_e, pred_mu)
 
 

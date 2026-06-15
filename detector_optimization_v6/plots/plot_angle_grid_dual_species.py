@@ -109,8 +109,9 @@ def main():
     ap.add_argument("--cols", type=int, default=5, help="azimuth steps (cols)")
     ap.add_argument("--energy", type=float, default=1e7, help="fixed primary energy [GeV]")
     ap.add_argument("--label", type=int, default=0,
-                    help="within-model class label fed to the generator (sampled 0/1 in "
-                         "the generation pipeline; fixed here)")
+                    help="EM/hadronic primary class fed to the generator as its "
+                         "conditioning label (0/1; sampled per event in the generation "
+                         "pipeline, fixed here). Stored as the corpus `pdg`.")
     ap.add_argument("--zenith-min", type=float, default=ZENITH_MIN)
     ap.add_argument("--zenith-max", type=float, default=ZENITH_MAX)
     ap.add_argument("--azimuth-min", type=float, default=AZIMUTH_MIN)
@@ -131,7 +132,9 @@ def main():
         print(f"[warn] energy {args.energy:.2e} outside training range [{E_MIN:.0e},{E_MAX:.0e}]")
 
     cfg = SPECIES[args.species]
-    pdg = int(cfg["pdg"])            # saved species id (electron=0, muon=1), for the title
+    # The EM/hadronic class fed to the generator (its conditioning label, stored
+    # as the corpus `pdg`). The e/µ species is args.species.
+    label = int(args.label)
 
     # Row-major grid: rows = zenith, cols = azimuth. Azimuth wraps, so endpoint=False.
     zeniths  = np.linspace(args.zenith_min, args.zenith_max, args.rows)
@@ -140,7 +143,7 @@ def main():
     ncell = len(grid)
     print(f"[grid] {args.rows}×{args.cols} = {ncell} showers  "
           f"species={args.species}  E={args.energy:.2e} GeV  "
-          f"pdg={pdg}  max_points={cfg['max_points']}")
+          f"label(EM/had)={label}  max_points={cfg['max_points']}")
     print(f"  zenith  rows: {np.round(zeniths,1).tolist()}")
     print(f"  azimuth cols: {np.round(azimuths,1).tolist()}")
 
@@ -182,15 +185,15 @@ def main():
     # arrival time), both spanning every angle cell.
     base, ext = os.path.splitext(out)
     out_time = f"{base}_time{ext or '.png'}"
-    _plot_grid(cells, zeniths, azimuths, args.energy, pdg, args.species, out, mountain,
+    _plot_grid(cells, zeniths, azimuths, args.energy, label, args.species, out, mountain,
                color_by="energy")
     print(f"[done] wrote {out}")
-    _plot_grid(cells, zeniths, azimuths, args.energy, pdg, args.species, out_time, mountain,
+    _plot_grid(cells, zeniths, azimuths, args.energy, label, args.species, out_time, mountain,
                color_by="time")
     print(f"[done] wrote {out_time}")
 
 
-def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain,
+def _plot_grid(cells, zeniths, azimuths, energy, label, species, out, mountain,
                color_by="energy"):
     import matplotlib
     matplotlib.use("Agg")
@@ -276,7 +279,7 @@ def _plot_grid(cells, zeniths, azimuths, energy, pdg, species, out, mountain,
     color_lbl = "color = arrival time" if color_by == "time" else "size ∝ energy"
     fig.suptitle(
         f"Shower vs incident angle — azimuth φ across columns, zenith θ across rows{norm}\n"
-        f"{species} model (pdg={pdg}), fixed E = {energy:.2e} GeV   ({unit})   "
+        f"{species} model (label={label}, EM/had), fixed E = {energy:.2e} GeV   ({unit})   "
         f"[{color_lbl}; red arrow = azimuth travel direction (cosφ, sinφ)]",
         fontsize=12)
     # colorbar already steals layout space; only tight-pack the no-colorbar case

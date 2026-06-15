@@ -71,7 +71,7 @@ Each primary is a 5-vector:
 
 $$\mathbf{q} = \bigl(\sin\theta\cos\phi,\;\sin\theta\sin\phi,\;\cos\theta,\;\tilde E,\;\text{pdg}\bigr)$$
 
-The first three components are the direction unit vector $(\hat n_x, \hat n_y, \hat n_z)$; $\tilde E = (\log_{10} E - 5)/3$ normalises log-energy to $[0,1]$; pdg is a particle-type id.
+The first three components are the direction unit vector $(\hat n_x, \hat n_y, \hat n_z)$; $\tilde E = (\log_{10} E - 5)/3$ normalises log-energy to $[0,1]$; pdg is the **EM (0) vs hadronic (1)** primary-shower class — the generator's conditioning label, randomly sampled per event (both classes trained), a real feature the surrogate learns. It is **not** the electron/muon secondary component; that "species" axis is tracked separately (§3.6).
 
 ### 3.4 Detector Response Kernel
 
@@ -113,8 +113,8 @@ Because this changes both the **labels** and the **meaning of `xy`**, it is a *s
 
 Consequences baked into the pipeline:
 
-1. **Paired corpus.** `00_generate_data_dual_species.py` samples $N$ primaries once and generates both components: electron rows $0..N{-}1$ and muon rows $N..2N{-}1$ share the same $(E, \hat{\mathbf n})$ — row $i$ and row $N{+}i$ are one physical event. Stored `pdg` is a species id (e=0, µ=1), a downstream feature only.
-2. **Conditioning label is always 0.** Both models were trained with conditioning label 0 only (their training `pdg` is all-zero); label 1 hits an untrained embedding. Species identity never enters the generators as a label.
+1. **Paired corpus.** `00_generate_data_dual_species.py` samples $N$ primaries once and generates both components: electron rows $0..N{-}1$ and muon rows $N..2N{-}1$ share the same $(E, \hat{\mathbf n})$ and EM/hadronic class — row $i$ and row $N{+}i$ are one physical event. The corpus `pdg` stores that **EM/hadronic class** (§3.3); the e/µ species (which component a row is) is written to a Step-0 sidecar (`DUAL_SPECIES_IDS_PATH`), not to `pdg`.
+2. **Conditioning label = EM/hadronic class.** `sample_primary_particles` draws it uniformly in {0,1} and both generator stages (PointCountFM + AllShowers) one-hot encode it; **both** per-species checkpoints were trained on **both** classes. (Corrected 2026-06-15 — supersedes the earlier "conditioning label always 0 / label 1 untrained" claim, which was the error; see `diary.md`.)
 3. **Two surrogates, physically combined.** Step 2 trains one DeepSets surrogate per component; Steps 3–4 evaluate both with the same $(\mathbf q, \mathbf{xy})$ and combine in *physical* space (`modules_v6/dual_surrogate.py`), not by adding log-channels:
 
 $$N_\text{tot} = N_e + N_\mu, \qquad t_\text{tot} = \frac{N_e t_e + N_\mu t_\mu}{N_e + N_\mu}$$
@@ -128,9 +128,9 @@ $$N_\text{tot} = N_e + N_\mu, \qquad t_\text{tot} = \frac{N_e t_e + N_\mu t_\mu}
 
 ### 4.1 Step 0 — Shower Corpus Generation (`00_generate_data_dual_species.py`)
 
-Builds the **paired dual-species corpus** (§3.6): `--n-pairs` primaries (default `NUM_SHOWERS`, seeded) are sampled once, then each species' staged model pair generates its component — electron block first, muon second, same primaries. Per species the chain runs PointCountFM on CPU (its TorchScript bakes device constants) and AllShowers on GPU with $T = 16$ midpoint steps; caps are explicit (electron 4096, muon 25088). `stage_run_dir` rebuilds Generator-loadable run-dirs from the raw checkpoints and injects `pre_ln: true` (§3.6).
+Builds the **paired dual-species corpus** (§3.6): `--n-pairs` primaries (default `NUM_SHOWERS`, seeded) are sampled once, then each species' staged model pair generates its component — electron block first, muon second, same primaries. Per species the chain runs PointCountFM on CPU (its TorchScript bakes device constants) and AllShowers on GPU with $T = 16$ midpoint steps; caps are explicit (electron 4096, muon 25088). `stage_run_dir` rebuilds Generator-loadable run-dirs from the raw checkpoints and injects `pre_ln: true` (§3.6). Both stages are conditioned on the per-event **EM/hadronic class** (sampled in {0,1}, shared by an event's two components and stored as the corpus `pdg`); the e/µ species is written to a row-aligned sidecar (§3.6).
 
-Generation is **streamed in chunks**: the HDF5 file is preallocated once and each chunk written at its row offset, so peak RAM is one chunk regardless of corpus size. Output: `cashed_showers_dual_{2N}.pt` at `DUAL_SHOWER_CACHE_PATH`.
+Generation is **streamed in chunks**: the HDF5 file is preallocated once and each chunk written at its row offset, so peak RAM is one chunk regardless of corpus size. Output: `cashed_showers_dual_{2N}.pt` at `DUAL_SHOWER_CACHE_PATH`, plus the e/µ species sidecar `cashed_showers_dual_{2N}_species.pt` (`DUAL_SPECIES_IDS_PATH`).
 
 **Crash recovery (`--resume-at-row`, added after run 21376182).** A crashed run continues into the existing preallocated file: pass the last logged "file offset" and the script skips completed rows — finished species blocks are skipped outright (their models never load), a partial block resumes at its offset. Primaries are seeded, so regenerated slices pair exactly with rows on disk (`--n-pairs`/`--seed` must match). `run_all_script_batch.sh` exposes this as `RESUME_ROW` (set 0 for a fresh corpus). Guards reject an out-of-range row or missing file.
 
@@ -166,9 +166,9 @@ For each (shower, layout) pair, the kernel (§3.4) computes ground-truth $(E_{\t
 
 Multiple strategies are what teach the surrogate the dependence on detector positions (not just the primary) — the point of using it for layout optimisation. Pairs are laid out **strategy-major** (shower $i$ under strategy $s$ at index $s \cdot N_\text{showers} + i$), so the shower-level train/val split keeps all 7 variants of a shower together.
 
-With the paired dual-species corpus the input has $2N$ rows ($N$ electron then $N$ muon, same primaries; §3.6), giving $2N \times 7$ pairs whose `pdg` feature carries the species id. Layout draws are independent per batch — the two components of one event do **not** share a layout (each per-species surrogate only needs $(\mathbf q, \mathbf{xy})$ coverage).
+With the paired dual-species corpus the input has $2N$ rows ($N$ electron then $N$ muon, same primaries; §3.6), giving $2N \times 7$ pairs whose `pdg` feature carries the **EM/hadronic class** (§3.3); the e/µ species is carried in a `species_ids.pt` sidecar. Layout draws are independent per batch — the two components of one event do **not** share a layout (each per-species surrogate only needs $(\mathbf q, \mathbf{xy})$ coverage).
 
-> **Memory: bounded per-species streaming load (`DATASET_FRACTION`).** A 1M-row dual corpus is ~151 GB on disk (ragged), but loading it dense (`(N, 25088, 5)` float32) is ~501 GB — far past a 100 GB job. The NE builder (`fnn_surrogate_ne.build_training_pairs`) therefore reads metadata only (dir/energy/pdg) up front, then loads a **prefix of each species block** via `showerdata.load(start, stop)` into a preallocated tensor — never the whole corpus. `DATASET_FRACTION` (in `constants.py`, default 0.10) sets the kept fraction, split evenly across the two blocks so both species stay represented (Step 2 splits by pdg). At 10% peak RAM is ~50 GB.
+> **Memory: bounded per-species streaming load (`DATASET_FRACTION`).** A 1M-row dual corpus is ~151 GB on disk (ragged), but loading it dense (`(N, 25088, 5)` float32) is ~501 GB — far past a 100 GB job. The NE builder (`fnn_surrogate_ne.build_training_pairs`) therefore reads metadata only (dir/energy/pdg) up front, then loads a **prefix of each species block** via `showerdata.load(start, stop)` into a preallocated tensor — never the whole corpus. `DATASET_FRACTION` (in `constants.py`, default 0.10) sets the kept fraction, split evenly across the two blocks so both species stay represented (Step 2 splits by the `species_ids.pt` sidecar). At 10% peak RAM is ~50 GB.
 
 > **Inf-energy sanitization (the §4.1 overflow, handled here).** After loading, any point with a non-finite component is zeroed (so `energy ≤ 0` drops it from both the recenter mask and the kernel sums), and the kernel's $E$/$T$ outputs pass through `nan_to_num` (a no-signal detector is naturally 0). Without this, the ~1% of muon showers with +Inf energy produce `Inf·0 = NaN` labels and NaN-train the surrogate. *Currently applied in the NE builder; the (North, Up) `fnn_surrogate.build_training_pairs` is not yet patched.*
 
@@ -178,7 +178,7 @@ With the paired dual-species corpus the input has $2N$ rows ($N$ electron then $
 
 $$f_s: (\mathbf{q}, \mathbf{xy}) \;\longmapsto\; (\hat{\mathbf{E}}_s, \hat{\mathbf{T}}_s) \in \mathbb{R}^{100 \times 2}, \qquad s \in \{e, \mu\}$$
 
-**Current trainer (2026-06-11).** Splits dataset rows by species id and trains **two parallel DeepSets surrogates** (the architecture that broke the flat-MLP plateau — §10), saving `fnn_electron.pt` and `fnn_muon.pt`. Per-species z-score stats are computed on each subset (muon counts are ~10× electron; shared stats would crush the smaller component's loss) and shipped inside each checkpoint; the same split seed co-splits the two components of one event. Everything else (shower-level split, log-T, Adam(OneCycle) → chunked L-BFGS with best-val save) matches the recipe below. CLI: `--epochs`, `--lbfgs-iters`, `--species`.
+**Current trainer (2026-06-11).** Splits dataset rows by the `species_ids.pt` sidecar (0=electron, 1=muon) and trains **two parallel DeepSets surrogates** (the architecture that broke the flat-MLP plateau — §10), saving `fnn_electron.pt` and `fnn_muon.pt`. Per-species z-score stats are computed on each subset (muon counts are ~10× electron; shared stats would crush the smaller component's loss) and shipped inside each checkpoint; the same split seed co-splits the two components of one event. Everything else (shower-level split, log-T, Adam(OneCycle) → chunked L-BFGS with best-val save) matches the recipe below. CLI: `--epochs`, `--lbfgs-iters`, `--species`.
 
 **Legacy architecture** (single flat MLP, `02_train_fnn.py`): a feedforward net at **hidden = 1024 × 7 layers** (the module default is 512, but `02_train_fnn.py` instantiates 1024):
 
@@ -217,9 +217,9 @@ $$f_\text{recon}: (x_i, y_i, \hat E_i, \hat T_i)_{i=1}^{100} \;\longmapsto\; (\h
 
 It predicts the same 4-D encoding as the first four columns of $\mathbf{q}$ (§3.3); $(E, \theta, \phi)$ are recovered analytically downstream (§4.5). Predicting a unit vector (not $(\theta, \phi)$) avoids the $\phi$ branch cut at $0/2\pi$ and stays well-behaved near the poles.
 
-**Training data**: the frozen **dual surrogate** (`fnn_electron.pt` + `fnn_muon.pt` behind `DualSpeciesSurrogate`, §3.6) runs in eval mode on the whole corpus to produce the **combined** response $(\hat E_\text{comb}, \hat T_\text{comb})$ per row (both models on the same $(\mathbf q, \mathbf{xy})$, counts summed, times count-weight averaged; the row's pdg is ignored). Training on surrogate *predictions* (not kernel ground-truth) is critical: at optimisation time recon only ever sees surrogate outputs, so it must be robust to their patterns — and it learns to invert the *complete* event, matching how Step 4 scores layouts.
+**Training data**: the frozen **dual surrogate** (`fnn_electron.pt` + `fnn_muon.pt` behind `DualSpeciesSurrogate`, §3.6) runs in eval mode on the whole corpus to produce the **combined** response $(\hat E_\text{comb}, \hat T_\text{comb})$ per row (both models on the same $(\mathbf q, \mathbf{xy})$ — including the primary's EM/hadronic class — counts summed, times count-weight averaged). Training on surrogate *predictions* (not kernel ground-truth) is critical: at optimisation time recon only ever sees surrogate outputs, so it must be robust to their patterns — and it learns to invert the *complete* event, matching how Step 4 scores layouts.
 
-**Targets**: `primary[:, :4]` in raw units (pdg dropped — the combined response describes the whole event). Target z-score stats and recon-input per-detector stats are computed **directly from the data being trained on** (xy + combined predictions — no single species checkpoint describes the combined distribution) and baked into `recon.pt`, so Step 4 stays consistent.
+**Targets**: `primary[:, :4]` in raw units (the 5th feature — the EM/hadronic class — is an input, not a reconstruction target). Target z-score stats and recon-input per-detector stats are computed **directly from the data being trained on** (xy + combined predictions — no single species checkpoint describes the combined distribution) and baked into `recon.pt`, so Step 4 stays consistent.
 
 **Architecture** (`modules_v6/reconstruction.py`, the narrower 3×512 form):
 
@@ -384,7 +384,7 @@ The May checkpoints are per-species because the *training data* is per-component
 1. **Each surrogate learns one component's response** $f_s(\mathbf q, \mathbf{xy})$, on its own scale (per-species stats; muon counts dominate electron by ~10× in the through-rock geometry).
 2. **A complete event is the superposition of both components for one primary.** Counts are extensive (they add) and the kernel's $T$ is count-weighted, so the correct combination is $N_e + N_\mu$ and $(N_e t_e + N_\mu t_\mu)/(N_e + N_\mu)$ in *physical* space (adding log-channels would be meaningless). It is differentiable, so Stage-4 gradients flow through both models.
 
-The corpus is generated **paired** (same primaries for both blocks) so this superposition is faithful to the simulation, and recon/optimizer always see complete events, not half-showers.
+The corpus is generated **paired** (same primaries for both blocks) so this superposition is faithful to the simulation, and recon/optimizer always see complete events, not half-showers. Both models receive the **same** primary at inference — including its EM/hadronic class (a real conditioning feature, §3.3) — and are routed by model identity, never by overwriting that feature.
 
 
 ## 6. Normalisation Strategy
@@ -409,15 +409,20 @@ v6_run_00/                       ← Step 0: cached showers (shared across runs)
     cashed_showers_dual_{2N}.pt  PAIRED dual-species corpus (§3.6): rows 0..N-1
                                  electron, N..2N-1 muon, same primaries; ragged
                                  HDF5 via showerdata, streamed chunked writes.
+                                 corpus pdg = EM/hadronic class (0/1).
                                  1M rows ≈ 151 GB on disk (ragged); ~501 GB dense.
+    cashed_showers_dual_{2N}_species.pt   e/µ species sidecar (0=electron,
+                                 1=muon), row-aligned with the corpus; written by
+                                 Step 0 (DUAL_SPECIES_IDS_PATH)
     cashed_showers_500000.pt     legacy single-model corpus (~20 GB at 500k)
 
 test_v6_run_01_recentered/       ← Step 1: training dataset (North, Up convention)
-    primary.pt          (2N·7, 5)      primary features (pdg = species id)
+    primary.pt          (2N·7, 5)      primary features (pdg = EM/hadronic class)
     xy.pt               (2N·7, 100, 2) detector layouts (recentered)
     E.pt                (2N·7, 100)    log1p(energy per detector)
     T.pt                (2N·7, 100)    RAW time per detector (seconds)
     strategy_ids.pt     (2N·7,)        layout strategy id [0–6], strategy-major
+    species_ids.pt      (2N·7,)        e/µ component id (0=electron, 1=muon)
     norm_stats.pt       z-score tensors (raw-T; corpus-wide — Step 2 recomputes
                         per-species stats on its subsets)
 

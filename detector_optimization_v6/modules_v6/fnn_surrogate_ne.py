@@ -22,7 +22,8 @@ from modules_v4.tr_plane_kernel import GetCounts_planeaware
 
 from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM
 from .detector_strategies_ne import (_STRATEGIES, _STRATEGY_FNS)
-from .fnn_surrogate import encode_primary, compute_normalization  # noqa: F401  (re-export)
+from .fnn_surrogate import (encode_primary, compute_normalization,  # noqa: F401  (re-export)
+                            _load_species_sidecar)
 
 
 # ── Label computation (batched over showers, one shared layout per batch) ────
@@ -85,14 +86,15 @@ def build_training_pairs(mountain, surface,
         E         : (N_pairs, 100) float32
         T         : (N_pairs, 100) float32
         strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
+        species_ids  : (N_pairs,)  int64 — e/µ component (0=electron, 1=muon)
     """
     import showerdata
 
     # The dual corpus is two equal species blocks: electron rows [0, per_sp) then
     # muon rows [per_sp, 2*per_sp). Loading ALL points dense is ~501 GB; instead
     # load only the kept prefix of EACH block (max_showers total rows, split
-    # evenly so both species stay represented — 02 splits them by pdg). Metadata
-    # (dir/energy/pdg) is tiny, so it is read in full first.
+    # evenly so both species stay represented — 02 splits per species on the
+    # Step-0 sidecar). Metadata (dir/energy/pdg) is tiny, so it is read first.
     meta   = showerdata.load_inc_particles(shower_cache_path)
     n_file = meta.pdg.shape[0]
     per_sp = n_file // 2
@@ -131,7 +133,7 @@ def build_training_pairs(mountain, surface,
                                np.arange(per_sp, per_sp + k_sp)])
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (2*k_sp, 3)
     energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)  # (2*k_sp, 1)
-    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (2*k_sp,)
+    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (2*k_sp,) EM/hadronic
     n_showers = points.shape[0]
     if verbose:
         print(f"[load] kept {k_sp}/{per_sp} per species "
@@ -156,6 +158,11 @@ def build_training_pairs(mountain, surface,
 
     primaries_all = encode_primary(dirs, energs, pdg)   # (N, 5)
 
+    # e/µ species per kept shower from the Step-0 sidecar (same keep_idx as the
+    # metadata). Corpus `pdg` is the EM/hadronic class, so the Step-2 split keys
+    # on this sidecar, not on the pdg feature.
+    species_all = _load_species_sidecar(shower_cache_path, keep_idx)   # (N,)
+
     n_strat = len(_STRATEGIES)
     n_pairs = n_showers * n_strat
     n_det   = N_DETECTORS
@@ -165,6 +172,7 @@ def build_training_pairs(mountain, surface,
     out_E       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
     out_T       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
     out_strat   = torch.empty((n_pairs,),              dtype=torch.int64)
+    out_species = torch.empty((n_pairs,),              dtype=torch.int64)
 
     rng = np.random.default_rng(seed)
 
@@ -204,5 +212,6 @@ def build_training_pairs(mountain, surface,
             out_E[dst] = E.cpu()
             out_T[dst] = T.cpu()
             out_strat[dst] = s_idx
+            out_species[dst] = species_all[lo:hi]
 
-    return out_primary, out_xy, out_E, out_T, out_strat
+    return out_primary, out_xy, out_E, out_T, out_strat, out_species

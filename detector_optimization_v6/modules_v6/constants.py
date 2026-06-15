@@ -12,7 +12,7 @@ LAYER_EAST_DX  = 150.0
 
 # Fixed architecture constants
 N_DETECTORS = 100
-PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]
+PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]  (pdg = EM/hadronic primary class, 0/1)
 
 # Primary energy bounds (log10 GeV) for min-max normalization
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
@@ -67,10 +67,19 @@ BATCH_SIZE_TRAIN  = 20
 # ── Dual-species (paired) pipeline ────────────────────────────────────────────
 # 00_generate_data_dual_species.py samples NUM_SHOWERS primaries ONCE and
 # generates BOTH components per primary: electron rows 0..N-1 and muon rows
-# N..2N-1 of the corpus share the same (energy, direction) — row i and row N+i
-# are two components of ONE physical event. pdg column = species id (e=0, µ=1).
+# N..2N-1 of the corpus share the same (energy, direction, EM/hadronic class) —
+# row i and row N+i are two components of ONE physical event. The corpus pdg
+# column = the EM/hadronic primary class (0/1), randomly sampled by
+# sample_primary_particles and fed to the generator as its conditioning label.
 DUAL_SHOWER_CACHE_PATH = os.path.join(
     SHOWER_CACHE, f"cashed_showers_dual_{2 * NUM_SHOWERS}.pt")
+# Per-row e/µ species id (0=electron block, 1=muon block) — which secondary
+# COMPONENT a row is. Written by Step 0 alongside the corpus (showerdata.Showers
+# has no species field; its pdg now carries the EM/hadronic class). Row-aligned
+# with the corpus: [0]*NUM_SHOWERS + [1]*NUM_SHOWERS. Default for the canonical
+# corpus; derived from the corpus path by the same `<corpus>_species.pt` rule the
+# Step-1 builders use, so it tracks DUAL_SHOWER_CACHE_PATH automatically.
+DUAL_SPECIES_IDS_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_species.pt"
 
 # 02_train_fnn_deepsets.py log-compresses the T targets as log1p(T*T_LOG_SCALE);
 # the dual-surrogate combination (modules_v6/dual_surrogate.py) must invert the

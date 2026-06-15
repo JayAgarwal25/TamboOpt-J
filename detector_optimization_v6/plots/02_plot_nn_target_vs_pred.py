@@ -23,7 +23,8 @@ Run from the v6 folder:
 
 Dual mode (--dual): the FNN scatter is rendered PER SPECIES — each per-species
 DeepSets model (fnn_electron.pt / fnn_muon.pt) is compared against its own
-pdg-filtered corpus subset, since the corpus E/T ground truth is per-species.
+species-filtered corpus subset (split on the Step-1 species_ids sidecar), since
+the corpus E/T ground truth is per-species.
 The recon scatter uses the combined DualSpeciesSurrogate on the full corpus,
 exactly as 03_train_recon.py does. Outputs:
     FNN_FOLDER/fnn_electron_target_vs_pred.png
@@ -182,7 +183,7 @@ def load_recon() -> Reconstruction:
 # Dual-species loading. Mirrors 02_train_fnn_deepsets.py (per-species FNN) and
 # 03_train_recon.py (combined dual surrogate for recon).
 # --------------------------------------------------------------------------- #
-SPECIES_TAGS = (("electron", 0.0), ("muon", 1.0))   # (tag, pdg feature value)
+SPECIES_TAGS = (("electron", 0), ("muon", 1))   # (tag, species id: 0=electron, 1=muon)
 
 
 def load_species_fnn(species: str):
@@ -340,18 +341,21 @@ def plot_recon_only(*, fnn=None, recon=None,
 
 def plot_fnn_dual(output_dir=None):
     """Per-species FNN scatter for the dual-species surrogate. Each species'
-    DeepSets model is evaluated against its OWN pdg-filtered corpus subset
-    (the corpus E/T are per-species), reproducing 02_train_fnn_deepsets.py's
-    split. Writes FNN_FOLDER/fnn_<species>_target_vs_pred.png per species."""
+    DeepSets model is evaluated against its OWN species subset (split on the
+    Step-1 species_ids sidecar, the corpus E/T being per-species), reproducing
+    02_train_fnn_deepsets.py's split. Writes
+    FNN_FOLDER/fnn_<species>_target_vs_pred.png per species."""
     primary, xy, E_true, T_true, strat_ids = _load_corpus()
+    species_ids = torch.load(
+        os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt")).long()
     if output_dir is None:
         output_dir = FNN_FOLDER
     os.makedirs(output_dir, exist_ok=True)
 
-    for tag, pdg_val in SPECIES_TAGS:
-        idx = torch.nonzero(primary[:, PRIMARY_DIM - 1] == pdg_val).squeeze(-1)
+    for tag, species_val in SPECIES_TAGS:
+        idx = torch.nonzero(species_ids == species_val).squeeze(-1)
         if idx.numel() == 0:
-            print(f"[skip] no {tag} rows (pdg feature {pdg_val}) in corpus")
+            print(f"[skip] no {tag} rows (species id {species_val}) in corpus")
             continue
         fnn = load_species_fnn(tag)
         # val_idx is positional within the filtered subset; pass the subset

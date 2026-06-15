@@ -127,14 +127,14 @@ def main():
         # Read ONLY this slice from disk (hi-lo ≤ args.n showers), not the corpus.
         sub = showerdata.load(args.ckpt, start=lo, stop=hi)
         points = np.asarray(sub.points)                      # (hi-lo, P, 5): x,y,layer,e,t
-        pdg = np.asarray(sub.pdg).reshape(-1)
+        pdg = np.asarray(sub.pdg).reshape(-1)        # EM/hadronic primary class (0/1)
 
         reals = []
         for j in range(len(points)):
             pts = points[j]
             m = pts[:, 3] > 0                                # energy>0 = real point
             reals.append(pts[m])
-            print(f"  {name} shower {lo + j}: pdg={int(pdg[j])}  "
+            print(f"  {name} shower {lo + j}: pdg(EM/had)={int(pdg[j])}  "
                   f"n_points={int(m.sum())}  E_tot={pts[m, 3].sum():.3g}")
 
         if mountain is not None:
@@ -202,7 +202,7 @@ def _plot(reals, pdg, plabel, out, mountain=None, bins=80):
                        aspect=("equal" if mountain is not None else "auto"),
                        cmap=cmap, norm=norm, interpolation="nearest", zorder=1)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f"#{k}  pdg={int(pdg[k])}  n={len(pts)}", fontsize=8)
+        ax.set_title(f"#{k}  pdg(EM/had)={int(pdg[k])}  n={len(pts)}", fontsize=8)
         ax.tick_params(labelsize=6)
 
     unit = "North/Up [m]" if mountain is not None else "x / y [m]"

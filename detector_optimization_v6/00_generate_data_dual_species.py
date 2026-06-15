@@ -74,11 +74,17 @@ autograd graph — 39 GB OOM on an A100 at the 4096-pt electron cap, hopeless at
 the 25088-pt muon cap), and the generator must keep its `with_time` support
 (both new models are time models, dim_inputs [4,6,4]).
 
-Label convention (verified 2026-06-10 against the training h5 files): both
-per-species models were trained with conditioning label 0 ONLY (their training
-h5 `pdg` datasets are all-zero; label 1 hits an untrained embedding), so the
-generator/PointCountFM `label` input is always 0 here. The saved corpus `pdg`
-is a SPECIES id (electron=0, muon=1) — a downstream feature, not a model input.
+Label convention (CORRECTED 2026-06-15 — supersedes the earlier "label always
+0" claim): the generator's conditioning `label` is the primary's EM-vs-hadronic
+shower class. `allshowers/generate_showers.py` defines NUM_CLASSES = 2 and
+`sample_primary_particles` draws `labels` uniformly in {0, 1}; PointCountFM and
+AllShowers one-hot encode that label into their conditioning tensor, and BOTH
+per-species checkpoints were trained on BOTH classes. So we feed the randomly
+sampled per-event label through both stages (NOT a hard-coded 0), and the saved
+corpus `pdg` field stores that EM/hadronic class — a real conditioning feature
+the downstream surrogate learns. (The previous code forced label 0 and stored a
+species id in `pdg`; that conflated two distinct axes and generated the whole
+corpus as a single primary class — see docs/diary.md 2026-06-15.)
 
 Training-data provenance — "species" = secondary COMPONENT, not shower type
 (verified 2026-06-10 against the h5_files_v3 files + TAMBO-opt's
@@ -91,10 +97,12 @@ photons folders), and each per-species file holds that component of the same
 events; muons survive the through-rock geometry while EM is absorbed, hence the
 25088 vs 4096 point caps. Implication: the two models generate two COMPONENTS
 of one physical shower, conditioned on the same primary. This script therefore
-generates PAIRED blocks (same primaries for both species, see above); a
-complete physical event is the SUM of both components for one primary, which
-stages 3-4 obtain by evaluating both per-species surrogates with the same
-primary and combining counts (modules_v6/dual_surrogate.py).
+generates PAIRED blocks (same primaries AND same EM/hadronic label for both
+species, see above); a complete physical event is the SUM of both components for
+one primary, which stages 3-4 obtain by evaluating both per-species surrogates
+with the same primary and combining counts (modules_v6/dual_surrogate.py). The
+e/µ species (which component a row is) is recorded separately in the Step-0
+species sidecar (DUAL_SPECIES_IDS_PATH), not in the corpus `pdg`.
 """
 import argparse
 import glob
@@ -117,9 +125,9 @@ torch.set_float32_matmul_precision("high")
 import showerdata
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
 from modules_v6.constants import (
-    LOG_E_MIN, LOG_E_MAX, 
+    LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
-    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS
+    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS,
 )
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
@@ -132,19 +140,20 @@ from allshowers.generator import Generator, generate
 # ── Config ───────────────────────────────────────────────────────────────────
 BEST = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/checkpoints"
 
-# Per-species model paths + point-cloud caps + saved-pdg id.
+# Per-species model paths + point-cloud caps. The species id (electron=0,
+# muon=1) is the BLOCK INDEX in this dict (electron first, muon second) and is
+# written to the Step-0 species sidecar — it is no longer stored in the corpus
+# `pdg` field (which now carries the EM/hadronic class fed to the generator).
 SPECIES = {
     "electron": dict(
         allshower_run=os.path.join(BEST, "20260519_185649_Electron-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_040716_Electron-PointCountFM", "compiled.pt"),
         max_points=4096,
-        pdg=0,                       # saved species id
     ),
     "muon": dict(
         allshower_run=os.path.join(BEST, "20260520_160031_Muons-Allshower"),
         pcfm_compiled=os.path.join(BEST, "20260521_043912_Muon-PointCountFM", "compiled.pt"),
-        max_points=25088,   
-        pdg=1,
+        max_points=25088,
     ),
 }
 
@@ -302,18 +311,17 @@ def resample_overclip(pcfm, energies, directions, labels, num_points, cap,
     return num_points
 
 
-def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P,
+def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, target_P,
                max_clip_frac=MAX_CLIP_FRAC, max_retries=MAX_PCFM_RETRIES):
     """Generate one chunk of showers for a species from PRE-SAMPLED primaries
     → a showerdata.Showers, padded to target_P. Bounded memory (only this
-    chunk is held). Primaries come in as slices of the corpus-wide arrays so
-    both species blocks share them (paired events)."""
-    n = int(energies.shape[0])
-    # Conditioning label is ALWAYS 0: both per-species models were trained with
-    # label 0 only (their training h5 `pdg` datasets are all-zero), so label 1
-    # would hit an untrained embedding. Species identity is recorded separately
-    # in the saved corpus `pdg` field below.
-    labels = torch.zeros(n, dtype=torch.int64)
+    chunk is held). Primaries (energies, directions, labels) come in as slices
+    of the corpus-wide arrays so both species blocks share them (paired events).
+
+    `labels` is the per-event EM/hadronic primary class (0/1) — the generator's
+    conditioning input (both per-species models were trained on both classes)
+    and the value stored as the corpus `pdg` field."""
+    labels = labels.to(torch.int64)
 
     # Stage 1 — PointCountFM on CPU (TorchScript device-baked → CUDA mismatches).
     num_points = run_point_count_fm(
@@ -348,9 +356,10 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, target_P,
     samples = torch.gather(
         samples, 1, order.unsqueeze(-1).expand(-1, -1, samples.shape[2]))
     
-    # Saved pdg = species id so the downstream corpus distinguishes electron/muon.
-    pdg = torch.full((n,), int(cfg["pdg"]), dtype=torch.int64)
-    
+    # Saved pdg = the EM/hadronic primary class (the generator's conditioning
+    # label). The e/µ species is recorded in the Step-0 species sidecar, not here.
+    pdg = labels
+
     return showerdata.Showers(
         points=samples.numpy(), energies=energies.numpy(),
         pdg=pdg.numpy(), directions=directions.numpy(),
@@ -397,6 +406,10 @@ def main():
         n=n_pairs, seed=args.seed
         )
     energies_all, directions_all = prim["energies"], prim["directions"]
+    # Per-event EM/hadronic primary class (0/1), randomly sampled by
+    # sample_primary_particles. Fed to BOTH generator stages and stored as the
+    # corpus `pdg`; both species blocks reuse it so paired rows share the class.
+    labels_all = prim["labels"]
 
     print("=" * 72)
     print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
@@ -425,6 +438,22 @@ def main():
         # Preallocate the HDF5 once; each chunk is written at its row offset.
         showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
 
+    # e/µ species sidecar (the "tag"): electron block rows [0, n_pairs) = 0,
+    # muon block rows [n_pairs, 2*n_pairs) = 1. Fully determined by n_pairs, so
+    # written unconditionally (resume-safe); the corpus `pdg` now holds the
+    # EM/hadronic class instead. Row-aligned with the corpus.
+    species_ids = torch.cat([
+        torch.zeros(n_pairs, dtype=torch.int64),
+        torch.ones(n_pairs, dtype=torch.int64),
+    ])
+    # Derived from out_path (not the constant) so a custom --out keeps the
+    # sidecar paired — the Step-1 builders apply the same `<corpus>_species.pt`
+    # rule to whatever corpus path they are pointed at.
+    species_path = os.path.splitext(out_path)[0] + "_species.pt"
+    torch.save(species_ids, species_path)
+    print(f"[species] wrote sidecar {species_path} "
+          f"({n_pairs} electron + {n_pairs} muon rows)")
+
     for i, (name, cfg) in enumerate(SPECIES.items()):
         block_start = i * n_pairs              # this species' rows: [block_start, block_start + n_pairs)
         done = min(max(resume - block_start, 0), n_pairs)   # rows of this block already on disk
@@ -448,6 +477,7 @@ def main():
             sh = _gen_chunk(
                 gen, pcfm, cfg,
                 energies_all[done:done + c], directions_all[done:done + c],
+                labels_all[done:done + c],
                 target_P,
             )
             showerdata.save_batch(sh, out_path, start=block_start + done)
@@ -463,7 +493,8 @@ def main():
     # Species are contiguous blocks sharing primaries (electron then muon); the
     # training shower-level split randperms showers, so no global shuffle here.
     print(f"[done] {total} rows = {n_pairs} paired events "
-          f"(electron pdg=0 rows 0..{n_pairs-1}, muon pdg=1 rows {n_pairs}..{total-1}) "
+          f"(electron rows 0..{n_pairs-1}, muon rows {n_pairs}..{total-1}; "
+          f"corpus pdg = EM/hadronic class, e/µ species in {species_path}) "
           f"in {time.time()-t0:.0f}s -> {out_path}")
 
 

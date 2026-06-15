@@ -40,7 +40,8 @@ from modules_v4.tr_surface_map import SurfaceEastMap
 # ── Config ───────────────────────────────────────────────────────────────────
 # The paired dual-species corpus holds 2*NUM_SHOWERS rows (electron block then
 # muon block, same primaries); both blocks become dataset rows here, and 02
-# splits them per species via the primary's pdg feature.
+# splits them per species via the species_ids.pt sidecar (the primary's pdg
+# feature now carries the EM/hadronic class).
 MAX_SHOWERS = 2 * NUM_SHOWERS
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -75,7 +76,7 @@ def main():
 
     # Build training pairs
     t0 = time.time()
-    primary, xy, E, T, strat = build_training_pairs(
+    primary, xy, E, T, strat, species = build_training_pairs(
         mountain=mountain,
         surface=surface,
         shower_cache_path=DUAL_SHOWER_CACHE_PATH,
@@ -92,6 +93,7 @@ def main():
     print(f"  E       : {tuple(E.shape)}        dtype={E.dtype}")
     print(f"  T       : {tuple(T.shape)}        dtype={T.dtype}")
     print(f"  strat   : {tuple(strat.shape)}    unique={sorted(strat.unique().tolist())}")
+    print(f"  species : {tuple(species.shape)}  unique={sorted(species.unique().tolist())}")
 
     # Log-scale E for better FNN training (compresses heavy right tail)
     E = torch.log1p(E)
@@ -117,6 +119,7 @@ def main():
     torch.save(E,       os.path.join(TRAINING_DATASET_FOLDER, "E.pt"))
     torch.save(T,       os.path.join(TRAINING_DATASET_FOLDER, "T.pt"))
     torch.save(strat,   os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt"))
+    torch.save(species, os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt"))
     torch.save(stats,   os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
     print(f"[save] tensors in {time.time() - t0:.1f}s  ->  {TRAINING_DATASET_FOLDER}")
 

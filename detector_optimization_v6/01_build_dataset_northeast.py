@@ -43,7 +43,8 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 # Dedicated output dir (notable name) — never overwrite the (North, Up) corpus.
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 # Paired dual-species corpus holds 2*NUM_SHOWERS rows (electron block then muon
-# block, same primaries); 02 splits them per species via the primary pdg feature.
+# block, same primaries); 02 splits them per species via the species_ids.pt
+# sidecar (the primary pdg feature now carries the EM/hadronic class).
 # DATASET_FRACTION caps how many rows are loaded (split evenly across species) so
 # the build fits in RAM — see modules_v6/constants.py.
 MAX_SHOWERS = int(DATASET_FRACTION * 2 * NUM_SHOWERS)
@@ -80,7 +81,7 @@ def main():
 
     # Build training pairs
     t0 = time.time()
-    primary, xy, E, T, strat = build_training_pairs(
+    primary, xy, E, T, strat, species = build_training_pairs(
         mountain=mountain,
         surface=surface,
         shower_cache_path=DUAL_SHOWER_CACHE_PATH,
@@ -97,6 +98,7 @@ def main():
     print(f"  E       : {tuple(E.shape)}        dtype={E.dtype}")
     print(f"  T       : {tuple(T.shape)}        dtype={T.dtype}")
     print(f"  strat   : {tuple(strat.shape)}    unique={sorted(strat.unique().tolist())}")
+    print(f"  species : {tuple(species.shape)}  unique={sorted(species.unique().tolist())}")
 
     # Log-scale E for better FNN training (compresses heavy right tail)
     E = torch.log1p(E)
@@ -122,6 +124,7 @@ def main():
     torch.save(E,       os.path.join(TRAINING_DATASET_FOLDER, "E.pt"))
     torch.save(T,       os.path.join(TRAINING_DATASET_FOLDER, "T.pt"))
     torch.save(strat,   os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt"))
+    torch.save(species, os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt"))
     torch.save(stats,   os.path.join(TRAINING_DATASET_FOLDER, "norm_stats.pt"))
     print(f"[save] tensors in {time.time() - t0:.1f}s  ->  {TRAINING_DATASET_FOLDER}")
 

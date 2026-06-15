@@ -308,3 +308,51 @@ even for sub-threshold showers never re-rolled (e.g. electrons at 4097–4192,
 ~2% clip); now it keys on `clip_frac > MAX_CLIP_FRAC`, so only genuinely-failed
 showers are reported. (Electrons are pinned ~4096 by training, so they sit just
 over their cap by <3% and are correctly left alone.)
+
+## pdg = EM/hadronic primary class, not species — generation discarded the label (2026-06-15)
+
+Root-caused a conflation in the dual-species pipeline and corrected it
+end-to-end. The generator's conditioning `label` is the primary's EM-vs-hadronic
+shower class, NOT a constant: `allshowers/generate_showers.py` defines
+`NUM_CLASSES = 2`, `sample_primary_particles` draws `labels` uniformly in {0, 1},
+and BOTH PointCountFM (`run_point_count_fm`) and AllShowers one-hot encode that
+label into their conditioning tensor. Both per-species checkpoints were trained
+on BOTH classes. **This supersedes the 2026-06-10/06-11 "label always 0 / label 1
+hits an untrained embedding" claim — that finding was the error.**
+
+The bug: `00_generate_data_dual_species.py` read only `prim["energies"]` /
+`prim["directions"]` and hard-coded `labels = torch.zeros(...)`, so the WHOLE
+corpus was generated as a single primary class. It then stored the e/µ SPECIES
+id (electron=0, muon=1) in the corpus `pdg` field, which flows into the primary
+5-vector's 5th feature (`encode_primary`) — constant within each species subset,
+so no signal — and was used as a species ROUTER in two places (`02`'s split and
+`dual_surrogate._with_pdg`'s per-branch clobber).
+
+Two distinct axes had been merged into one `pdg`:
+- **EM (e±) vs hadronic (π) primary class** — the generator's conditioning
+  label, a real physics feature. Now randomly sampled and stored as `pdg`.
+- **e/µ secondary component** ("species") — which model generated a row. Now a
+  Step-0 sidecar, no longer the corpus `pdg`.
+
+Fix (all within `detector_optimization_v6/`):
+- **00**: feed the random per-event `prim["labels"]` to PointCountFM + AllShowers
+  for BOTH species blocks (paired rows `i` and `N+i` share the class); store it
+  as the corpus `pdg`. Write the e/µ species to a row-aligned sidecar
+  `cashed_showers_dual_<2N>_species.pt` (`DUAL_SPECIES_IDS_PATH`) — `showerdata`
+  has no species field, so it cannot live in the corpus.
+- **01** (NU + NE builders): load the species sidecar (indexed by the same
+  `keep_idx` as the metadata), carry it strategy-major, save `species_ids.pt`
+  beside `strategy_ids.pt`. The primary's 5th feature is now the EM/hadronic
+  class — a real input the surrogate learns.
+- **02**: split electron/muon on `species_ids.pt`, NOT on the pdg feature.
+- **`dual_surrogate`**: delete the `_with_pdg` clobber — both models now receive
+  the same primary (with its true EM/hadronic class); routing is by model
+  identity (electron vs muon).
+- **plots**: `02_plot` splits on `species_ids`; the 2D/3D angle-grid plots'
+  `--label`/titles now read the EM/hadronic class (the `cfg["pdg"]` key, removed
+  from the Step-0 `SPECIES` config, would otherwise `KeyError`).
+
+Coherent only end-to-end: the de-clobbered surrogate + varying 5th feature need
+RETRAINED checkpoints, so regenerate 00 → rebuild 01 → retrain 02/03 → re-run 04;
+existing `cashed_showers_dual_*.pt` / `fnn_*.pt` / `recon.pt` are stale. Static
+checks (`py_compile`, grep) pass; the full smoke chain is a cluster step.

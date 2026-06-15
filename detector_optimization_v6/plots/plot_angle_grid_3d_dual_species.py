@@ -75,8 +75,9 @@ def main():
     ap.add_argument("--cols", type=int, default=5, help="azimuth steps (cols)")
     ap.add_argument("--energy", type=float, default=1e7, help="fixed primary energy [GeV]")
     ap.add_argument("--label", type=int, default=0,
-                    help="within-model class label fed to the generator (sampled 0/1 in "
-                         "the generation pipeline; fixed here)")
+                    help="EM/hadronic primary class fed to the generator as its "
+                         "conditioning label (0/1; sampled per event in the generation "
+                         "pipeline, fixed here). Stored as the corpus `pdg`.")
     ap.add_argument("--zenith-min", type=float, default=ZENITH_MIN)
     ap.add_argument("--zenith-max", type=float, default=ZENITH_MAX)
     ap.add_argument("--azimuth-min", type=float, default=AZIMUTH_MIN)
@@ -96,7 +97,9 @@ def main():
         print(f"[warn] energy {args.energy:.2e} outside training range [{E_MIN:.0e},{E_MAX:.0e}]")
 
     cfg = SPECIES[args.species]
-    pdg = int(cfg["pdg"])
+    # The EM/hadronic class fed to the generator (its conditioning label, stored
+    # as the corpus `pdg`). The e/µ species is args.species.
+    label = int(args.label)
 
     # Row-major grid: rows = zenith, cols = azimuth. Azimuth wraps, so endpoint=False.
     zeniths  = np.linspace(args.zenith_min, args.zenith_max, args.rows)
@@ -105,7 +108,7 @@ def main():
     ncell = len(grid)
     print(f"[grid-3d] {args.rows}×{args.cols} = {ncell} showers  "
           f"species={args.species}  E={args.energy:.2e} GeV  "
-          f"pdg={pdg}  max_points={cfg['max_points']}")
+          f"label(EM/had)={label}  max_points={cfg['max_points']}")
     print(f"  zenith  rows: {np.round(zeniths,1).tolist()}")
     print(f"  azimuth cols: {np.round(azimuths,1).tolist()}")
 
@@ -144,15 +147,15 @@ def main():
 
     base, ext = os.path.splitext(out)
     out_time = f"{base}_time{ext or '.png'}"
-    _plot_grid_3d(cells, zeniths, azimuths, args.energy, pdg, args.species, out,
+    _plot_grid_3d(cells, zeniths, azimuths, args.energy, label, args.species, out,
                   color_by="energy")
     print(f"[done] wrote {out}")
-    _plot_grid_3d(cells, zeniths, azimuths, args.energy, pdg, args.species, out_time,
+    _plot_grid_3d(cells, zeniths, azimuths, args.energy, label, args.species, out_time,
                   color_by="time")
     print(f"[done] wrote {out_time}")
 
 
-def _plot_grid_3d(cells, zeniths, azimuths, energy, pdg, species, out, color_by="energy"):
+def _plot_grid_3d(cells, zeniths, azimuths, energy, label, species, out, color_by="energy"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -216,7 +219,7 @@ def _plot_grid_3d(cells, zeniths, azimuths, energy, pdg, species, out, color_by=
 
     fig.suptitle(
         f"3D shower vs incident angle — azimuth φ across columns, zenith θ across rows\n"
-        f"{species} model (pdg={pdg}), fixed E = {energy:.2e} GeV   "
+        f"{species} model (label={label}, EM/had), fixed E = {energy:.2e} GeV   "
         f"(x, y, layer/depth; color = {('time' if color_by=='time' else 'energy')}; "
         f"points = clustered cell centroids)",
         fontsize=12)

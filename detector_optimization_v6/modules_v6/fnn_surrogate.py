@@ -38,7 +38,8 @@ def encode_primary(directions: torch.Tensor,
     Args:
         directions : (N, 3) unit vectors (sin θ cos φ, sin θ sin φ, cos θ).
         energies   : (N,) or (N, 1) primary energies [GeV], range ~[1e5, 1e8].
-        pdg        : (N,) integer class ids (0 or 1 for this cache).
+        pdg        : (N,) EM/hadronic primary class ids (0 or 1) — a real
+                     conditioning feature, NOT the e/µ species.
 
     Returns:
         (N, 5) tensor `[dir_x, dir_y, dir_z, log_e_norm, pdg]`
@@ -51,6 +52,27 @@ def encode_primary(directions: torch.Tensor,
     log_e_norm = (log_e - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN)
     return torch.cat([dirs, log_e_norm, pdg], dim=1)
 
+
+
+def _species_sidecar_path(shower_cache_path: str) -> str:
+    """Path of the Step-0 e/µ species sidecar paired with a dual corpus .pt
+    (`…_dual_<2N>.pt` -> `…_dual_<2N>_species.pt`). Written by
+    00_generate_data_dual_species.py; row-aligned with the corpus."""
+    base, ext = os.path.splitext(shower_cache_path)
+    return base + "_species" + ext
+
+
+def _load_species_sidecar(shower_cache_path: str, keep_idx) -> torch.Tensor:
+    """Load the Step-0 e/µ species sidecar (0=electron, 1=muon) and index it by
+    `keep_idx` (the same rows used for the corpus metadata). Raises if missing —
+    regenerate the corpus with the updated Step 0 (which writes the sidecar)."""
+    path = _species_sidecar_path(shower_cache_path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"species sidecar not found: {path}\n"
+            f"Regenerate the corpus with the updated 00_generate_data_dual_species.py "
+            f"(it writes the e/µ species sidecar; the corpus `pdg` is now the EM/hadronic class).")
+    return torch.load(path)[torch.as_tensor(keep_idx)].long()
 
 
 # ── Label computation (batched over showers, one shared layout per batch) ────
@@ -113,8 +135,8 @@ def build_training_pairs(mountain, surface,
     chunks of `load_chunk` showers (loaded → used for all strategies → freed),
     so peak RAM is one chunk (~2 GB at 4096) regardless of corpus size. The two
     species blocks (electron rows [0, per_sp), muon rows [per_sp, 2·per_sp)) are
-    each kept to a balanced prefix of `max_showers/2` rows so Step 2's pdg-split
-    stays balanced — this matches `fnn_surrogate_ne.build_training_pairs` and
+    each kept to a balanced prefix of `max_showers/2` rows so Step 2's species
+    split stays balanced — this matches `fnn_surrogate_ne.build_training_pairs` and
     differs from the old "first `max_showers` file rows" behaviour (identical
     when `max_showers` == full corpus). The per-(strategy, batch) random layouts
     are drawn in chunk-major order, so for a fixed seed the layout *assignment*
@@ -134,6 +156,7 @@ def build_training_pairs(mountain, surface,
         E         : (N_pairs, 100) float32
         T         : (N_pairs, 100) float32
         strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
+        species_ids  : (N_pairs,)  int64 — e/µ component (0=electron, 1=muon)
     """
     import showerdata
 
@@ -151,8 +174,14 @@ def build_training_pairs(mountain, surface,
                                np.arange(per_sp, per_sp + k_sp)])
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (n_showers, 3)
     energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)  # (n_showers, 1)
-    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (n_showers,)
+    pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (n_showers,) EM/hadronic
     primaries_all = encode_primary(dirs, energs, pdg)                         # (n_showers, 5)
+
+    # e/µ species per kept shower from the Step-0 sidecar (row-aligned with the
+    # corpus; indexed by the same keep_idx as the metadata). The corpus `pdg`
+    # above is the EM/hadronic class (a real primary feature), so Step 2's
+    # per-species split keys on this sidecar, not on the pdg feature.
+    species_all = _load_species_sidecar(shower_cache_path, keep_idx)          # (n_showers,)
 
     if recenter_to_mountain:
         mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
@@ -167,6 +196,7 @@ def build_training_pairs(mountain, surface,
     out_E       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
     out_T       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
     out_strat   = torch.empty((n_pairs,),              dtype=torch.int64)
+    out_species = torch.empty((n_pairs,),              dtype=torch.int64)
 
     # Keep chunks a multiple of batch_size so no shared-layout batch is split
     # across a chunk boundary (only a block's final batch may be short).
@@ -234,6 +264,7 @@ def build_training_pairs(mountain, surface,
                     out_E[dst] = E.cpu()
                     out_T[dst] = T.cpu()
                     out_strat[dst] = s_idx
+                    out_species[dst] = species_all[ds_lo:ds_hi]
 
             del clouds_chunk
             if verbose:
@@ -245,7 +276,7 @@ def build_training_pairs(mountain, surface,
     if verbose and n_sanitized:
         print(f"[sanitize] zeroed {n_sanitized} non-finite points (float32 energy overflow)")
 
-    return out_primary, out_xy, out_E, out_T, out_strat
+    return out_primary, out_xy, out_E, out_T, out_strat, out_species
 
 
 def compute_normalization(primary:   torch.Tensor,
