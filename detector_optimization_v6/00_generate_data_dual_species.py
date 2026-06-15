@@ -311,16 +311,18 @@ def resample_overclip(pcfm, energies, directions, labels, num_points, cap,
     return num_points
 
 
-def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, target_P,
+def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, shower_ids, target_P,
                max_clip_frac=MAX_CLIP_FRAC, max_retries=MAX_PCFM_RETRIES):
     """Generate one chunk of showers for a species from PRE-SAMPLED primaries
     → a showerdata.Showers, padded to target_P. Bounded memory (only this
-    chunk is held). Primaries (energies, directions, labels) come in as slices
-    of the corpus-wide arrays so both species blocks share them (paired events).
+    chunk is held). Primaries (energies, directions, labels, shower_ids) come in
+    as slices of the corpus-wide arrays so both species blocks share them (paired
+    events).
 
     `labels` is the per-event EM/hadronic primary class (0/1) — the generator's
     conditioning input (both per-species models were trained on both classes)
-    and the value stored as the corpus `pdg` field."""
+    and the value stored as the corpus `pdg` field. `shower_ids` is the
+    paired-event id, so the electron row e and muon row n_pairs+e share it."""
     labels = labels.to(torch.int64)
 
     # Stage 1 — PointCountFM on CPU (TorchScript device-baked → CUDA mismatches).
@@ -363,6 +365,7 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, target_P,
     return showerdata.Showers(
         points=samples.numpy(), energies=energies.numpy(),
         pdg=pdg.numpy(), directions=directions.numpy(),
+        shower_ids=shower_ids.numpy(),
     )
 
 
@@ -410,6 +413,10 @@ def main():
     # sample_primary_particles. Fed to BOTH generator stages and stored as the
     # corpus `pdg`; both species blocks reuse it so paired rows share the class.
     labels_all = prim["labels"]
+    # Paired-event ids: the electron row e and the muon row n_pairs+e are the two
+    # components of one physical event, so both blocks reuse this arange and get
+    # the SAME shower_id (mirrors the matched per-species training files).
+    event_ids_all = torch.arange(n_pairs, dtype=torch.int64)
 
     print("=" * 72)
     print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
@@ -478,6 +485,7 @@ def main():
                 gen, pcfm, cfg,
                 energies_all[done:done + c], directions_all[done:done + c],
                 labels_all[done:done + c],
+                event_ids_all[done:done + c],
                 target_P,
             )
             showerdata.save_batch(sh, out_path, start=block_start + done)
