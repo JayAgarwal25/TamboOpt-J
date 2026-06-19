@@ -189,6 +189,7 @@ def build_training_pairs(mountain, surface,
                     out_E[dst] = E.cpu()
                     out_T[dst] = T.cpu()
                     out_strat[dst] = s_idx
+                    out_species[dst] = species_all[ds_lo:ds_hi]
 
             del clouds_chunk
             if verbose:
