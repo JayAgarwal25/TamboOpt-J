@@ -1,108 +1,24 @@
-"""Generate a DUAL-species (electron + muon) shower corpus from the new best checkpoints.
+"""Generate a paired electron+muon shower corpus using per-species AllShowers checkpoints.
 
-Sibling of `00_generate_data.py`. The original script used a single AllShowers +
-PointCountFM model (sampling both pdg classes internally). The new best
-checkpoints (hhanif/tambo_simulations_for_training/best_ckpts) are **per species**
-— a separate AllShowers run-dir and PointCountFM `compiled.pt` for electrons and
-for muons, with different point-cloud caps (electron 4096, muon 25088). This
-script generates each species with its own model pair and writes them into one
-cached corpus (electron rows padded up to the muon point cap).
+Corpus layout: electron rows [0, N), muon rows [N, 2N); row i and row N+i share
+the same primary (same energy, direction, and EM/hadronic label). The corpus `pdg`
+field stores the EM/hadronic class (0 or 1) — the generator's conditioning input,
+NOT the e/µ species. Species (0=electron, 1=muon) is written to a separate sidecar
+`<corpus>_species.pt` for Step-1/2 routing.
 
-The corpus is PAIRED: primaries are sampled ONCE (`--n-pairs` events) and both
-species are generated from the SAME primaries — electron rows 0..N-1 and muon
-rows N..2N-1, so row i and row N+i are the two components of one physical
-event (mirroring the matched per-species training files). Downstream, two
-parallel per-species surrogates are trained (02) and their outputs are
-physically combined per event (modules_v6/dual_surrogate.py) in stages 3-4.
-
-Generation is **streamed in chunks**: the HDF5 file is preallocated once
-(`create_empty_file`) and each chunk is written at its row offset
-(`save_batch`), so peak RAM is one chunk (`--chunk` showers), not the whole
-corpus — counts can scale to disk limits without the save-step OOM that a single
-in-RAM tensor would hit at the 25088-point muon cap. Species are written as
-contiguous blocks (electron then muon); the training shower-level split
-randperms showers, so no global shuffle is needed at generation time.
-
-Why call `Generator`/`generate` directly instead of the v3 `GenerateShowers`
-wrapper that `00_generate_data.py` uses? It is the *same* `Generator` class
-either way — `GenerateShowers.__call__` → `run_allshowers()` → `Generator(...)`
-+ `generate(...)`. We just unwrap those two layers because `run_allshowers`
-hardcodes exactly the three things that must vary per species: it builds a fresh
-Generator and never sets `max_points` (so no 4096-vs-25088 cap), constructs it
-inline (so no chance to stage the run-dir first), and returns the whole corpus
-in RAM (so no chunked `save_batch` streaming). None of that is a different
-generator — only direct access to controls the wrapper doesn't expose.
-
-Two wrinkles handled here that a plain path-swap would miss:
-  1. The AllShowers `Generator` loads `weights/best.pt`, but in the new run-dirs
-     `weights/` is empty — the trained weights live in `checkpoints/best_epoch_*.pt`.
-     We STAGE a usable run-dir (conf.yaml + preprocessing/trafos.pt + weights/best.pt)
-     into fast local storage, extracting the flow state_dict robustly.
-  2. `max_num_points` is not set in conf (loader would default to 6016, truncating
-     muons). We set `generator.max_points` explicitly per species.
-
-PointCountFM (`compiled.pt`) runs on CPU — its TorchScript has device constants
-baked at trace time and raises a device-mismatch on CUDA (same reason
-`00_generate_data.py`/`compute_aleatoric_floor.py` keep it on CPU). AllShowers
-runs on GPU.
-
-Run (heavy — submit via SLURM for production sizes):
-
-    cd TambOpt/detector_optimization_v6
-    python 00_generate_data_dual_species.py --n-electron 250000 --n-muon 250000
-
-Checkpoint ↔ architecture pairing (root-caused & verified 2026-06-10):
-TAMBO-opt's two checkpoint generations were trained with DIFFERENT transformer
-encoder blocks, and the two variants share identical state_dict keys — so a
-checkpoint loads into the wrong variant without any error but computes a
-different function, silently generating diffuse blobs instead of physical
-rod-like showers (no crash, no warning, just wrong-looking output):
-
-  * old `all_showers` (Apr 3)            → post-LN: x = layer_norm(x + attn(x))
-  * NEW per-species e/µ models (May 19-20) → pre-LN:  x = x + attn(layer_norm(x))
-
-This bit in both directions: the 06-09 dual-species plots were blobs (new
-checkpoints on old post-LN code), and after pulling Hamza's pre-LN code the
-OLD checkpoint's plots turned to blobs instead. The fix is per-checkpoint, not
-global: `allshowers/transformer.py` takes `pre_ln: bool = False` (default =
-post-LN, so the old checkpoint's conf needs no change), and `stage_run_dir`
-below ALWAYS injects `pre_ln: true` into the staged conf.yaml so these
-checkpoints request the architecture they were trained with. Two more fixes
-from the same debugging pass: `generate()` in `allshowers/generator.py` must
-run under `torch.no_grad()` (without it each batch retains its full ODE
-autograd graph — 39 GB OOM on an A100 at the 4096-pt electron cap, hopeless at
-the 25088-pt muon cap), and the generator must keep its `with_time` support
-(both new models are time models, dim_inputs [4,6,4]).
-
-Label convention (CORRECTED 2026-06-15 — supersedes the earlier "label always
-0" claim): the generator's conditioning `label` is the primary's EM-vs-hadronic
-shower class. `allshowers/generate_showers.py` defines NUM_CLASSES = 2 and
-`sample_primary_particles` draws `labels` uniformly in {0, 1}; PointCountFM and
-AllShowers one-hot encode that label into their conditioning tensor, and BOTH
-per-species checkpoints were trained on BOTH classes. So we feed the randomly
-sampled per-event label through both stages (NOT a hard-coded 0), and the saved
-corpus `pdg` field stores that EM/hadronic class — a real conditioning feature
-the downstream surrogate learns. (The previous code forced label 0 and stored a
-species id in `pdg`; that conflated two distinct axes and generated the whole
-corpus as a single primary class — see docs/diary.md 2026-06-15.)
-
-Training-data provenance — "species" = secondary COMPONENT, not shower type
-(verified 2026-06-10 against the h5_files_v3 files + TAMBO-opt's
-`util/combine_h5_files.py`): the electron and muon training sets are the SAME
-130k simulated showers, matched row-for-row (identical energies, directions and
-shower_ids across all rows). Primaries are tau decay daughters (actual_pdg ∈
-{±11, 111, ±211} — e± and pions; NO muon or tau primaries). The simulation
-writes each shower's secondary hits split by species (electrons / muons /
-photons folders), and each per-species file holds that component of the same
-events; muons survive the through-rock geometry while EM is absorbed, hence the
-25088 vs 4096 point caps. Implication: the two models generate two COMPONENTS
-of one physical shower, conditioned on the same primary. This script therefore
-generates PAIRED blocks (same primaries AND same EM/hadronic label for both
-species, see above); a complete physical event is the SUM of both components for
-one primary, which stages 3-4 obtain by evaluating both per-species surrogates
-with the same primary and combining counts (modules_v6/dual_surrogate.py). The
-e/µ species (which component a row is) is recorded separately in the Step-0
-species sidecar (DUAL_SPECIES_IDS_PATH), not in the corpus `pdg`.
+Key design decisions:
+- Per-species models have different point caps (electron 4096, muon 25088); electrons
+  are zero-padded to the muon cap so the file has a uniform shape.
+- Generation streams in chunks; the file is preallocated once (`create_empty_file`)
+  and each chunk appended at its row offset (`save_batch`) — peak RAM is one chunk.
+- `Generator`/`generate` are called directly (not the `GenerateShowers` wrapper)
+  because the wrapper hardcodes max_points, staging, and full-corpus RAM return.
+- Each per-species staged run-dir has `pre_ln: true` injected into conf.yaml —
+  the May checkpoints use pre-LN transformer blocks; loading them into a post-LN
+  model silently generates blobs (shared state_dict keys, no error).
+- PointCountFM runs on CPU (TorchScript device constants baked at trace time).
+- Anti-clip re-roll: if PCFM predicts > cap points, re-roll (up to MAX_PCFM_RETRIES)
+  before the expensive GPU generate step to reduce blob artefacts from truncation.
 """
 import argparse
 import glob
