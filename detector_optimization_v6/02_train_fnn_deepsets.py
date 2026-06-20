@@ -88,6 +88,7 @@ LBFGS_CHUNK_SIZE    = 8192   # DeepSets is light → larger chunks fit
 # DeepSets is well-fit by Adam, so L-BFGS tends to overfit train from iter 0;
 # this stops it burning the full budget while best-save still keeps the optimum.
 LBFGS_PATIENCE      = 150
+RESUME_CKPT_INTERVAL = 25   # save a rolling resume checkpoint every N Adam epochs
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -277,12 +278,30 @@ def train_species(tag:        str,
         final_div_factor=LR / LR_MIN,
     )
 
-    log = []
+    # gpu_requeue can preempt mid-training; fnn_{tag}_resume.pt lets the job
+    # continue from the last RESUME_CKPT_INTERVAL-epoch checkpoint rather than
+    # restarting cold.  adam_done=True means Adam finished and we jump to L-BFGS.
+    resume_path = os.path.join(OUTPUT_FOLDER, f"fnn_{tag}_resume.pt")
+    adam_done   = False
+    start_epoch = 0
+    log        = []
     best_val   = float("inf")
     best_epoch = -1
+    if os.path.exists(resume_path):
+        _r = torch.load(resume_path, map_location=DEVICE)
+        if _r.get("adam_done"):
+            adam_done = True
+            print(f"[resume] {tag}: Adam done, jumping to L-BFGS")
+        else:
+            model.load_state_dict(_r["state_dict"])
+            optimizer.load_state_dict(_r["optimizer"])
+            scheduler.load_state_dict(_r["scheduler"])
+            start_epoch, log = _r["epoch"], _r["log"]
+            best_val, best_epoch = _r["best_val"], _r["best_epoch"]
+            print(f"[resume] {tag}: epoch {start_epoch}  best_val={best_val:.6f}")
 
     # ── Phase 1: Adam (no permutation augmentation) ──────────────────────
-    for epoch in range(n_epochs):
+    for epoch in range(start_epoch if not adam_done else n_epochs, n_epochs):
         t_epoch = time.time()
         model.train()
         tr_tot, tr_E, tr_T, n_tr = 0.0, 0.0, 0.0, 0
@@ -362,18 +381,27 @@ def train_species(tag:        str,
                 "config": _ckpt_config(tag)
                 }, os.path.join(OUTPUT_FOLDER, ckpt_name))
 
-    with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
-        json.dump({
-            "log": log,
-            "best_val_total": best_val,
-            "best_epoch": best_epoch,
-            "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN,
-                val_frac=VAL_FRAC, seed=SEED, **_ckpt_config(tag)
-                ),
-                }, f, indent=2)
-    _plot_curves(log, os.path.join(OUTPUT_FOLDER, curves_name))
-    print(f"[{tag} adam done] best val {best_val:.4f} at epoch {best_epoch}")
+        if (epoch + 1) % RESUME_CKPT_INTERVAL == 0:
+            torch.save({
+                "state_dict": model.state_dict(), "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(), "epoch": epoch + 1,
+                "log": log, "best_val": best_val, "best_epoch": best_epoch,
+            }, resume_path)
+
+    if not adam_done:
+        with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
+            json.dump({
+                "log": log,
+                "best_val_total": best_val,
+                "best_epoch": best_epoch,
+                "config": dict(
+                    batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN,
+                    val_frac=VAL_FRAC, seed=SEED, **_ckpt_config(tag)
+                    ),
+                    }, f, indent=2)
+        _plot_curves(log, os.path.join(OUTPUT_FOLDER, curves_name))
+        print(f"[{tag} adam done] best val {best_val:.4f} at epoch {best_epoch}")
+        torch.save({"adam_done": True}, resume_path)
 
     # ── Phase 2: L-BFGS fine-tuning (full-batch) ────────────────────────────
     print("\n" + "=" * 72)
@@ -503,6 +531,8 @@ def train_species(tag:        str,
 
     # Free GPU memory
     del p_all, xy_all, E_all_train, T_all_train
+    if os.path.exists(resume_path):
+        os.remove(resume_path)
 
     dt_lbfgs = time.time() - t_lbfgs
     n_iters = len(lbfgs_iter_log)
