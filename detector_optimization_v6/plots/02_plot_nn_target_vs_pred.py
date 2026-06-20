@@ -50,7 +50,7 @@ from modules_v6.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
     N_DETECTORS, PRIMARY_DIM,
 )
-from modules_v6.reconstruction import Reconstruction
+from modules_v6.reconstruction import build_recon_from_ckpt
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -153,29 +153,13 @@ def fnn_predict(fnn: FNNSurrogate,
     return E_pred, T_pred
 
 
-def load_recon() -> Reconstruction:
-    """Mirror of load_fnn() for the recon checkpoint. Used by the standalone
-    CLI path; training scripts pass an already-trained Reconstruction in."""
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
-    cfg = recon_ckpt.get("config", {})
-    recon = Reconstruction(
-        n_det=int(recon_ckpt["num_detectors"]),
-        input_features=int(recon_ckpt["input_features"]),
-        output_dim=int(cfg.get("output_dim", 4)),
-        hidden=int(cfg.get("hidden", 512)),
-        dropout=float(cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    recon.load_state_dict(recon_ckpt["state_dict"])
-    recon.set_normalization(
-        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
-        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
-        out_mean = recon_ckpt["target_mean"].to(DEVICE),
-        out_std  = recon_ckpt["target_std" ].to(DEVICE),
-    )
-    recon.eval()
-    print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
-          f"val={recon_ckpt.get('val_total','?')} "
-          f"lbfgs_iter={recon_ckpt.get('lbfgs_iter','?')}")
+def load_recon():
+    """Load recon checkpoint — flat MLP or DeepSets, dispatched by build_recon_from_ckpt."""
+    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE,
+                            weights_only=False)
+    recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
+    print(f"[load] recon.pt  model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
+          f"epoch={recon_ckpt.get('epoch','?')}  val={recon_ckpt.get('val_total','?')}")
     return recon
 
 
@@ -249,8 +233,7 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
             E_b  = E_pred[lo:hi].to(DEVICE)
             T_b  = T_pred[lo:hi].to(DEVICE)
             feats = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
-            flat  = feats.reshape(feats.shape[0], -1)
-            pred[lo:hi] = recon(flat).cpu()
+            pred[lo:hi] = recon(feats).cpu()
 
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
     vmin_s = (1, 1, 1, 1)

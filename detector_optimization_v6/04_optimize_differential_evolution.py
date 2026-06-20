@@ -49,7 +49,7 @@ from scipy.optimize import linear_sum_assignment, differential_evolution
 
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import load_dual_surrogate
-from modules_v6.reconstruction import Reconstruction
+from modules_v6.reconstruction import build_recon_from_ckpt
 from modules_v6.tr_geometry_ne import (
     _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
 )
@@ -127,7 +127,7 @@ def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
                   fnn,
-                  recon: Reconstruction):
+                  recon: torch.nn.Module):
     """Composite U for a (North, East) layout against a primary batch.
 
     Mirrors `utility_of_xy` in 04_optimize_lbfgs_ensemble.py (same objective, the
@@ -145,8 +145,7 @@ def utility_of_xy(x_det: torch.Tensor,
         [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
         dim=-1,
     )                                                                      # (B, n_det, 4)
-    recon_input = recon_feats.reshape(B, -1)
-    pred = recon(recon_input)                                              # (B, 4)
+    pred = recon(recon_feats)                                              # (B, 4)
     E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
     E_pred_phys = E_pred_phys.clamp(min=1.0)
 
@@ -208,7 +207,7 @@ def _perturbed_de_runs(scheme: str, K: int, generator: torch.Generator,
 def de_refine(init_x: torch.Tensor,
               init_y: torch.Tensor,
               fnn,
-              recon: Reconstruction,
+              recon: torch.nn.Module,
               primary_fixed: torch.Tensor,
               mountain,
               bounds,
@@ -505,33 +504,18 @@ def _load_models():
     times average count-weighted)."""
     fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
-    cfg = recon_ckpt.get("config", {})
-    recon = Reconstruction(
-        n_det=int(recon_ckpt.get("num_detectors", N_DETECTORS)),
-        input_features=int(recon_ckpt.get("input_features", 4)),
-        output_dim=int(cfg.get("output_dim", 4)),
-        hidden=int(cfg.get("hidden", 512)),
-        dropout=float(cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    recon.load_state_dict(recon_ckpt["state_dict"])
-    recon.set_normalization(
-        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
-        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
-        out_mean = recon_ckpt["target_mean"].to(DEVICE),
-        out_std  = recon_ckpt["target_std" ].to(DEVICE),
-    )
-    recon.eval()
-    for p in recon.parameters():
-        p.requires_grad_(False)
-    print(f"[load] recon.pt  val={recon_ckpt.get('val_total', '?')}")
+    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE,
+                            weights_only=False)
+    recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
+    print(f"[load] recon.pt  model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
+          f"val={recon_ckpt.get('val_total', '?')}")
     return fnn, recon
 
 
 def _run_one_scheme(scheme: str,
                     mountain,
                     fnn,
-                    recon: Reconstruction,
+                    recon: torch.nn.Module,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
                     per_source):

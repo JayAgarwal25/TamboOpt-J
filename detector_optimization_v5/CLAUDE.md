@@ -66,19 +66,17 @@ surface map. See `detector_optimization_v4/CLAUDE.md` for full details.
 | `y` | ENU Up / elevation [m] | Stored in Population |
 | `z_cont` | `(EAST_ENTRY − East(x,y)) / LAYER_EAST_DX`, continuous AllShowers layer index ∈ [0, 23] | Derived (cached) |
 
-AllShowers layer-East calibration — **two coexisting sets of values in the codebase**:
+AllShowers layer-East calibration:
 
-- **Correct values** (v4 active scripts, v6): `EAST_ENTRY = 1500 m`, `LAYER_EAST_DX = 150 m`.
+- **Correct values** (v4 active scripts, v6, and now v5 notebook): `EAST_ENTRY = 1500 m`, `LAYER_EAST_DX = 150 m`.
   Per the user (2026-04-14), these are the right numbers — every real v4 run from
   Apr 13 onward uses them. With this calibration, `z_cont` spans ≈ [2.1, 23.5] across
   the mountain so **all 24 AllShowers layers are reachable**.
-- **Stale values still present in this file and in `SWGOLO7_optimization_ev.ipynb`**:
-  `EAST_ENTRY = −212 m`, `LAYER_EAST_DX = 307 m`. Per user: "all data was sampled from
-  the last plane and the mountain was mismatched". With this calibration, mountain East
-  ≈ [−2019, +1182] m → max `z_cont ≈ 5.9` (only layers 0–6 reachable).
-
-**Before any real v5 run, update the notebook's `EAST_ENTRY` / `LAYER_EAST_DX` cell to
-`1500 / 150`** (and update the "Key Gotchas" layer-accessibility note accordingly).
+- **Stale values** (historical note): `EAST_ENTRY = −212 m`, `LAYER_EAST_DX = 307 m`. Per
+  user: "all data was sampled from the last plane and the mountain was mismatched". With
+  those values, mountain East ≈ [−2019, +1182] m → max `z_cont ≈ 5.9` (only layers 0–6
+  reachable). **Fixed in `SWGOLO7_optimization_ev.ipynb` (2026-06-14) and
+  `tests/test_v5_modules.ipynb`; both now use 1500/150.**
 
 ---
 
@@ -246,10 +244,9 @@ for gen in range(n_generations):
    gradient saliency is meaningful across the full 10k→90 range.  Without this, the NN
    over-relies on having all 10k detectors active and saliency degrades after heavy pruning.
 10. **Layer accessibility is calibration-dependent.** With the correct `EAST_ENTRY=1500,
-    LAYER_EAST_DX=150` calibration (used by v4's active scripts and v6), `z_cont` spans
-    ≈ [2.1, 23.5] so **all 24 AllShowers layers are reachable**. With the stale
-    `−212 / 307` values still wired into this file and the v5 notebook, mountain East
-    ≈ [−2019, +1182] m → max `z_cont ≈ 5.9` (only layers 0–6).
+    LAYER_EAST_DX=150` calibration (now wired into both notebooks), `z_cont` spans
+    ≈ [2.1, 23.5] so **all 24 AllShowers layers are reachable**. The stale `−212 / 307`
+    values (historical) gave max `z_cont ≈ 5.9` (only layers 0–6).
 
 ---
 

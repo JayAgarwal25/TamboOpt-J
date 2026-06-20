@@ -56,7 +56,7 @@ from scipy.optimize import linear_sum_assignment
 
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import DualSpeciesSurrogate, load_dual_surrogate
-from modules_v6.reconstruction import Reconstruction
+from modules_v6.reconstruction import build_recon_from_ckpt
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
@@ -134,7 +134,7 @@ def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
                   fnn: DualSpeciesSurrogate,
-                  recon: Reconstruction):
+                  recon: torch.nn.Module):
     """Differentiable composite U for a layout against a primary batch.
 
     `fnn` is the dual-species wrapper: both per-species surrogates are
@@ -156,8 +156,7 @@ def utility_of_xy(x_det: torch.Tensor,
         [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
         dim=-1,
     )                                                                      # (B, n_det, 4)
-    recon_input = recon_feats.reshape(B, -1)
-    pred = recon(recon_input)                                              # (B, 4)
+    pred = recon(recon_feats)                                              # (B, 4)
     E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
     E_pred_phys = E_pred_phys.clamp(min=1.0)
 
@@ -179,7 +178,7 @@ def utility_of_xy(x_det: torch.Tensor,
 def adam_warm_start(scheme: str,
                     mountain,
                     fnn: DualSpeciesSurrogate,
-                    recon: Reconstruction,
+                    recon: torch.nn.Module,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
                     init_override):
@@ -322,7 +321,7 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
 def lbfgs_refine(init_x: torch.Tensor,
                  init_y: torch.Tensor,
                  fnn: DualSpeciesSurrogate,
-                 recon: Reconstruction,
+                 recon: torch.nn.Module,
                  primary_fixed: torch.Tensor,
                  mountain):
     """L-BFGS-maximize U from (init_x, init_y) on a fixed primary batch.
@@ -757,27 +756,11 @@ def _load_models():
     single fnn, and gradients flow through both branches."""
     fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
-    cfg = recon_ckpt.get("config", {})
-    recon = Reconstruction(
-        n_det=int(recon_ckpt.get("num_detectors", N_DETECTORS)),
-        input_features=int(recon_ckpt.get("input_features", 4)),
-        output_dim=int(cfg.get("output_dim", 4)),
-        hidden=int(cfg.get("hidden", 512)),
-        dropout=float(cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    recon.load_state_dict(recon_ckpt["state_dict"])
-    recon.set_normalization(
-        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
-        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
-        out_mean = recon_ckpt["target_mean"].to(DEVICE),
-        out_std  = recon_ckpt["target_std" ].to(DEVICE),
-    )
-    recon.eval()
-    for p in recon.parameters():
-        p.requires_grad_(False)
-    print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
-          f"val={recon_ckpt.get('val_total', '?')}")
+    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE,
+                            weights_only=False)
+    recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
+    print(f"[load] recon.pt  model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
+          f"epoch={recon_ckpt.get('epoch','?')}  val={recon_ckpt.get('val_total', '?')}")
 
     return fnn, recon
 
@@ -785,7 +768,7 @@ def _load_models():
 def _run_one_scheme(scheme: str,
                     mountain,
                     fnn: DualSpeciesSurrogate,
-                    recon: Reconstruction,
+                    recon: torch.nn.Module,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
                     per_source):

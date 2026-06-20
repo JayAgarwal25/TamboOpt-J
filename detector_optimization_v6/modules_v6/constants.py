@@ -3,7 +3,7 @@
 import os
 
 
-GEOMETRY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/colca_valley.h5"
+GEOMETRY_PATH = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/colca_valley.h5"
 GEOMETRY_GROUP = "colca_valley_30000"
 DET_KEY        = "detector1"
 N_PLANES       = 24
@@ -16,7 +16,7 @@ PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]  (pdg = EM/hadronic p
 
 # Primary energy bounds (log10 GeV) for min-max normalization
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
-LOG_E_MAX = 7.0   # log10(1e8 GeV)
+LOG_E_MAX = 7.0   # log10(1e7 GeV)
 
 # Direction bounds for sampling priamries
 ZENITH_MIN   = 60.0  # degrees
@@ -25,8 +25,8 @@ AZIMUTH_MIN  = 0.0   # degrees
 AZIMUTH_MAX  = 360.0 # degrees
 
 
-RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/"
-SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
+RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/"
+SHOWER_CACHE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/v6_run_00"
 
 # Output folders. Edit these in-place to point a fresh run at a new tree
 # (e.g. swap "test_v6_run_01_recentered" -> "v6_run_01" to write to the
@@ -57,7 +57,8 @@ TRAIN_FRACTION = 1.00
 DATASET_FRACTION = 1.00
 
 # NUM_SHOWERS = 500_000
-NUM_SHOWERS = 300_000
+# NUM_SHOWERS = 300_000
+NUM_SHOWERS = 100_000
 # NUM_SHOWERS = 5_000_000
 # NUM_SHOWERS = 1_000
 # NUM_SHOWERS = 100
