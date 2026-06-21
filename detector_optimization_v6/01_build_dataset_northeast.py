@@ -32,7 +32,7 @@ from modules_v6.fnn_surrogate_ne import (
 from modules_v6.constants import (
     SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
-    BATCH_SIZE_TRAIN, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
+    BATCH_SIZE, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
 from modules_v4.tr_geometry    import load_tr_mountain
@@ -62,7 +62,7 @@ def main():
     print(f"shower cache : {DUAL_SHOWER_CACHE_PATH}")
     print(f"geometry     : {GEOMETRY_PATH}")
     print(f"output dir   : {TRAINING_DATASET_FOLDER}")
-    print(f"batch size   : {BATCH_SIZE_TRAIN}")
+    print(f"batch size   : {BATCH_SIZE}")
     print(f"max showers  : {MAX_SHOWERS}")
     print(f"device       : {DEVICE}")
     print(f"recenter     : {RECENTER_TO_MOUNTAIN}")
@@ -85,7 +85,7 @@ def main():
         mountain=mountain,
         surface=surface,
         shower_cache_path=DUAL_SHOWER_CACHE_PATH,
-        batch_size=BATCH_SIZE_TRAIN,
+        batch_size=BATCH_SIZE,
         max_showers=MAX_SHOWERS,
         seed=SEED,
         device=DEVICE,

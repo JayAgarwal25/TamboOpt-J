@@ -43,7 +43,7 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-op
 from modules_v6.constants import (
     LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
-    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS,
+    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE
 )
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
@@ -75,7 +75,6 @@ SPECIES = {
 
 NUM_TIMESTEPS = 16
 SOLVER        = "midpoint"
-GEN_BATCH     = 30                  # AllShowers gen batch (memory-bound; 30 matches production)
 CHUNK_SIZE    = 2000               # showers per streamed write-batch (bounds peak RAM)
 STAGE_ROOT    = os.path.join(RUN_LOCATION, "allshowers_staged")
 DEVICE        = torch.device("cuda")
@@ -257,7 +256,7 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, shower_ids, target_
     # Stage 2 — AllShowers on GPU (max_points already set on gen).
     samples = generate(
         generator=gen, energies=energies, num_points=num_points,
-        angles=directions, batch_size=GEN_BATCH, device=str(DEVICE), labels=labels,
+        angles=directions, batch_size=BATCH_SIZE, device=str(DEVICE), labels=labels,
     ).float().cpu()                                        # (n, sp_max_points, 5)
     samples = _pad_points(samples, target_P)
 
@@ -325,13 +324,10 @@ def main():
         n=n_pairs, seed=args.seed
         )
     energies_all, directions_all = prim["energies"], prim["directions"]
-    # Per-event EM/hadronic primary class (0/1), randomly sampled by
-    # sample_primary_particles. Fed to BOTH generator stages and stored as the
-    # corpus `pdg`; both species blocks reuse it so paired rows share the class.
+    # Per-event EM/hadronic primary class (0/1); both species blocks reuse it so paired rows share the class.
     labels_all = prim["labels"]
     # Paired-event ids: the electron row e and the muon row n_pairs+e are the two
-    # components of one physical event, so both blocks reuse this arange and get
-    # the SAME shower_id (mirrors the matched per-species training files).
+    # components of one physical event.
     event_ids_all = torch.arange(n_pairs, dtype=torch.int64)
 
     print("=" * 72)
@@ -363,8 +359,7 @@ def main():
 
     # e/µ species sidecar (the "tag"): electron block rows [0, n_pairs) = 0,
     # muon block rows [n_pairs, 2*n_pairs) = 1. Fully determined by n_pairs, so
-    # written unconditionally (resume-safe); the corpus `pdg` now holds the
-    # EM/hadronic class instead. Row-aligned with the corpus.
+    # written unconditionally (resume-safe); Row-aligned with the corpus.
     species_ids = torch.cat([
         torch.zeros(n_pairs, dtype=torch.int64),
         torch.ones(n_pairs, dtype=torch.int64),
