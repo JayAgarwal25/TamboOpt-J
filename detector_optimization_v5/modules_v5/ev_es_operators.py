@@ -49,6 +49,24 @@ from .constants import (
     ES_SIGMA_INIT, ES_SIGMA_FINAL,
 )
 
+# ── CMA-ES helper ─────────────────────────────────────────────────────────────
+
+def project_layout(xy_flat: np.ndarray, mountain) -> np.ndarray:
+    """Reshape a flat (N_DETECTORS*2,) CMA-ES solution and project to mountain.
+
+    CMA-ES works in unconstrained R^200. This snaps each detector back onto the
+    mountain surface after every ask(). We tell() CMA-ES the ORIGINAL flat vectors
+    so its covariance model is not distorted by the projection.
+
+    Returns (N_DETECTORS, 2) float32 [North, Up].
+    """
+    xy = xy_flat.reshape(N_DETECTORS, 2).astype(np.float32)
+    x_t = torch.as_tensor(xy[:, 0])
+    y_t = torch.as_tensor(xy[:, 1])
+    with torch.no_grad():
+        x_proj, y_proj = mountain.project_to_mountain(x_t, y_t)
+    return np.stack([x_proj.numpy(), y_proj.numpy()], axis=1).astype(np.float32)
+
 # These are injected by modules_v5/__init__.py (v3 on sys.path).
 from modules.utility_functions import reconstructability, U_angle, U_E, U_PR
 
