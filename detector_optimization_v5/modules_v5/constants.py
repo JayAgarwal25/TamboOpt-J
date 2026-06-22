@@ -63,9 +63,19 @@ ES_SIGMA_INIT  = 200.0 # mutation sigma at generation 0 [m]
 ES_SIGMA_FINAL = 20.0  # mutation sigma at generation N_GEN-1 [m] (geometric schedule)
 ES_CROSSOVER_P = 0.3   # probability that an offspring is created via crossover before mutation
 
-# Primary batch size for fitness evaluation (fixed across all generations and restarts
-# so per-run U values are directly comparable).
-N_EVAL_PRIMARIES = 512
+# Primary batch sizes for multi-fidelity evaluation.
+# Explore phase (sigma > SIGMA_MF_THRESHOLD): cheap 64-primary batch.
+# Refine phase (sigma <= SIGMA_MF_THRESHOLD): accurate 512-primary batch.
+# Both batches are fixed per-restart (seeded) so U values are internally comparable.
+N_EVAL_PRIMARIES         = 512   # used by 01_run_evolution.py (fixed throughout)
+N_EVAL_PRIMARIES_EXPLORE = 64
+N_EVAL_PRIMARIES_REFINE  = 512
+SIGMA_MF_THRESHOLD       = 50.0  # [m] — switch fidelity below this CMA-ES sigma
+
+# ── CMA-ES hyperparameters (02_run_cmaes.py) ─────────────────────────────────
+CMAES_POPSIZE   = 100   # lambda per generation (sep-CMA-ES recommendation for d=200)
+CMAES_N_GEN     = 300   # max generations per restart (more headroom than plain ES)
+CMAES_N_RESTART = 5     # independent restarts
 
 # ── Primary sampling distribution ────────────────────────────────────────────
 # Matches the AllShowers training domain used to build the surrogate's dataset.
