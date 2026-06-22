@@ -289,16 +289,31 @@ def _consecutive_cos_distance(grad_hist, window: int = 1) -> np.ndarray:
 
 
 def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
-                         mountain, fnn, recon, primary_all, n_total_primaries):
+                         mountain, fnn, recon, primary_all, n_total_primaries,
+                         init_center=None):
     """K pre-Adam perturbations of the scheme init → K Adam runs.
 
     Returns (adam_bests, adam_logs, perturbed_inits, adam_grads), each length K.
-    adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step gradient history."""
-    N_np, U_np = mountain.sample_initial_layout(n_units=N_DETECTORS, scheme=scheme)
-    N_t = torch.as_tensor(N_np, dtype=torch.float32)
-    U_t = torch.as_tensor(U_np, dtype=torch.float32)
-    N_t, U_t = mountain.project_to_mountain(N_t, U_t)
-    chains_init = _build_chain_inits(N_t, U_t, K, generator)                  # (K, D)
+    adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step gradient history.
+
+    If init_center is a (N_DETECTORS, 2) tensor with (North, East) per detector,
+    all K chains are warm-started from that layout with small N(0, 10m) per-chain
+    diversity perturbations instead of using the normal scheme initialization.
+    """
+    if init_center is not None:
+        N_t = init_center[:, 0].float()
+        E_t = init_center[:, 1].float()
+        # Small N(0, 10m) per-chain perturbations for diversity around the warm-start.
+        base = torch.cat([N_t.to(DEVICE), E_t.to(DEVICE)], dim=0).detach()
+        small_noise = torch.randn(K, base.numel(), generator=generator,
+                                  device="cpu").to(DEVICE) * 10.0
+        chains_init = base.unsqueeze(0) + small_noise
+    else:
+        N_np, U_np = mountain.sample_initial_layout(n_units=N_DETECTORS, scheme=scheme)
+        N_t = torch.as_tensor(N_np, dtype=torch.float32)
+        U_t = torch.as_tensor(U_np, dtype=torch.float32)
+        N_t, U_t = mountain.project_to_mountain(N_t, U_t)
+        chains_init = _build_chain_inits(N_t, U_t, K, generator)              # (K, D)
 
     adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
     for k in range(K):
@@ -894,6 +909,7 @@ def _run_one_scheme(scheme: str,
     print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")
     return dict(scheme=scheme, best_U=refined_U[ref_idx],
+                best_x=best_x, best_y=best_y,
                 mean_std_x=float(std_xy[:, 0].mean()),
                 mean_std_y=float(std_xy[:, 1].mean()),
                 opt_dir=opt_dir)
@@ -906,6 +922,19 @@ def main():
     ap.add_argument("--chains", type=int, default=N_CHAINS)
     ap.add_argument("--adam-epochs", type=int, default=N_ADAM_EPOCHS)
     ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    ap.add_argument("--save_best_layout", type=str, default=None,
+                    help="Path to save the globally best layout as a "
+                         "(N_DETECTORS, 2) tensor with (North, East) per detector.")
+    ap.add_argument("--init_from", type=str, default=None,
+                    help="Path to a (N_DETECTORS, 2) layout tensor (or dict with "
+                         "'x'/'y' keys). Warm-starts all chains from this layout "
+                         "with small N(0, 10m) diversity perturbations.")
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="Override FNN_FOLDER from constants.py (use a fine-tuned "
+                         "checkpoint directory from the adaptive retraining loop).")
+    ap.add_argument("--opt_suffix", type=str, default="",
+                    help="Suffix appended to the output directory name for each "
+                         "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
     args = ap.parse_args()
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
@@ -923,6 +952,15 @@ def main():
     n_total_primaries = int(primary_all.shape[0])
     print(f"[load] {n_total_primaries} primaries")
 
+    if args.opt_suffix:
+        global OPT_DIR_TEMPLATE
+        OPT_DIR_TEMPLATE = OPT_FOLDER + "_lbfgs_ensemble" + args.opt_suffix + "_{scheme}"
+
+    if args.fnn_folder:
+        import modules_v6.constants as _C
+        _C.FNN_FOLDER = args.fnn_folder
+        print(f"[fnn_folder] overriding FNN_FOLDER -> {args.fnn_folder}")
+
     fnn, recon = _load_models()
 
     mountain = load_tr_mountain(
@@ -930,17 +968,32 @@ def main():
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
+    # Optional warm-start center layout (N_DETECTORS, 2) = (North, East).
+    init_center = None
+    if args.init_from:
+        raw = torch.load(args.init_from, map_location="cpu", weights_only=False)
+        if isinstance(raw, dict):
+            N_c = raw["x"].float().reshape(-1)
+            E_c = raw["y"].float().reshape(-1)
+            init_center = torch.stack([N_c, E_c], dim=-1)
+        else:
+            init_center = raw.float()
+        print(f"[init_from] loaded layout from {args.init_from}  "
+              f"shape={tuple(init_center.shape)}")
+
     results = []
     per_scheme = {}     # scheme -> (adam_bests, adam_logs, perturbed_inits)
     for scheme in INIT_SCHEMES:
         print()
         print("=" * 72)
-        print(f"init scheme: {scheme}")
+        print(f"init scheme: {scheme}"
+              f"{'  (warm-start from --init_from)' if init_center is not None else ''}")
         print("=" * 72)
         torch.manual_seed(SEED); np.random.seed(SEED)
         g = torch.Generator().manual_seed(SEED)
         per_scheme[scheme] = _perturbed_adam_runs(
             scheme, N_CHAINS, g, mountain, fnn, recon, primary_all, n_total_primaries,
+            init_center=init_center,
         )
         results.append(_run_one_scheme(
             scheme, mountain, fnn, recon, primary_all, n_total_primaries,
@@ -964,6 +1017,14 @@ def main():
     for r in results:
         print(f"  {r['scheme']:<10}  best U={r['best_U']:+.3f}  "
               f"σ̄=({r['mean_std_x']:.1f}, {r['mean_std_y']:.1f}) m  ->  {r['opt_dir']}")
+
+    # Save the globally best layout across all schemes if requested.
+    if args.save_best_layout:
+        best_r = max(results, key=lambda r: r["best_U"])
+        best_layout = torch.stack([best_r["best_x"], best_r["best_y"]], dim=-1)
+        torch.save(best_layout, args.save_best_layout)
+        print(f"\n[save_best_layout] best U={best_r['best_U']:+.3f} "
+              f"(scheme={best_r['scheme']})  ->  {args.save_best_layout}")
 
 
 if __name__ == "__main__":

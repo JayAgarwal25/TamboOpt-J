@@ -23,6 +23,8 @@
 
 set -euo pipefail
 
+export PYTHONUNBUFFERED=1
+
 echo "========================================"
 echo "Job:     $SLURM_JOB_ID"
 echo "Node:    $(hostname)"
