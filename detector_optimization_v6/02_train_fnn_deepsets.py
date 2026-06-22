@@ -608,6 +608,238 @@ def train_species(tag:        str,
         print(f"[plot-tvp] skipped ({exc!r})")
 
 
+def finetune_species(tag: str,
+                     primary:    torch.Tensor,
+                     xy:         torch.Tensor,
+                     E_all:      torch.Tensor,
+                     T_all:      torch.Tensor,
+                     strat_ids:  torch.Tensor,
+                     ckpt_path:  str,
+                     finetune_lr: float,
+                     finetune_epochs: int,
+                     lbfgs_max_iter: int,
+                     output_folder: str) -> None:
+    """Fine-tune an existing per-species checkpoint on a combined dataset.
+
+    Loads the checkpoint, runs finetune_epochs epochs of Adam at finetune_lr
+    (no OneCycleLR), then the standard L-BFGS fine-tune pass. Saves to
+    output_folder/fnn_{tag}.pt. The base checkpoint is never modified.
+    """
+    ckpt_name   = f"fnn_{tag}.pt"
+    log_name    = f"fnn_{tag}_train_log.json"
+    curves_name = f"fnn_{tag}_train_curves.png"
+
+    print("=" * 72)
+    print(f"[{tag}] fine-tune on {primary.shape[0]} rows  "
+          f"lr={finetune_lr:.1e}  epochs={finetune_epochs}")
+    print("=" * 72)
+
+    # Load checkpoint — use its stored norm_stats to keep loss function stable.
+    base_ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    norm_stats = base_ckpt["norm_stats"]
+    cfg = base_ckpt.get("config", {})
+
+    from modules_v6.deepsets_surrogate import build_surrogate_from_ckpt
+    model = build_surrogate_from_ckpt(base_ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
+    model.set_normalization(norm_stats)
+    model.train()
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[model] loaded {cfg.get('model_type','?')} from {ckpt_path}  "
+          f"params={n_params:,}  base_val={base_ckpt.get('val_total', '?')}")
+
+    # Apply log-T transform (same as train_species).
+    T_all = torch.log1p(T_all * T_LOG_SCALE)
+
+    train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
+    print(f"[split] train={len(train_idx)}  val={len(val_idx)}")
+
+    full_ds  = TensorDataset(primary, xy, E_all, T_all)
+    train_ds = Subset(full_ds, train_idx.tolist())
+    val_ds   = Subset(full_ds, val_idx.tolist())
+    pin = (DEVICE.type == "cuda")
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
+                              num_workers=NUM_WORKERS, pin_memory=pin)
+    val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False,
+                              num_workers=NUM_WORKERS, pin_memory=pin)
+
+    # Fixed-LR Adam (no OneCycleLR schedule — fine-tune is a gentle nudge).
+    optimizer = torch.optim.Adam(model.parameters(), lr=finetune_lr)
+
+    log        = []
+    best_val   = float("inf")
+    best_epoch = -1
+
+    for epoch in range(finetune_epochs):
+        t_epoch = time.time()
+        model.train()
+        tr_tot, tr_E, tr_T, n_tr = 0.0, 0.0, 0.0, 0
+        for p_b, xy_b, E_b, T_b in train_loader:
+            p_b  = p_b.to(DEVICE, non_blocking=True)
+            xy_b = xy_b.to(DEVICE, non_blocking=True)
+            E_b  = E_b.to(DEVICE, non_blocking=True)
+            T_b  = T_b.to(DEVICE, non_blocking=True)
+
+            pred = model(p_b, xy_b)
+            loss, mE, mT = mse_normalized(
+                pred, E_b, T_b, model.out_mean, model.out_std,
+            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
+            optimizer.step()
+
+            B = p_b.shape[0]
+            tr_tot += loss.item() * B; tr_E += mE.item() * B; tr_T += mT.item() * B; n_tr += B
+        tr_tot /= max(n_tr, 1); tr_E /= max(n_tr, 1); tr_T /= max(n_tr, 1)
+
+        model.eval()
+        va_tot, va_E, va_T, n_va = 0.0, 0.0, 0.0, 0
+        with torch.no_grad():
+            for p_b, xy_b, E_b, T_b in val_loader:
+                p_b  = p_b.to(DEVICE, non_blocking=True)
+                xy_b = xy_b.to(DEVICE, non_blocking=True)
+                E_b  = E_b.to(DEVICE, non_blocking=True)
+                T_b  = T_b.to(DEVICE, non_blocking=True)
+                pred = model(p_b, xy_b)
+                loss, mE, mT = mse_normalized(
+                    pred, E_b, T_b, model.out_mean, model.out_std,
+                )
+                B = p_b.shape[0]
+                va_tot += loss.item()*B; va_E += mE.item()*B; va_T += mT.item()*B; n_va += B
+        va_tot /= max(n_va, 1); va_E /= max(n_va, 1); va_T /= max(n_va, 1)
+
+        dt = time.time() - t_epoch
+        print(f"[{tag} ft epoch {epoch+1:3d}/{finetune_epochs}] "
+              f"train={tr_tot:.4f} (E={tr_E:.4f} T={tr_T:.4f})  "
+              f"val={va_tot:.4f} (E={va_E:.4f} T={va_T:.4f})  {dt:.1f}s")
+        log.append(dict(epoch=epoch+1, phase="finetune",
+                        train=tr_tot, train_E=tr_E, train_T=tr_T,
+                        val=va_tot, val_E=va_E, val_T=va_T, dt=dt))
+
+        if va_tot < best_val - 1e-5:
+            best_val = va_tot; best_epoch = epoch + 1
+            torch.save({
+                "state_dict": model.state_dict(),
+                "epoch": epoch + 1,
+                "val_total": va_tot, "val_E": va_E, "val_T": va_T,
+                "norm_stats": norm_stats,
+                "config": base_ckpt.get("config", {}),
+            }, os.path.join(output_folder, ckpt_name))
+
+    print(f"[{tag} ft adam done] best val {best_val:.4f} at epoch {best_epoch}")
+
+    # ── L-BFGS fine-tune (full-batch, chunked closure) ────────────────────
+    print(f"\n[{tag}] Phase 2 (finetune): L-BFGS on {len(train_idx)} samples")
+    ft_ckpt = torch.load(os.path.join(output_folder, ckpt_name), map_location=DEVICE,
+                         weights_only=False)
+    model.load_state_dict(ft_ckpt["state_dict"])
+    ft_adam_val = ft_ckpt["val_total"]
+    model.eval()
+
+    p_all  = primary[train_idx].to(DEVICE)
+    xy_all = xy[train_idx].to(DEVICE)
+    E_all_train = E_all[train_idx].to(DEVICE)
+    T_all_train = T_all[train_idx].to(DEVICE)
+
+    lbfgs_optimizer = torch.optim.LBFGS(
+        model.parameters(), lr=LBFGS_LR, max_iter=lbfgs_max_iter,
+        history_size=LBFGS_HISTORY_SIZE, line_search_fn="strong_wolfe",
+    )
+    lbfgs_iter_log = []
+    t_lbfgs = time.time()
+    lbfgs_best_val = ft_adam_val
+    lbfgs_best_iter = -1
+    lbfgs_no_improve = 0
+    n_total = int(p_all.shape[0])
+
+    class _LBFGSStop(Exception):
+        pass
+
+    def closure():
+        nonlocal lbfgs_best_val, lbfgs_best_iter, lbfgs_no_improve
+        lbfgs_optimizer.zero_grad()
+        sum_loss = sum_E = sum_T = 0.0
+        for start in range(0, n_total, LBFGS_CHUNK_SIZE):
+            end = min(start + LBFGS_CHUNK_SIZE, n_total)
+            chunk_size = end - start
+            pred_c = model(p_all[start:end], xy_all[start:end])
+            chunk_loss, chunk_mE, chunk_mT = mse_normalized(
+                pred_c, E_all_train[start:end], T_all_train[start:end],
+                model.out_mean, model.out_std,
+            )
+            w = chunk_size / n_total
+            (chunk_loss * w).backward()
+            sum_loss += chunk_loss.detach() * chunk_size
+            sum_E    += chunk_mE.detach()   * chunk_size
+            sum_T    += chunk_mT.detach()   * chunk_size
+        loss = sum_loss / n_total
+        mE   = sum_E    / n_total
+        mT   = sum_T    / n_total
+        with torch.no_grad():
+            va_tot = va_E = va_T = 0.0; n_va = 0
+            for p_b, xy_b, E_b, T_b in val_loader:
+                p_b  = p_b.to(DEVICE, non_blocking=True)
+                xy_b = xy_b.to(DEVICE, non_blocking=True)
+                E_b  = E_b.to(DEVICE, non_blocking=True)
+                T_b  = T_b.to(DEVICE, non_blocking=True)
+                v_pred = model(p_b, xy_b)
+                v_loss, v_mE, v_mT = mse_normalized(
+                    v_pred, E_b, T_b, model.out_mean, model.out_std)
+                B = p_b.shape[0]
+                va_tot += v_loss.item()*B; va_E += v_mE.item()*B; va_T += v_mT.item()*B; n_va += B
+            va_tot /= max(n_va, 1); va_E /= max(n_va, 1); va_T /= max(n_va, 1)
+        it = len(lbfgs_iter_log)
+        lbfgs_iter_log.append(dict(iter=it, loss=loss.item(),
+                                   mse_E=mE.item(), mse_T=mT.item(),
+                                   val=va_tot, val_E=va_E, val_T=va_T))
+        if va_tot < lbfgs_best_val - 1e-5:
+            lbfgs_best_val = va_tot; lbfgs_best_iter = it; lbfgs_no_improve = 0
+            torch.save({
+                "state_dict": model.state_dict(),
+                "epoch": finetune_epochs + 1, "phase": "lbfgs",
+                "lbfgs_iter": it, "val_total": va_tot,
+                "val_E": va_E, "val_T": va_T,
+                "norm_stats": norm_stats,
+                "config": base_ckpt.get("config", {}),
+            }, os.path.join(output_folder, ckpt_name))
+            marker = "  <- NEW BEST (saved)"
+        else:
+            lbfgs_no_improve += 1
+            marker = ""
+        print(f"  [lbfgs iter {it:3d}] loss={loss.item():.6f}  "
+              f"val={va_tot:.6f}{marker}")
+        if lbfgs_no_improve >= LBFGS_PATIENCE:
+            raise _LBFGSStop
+        return loss
+
+    try:
+        lbfgs_optimizer.step(closure)
+    except _LBFGSStop:
+        print(f"[lbfgs] early stop at patience={LBFGS_PATIENCE}  "
+              f"best val={lbfgs_best_val:.6f} at iter {lbfgs_best_iter}")
+
+    del p_all, xy_all, E_all_train, T_all_train
+
+    lbfgs_summary = {}
+    if lbfgs_best_iter >= 0 and lbfgs_iter_log:
+        lbfgs_summary = {k: lbfgs_iter_log[lbfgs_best_iter][k]
+                         for k in ("loss", "mse_E", "mse_T", "val_E", "val_T")}
+    full_log = log + [dict(epoch=finetune_epochs + 1, phase="lbfgs",
+                           val=lbfgs_best_val, **lbfgs_summary)]
+    with open(os.path.join(output_folder, log_name), "w") as f:
+        json.dump({"log": full_log, "lbfgs_iter_log": lbfgs_iter_log,
+                   "best_val_total": lbfgs_best_val,
+                   "finetune_config": dict(
+                       finetune_lr=finetune_lr, finetune_epochs=finetune_epochs,
+                       lbfgs_max_iter=lbfgs_max_iter, base_ckpt=ckpt_path,
+                   )}, f, indent=2)
+    _plot_curves(full_log, os.path.join(output_folder, curves_name),
+                 adam_epochs=finetune_epochs, lbfgs_iter_log=lbfgs_iter_log)
+    print(f"[{tag} ft done] best val {lbfgs_best_val:.4f}  "
+          f"(base was {base_ckpt.get('val_total', '?')})  ->  "
+          f"{os.path.join(output_folder, ckpt_name)}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=N_EPOCHS,
@@ -616,6 +848,21 @@ def main():
                     help="L-BFGS max iterations per species (default from config)")
     ap.add_argument("--species", type=str, default="electron,muon",
                     help="comma-separated subset of {electron,muon} to (re)train")
+    # Fine-tune mode: load an existing checkpoint and run a short Adam+L-BFGS
+    # pass on the combined base + infill dataset at a low learning rate.
+    ap.add_argument("--finetune_from", type=str, default=None,
+                    help="Directory containing fnn_electron.pt / fnn_muon.pt to "
+                         "fine-tune from. Enables fine-tune mode.")
+    ap.add_argument("--finetune_lr", type=float, default=1e-5,
+                    help="Adam LR for fine-tuning (default: 1e-5).")
+    ap.add_argument("--finetune_epochs", type=int, default=15,
+                    help="Adam epochs for fine-tuning (default: 15).")
+    ap.add_argument("--finetune_dataset", type=str, default=None,
+                    help="Path to infill dataset folder. Combined with base dataset "
+                         "when fine-tuning.")
+    ap.add_argument("--round", type=int, default=1,
+                    help="Adaptive-loop round number (used in output folder name "
+                         "when --finetune_from is set).")
     args = ap.parse_args()
     wanted = {s.strip() for s in args.species.split(",") if s.strip()}
     unknown = wanted - {tag for tag, _ in SPECIES_TAGS}
@@ -625,11 +872,82 @@ def main():
     print("=" * 72)
     print("v6/02_train_fnn_deepsets.py — two parallel per-species DeepSets surrogates")
     print("=" * 72)
+    print(f"device          : {DEVICE}")
+    print(f"species         : {sorted(wanted)}")
+
+    if args.finetune_from:
+        # ── Fine-tune mode ────────────────────────────────────────────────
+        output_folder = OUTPUT_FOLDER + f"_r{args.round}"
+        os.makedirs(output_folder, exist_ok=True)
+        print(f"mode            : FINETUNE  round={args.round}")
+        print(f"base ckpts      : {args.finetune_from}")
+        print(f"output dir      : {output_folder}")
+        print(f"finetune lr     : {args.finetune_lr:.1e}  epochs: {args.finetune_epochs}")
+        if not args.finetune_dataset:
+            raise SystemExit("--finetune_dataset is required when using --finetune_from")
+
+        t0 = time.time()
+        # Load base dataset.
+        primary_b   = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
+        xy_b        = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "xy.pt")).float()
+        E_b         = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
+        T_b         = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
+        strat_b     = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
+        species_b   = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt")).long()
+        print(f"[load] base corpus in {time.time()-t0:.1f}s  rows={primary_b.shape[0]}")
+
+        # Load infill dataset.
+        t0 = time.time()
+        primary_i   = torch.load(os.path.join(args.finetune_dataset, "primary.pt")).float()
+        xy_i        = torch.load(os.path.join(args.finetune_dataset, "xy.pt")).float()
+        E_i         = torch.load(os.path.join(args.finetune_dataset, "E.pt")).float()
+        T_i         = torch.load(os.path.join(args.finetune_dataset, "T.pt")).float()
+        strat_i     = torch.load(os.path.join(args.finetune_dataset, "strategy_ids.pt")).long()
+        species_i   = torch.load(os.path.join(args.finetune_dataset, "species_ids.pt")).long()
+        print(f"[load] infill dataset in {time.time()-t0:.1f}s  rows={primary_i.shape[0]}")
+
+        # Combine: concatenate base + infill. Offset infill strategy_ids so the
+        # combined dataset has a clean strategy-major structure for shower_level_split.
+        n_strat_base = int(strat_b.max().item() + 1)
+        strat_i_shifted = strat_i + n_strat_base
+
+        primary   = torch.cat([primary_b, primary_i], dim=0)
+        xy        = torch.cat([xy_b, xy_i], dim=0)
+        E_all     = torch.cat([E_b, E_i], dim=0)
+        T_all     = torch.cat([T_b, T_i], dim=0)
+        strat_ids = torch.cat([strat_b, strat_i_shifted], dim=0)
+        species_ids = torch.cat([species_b, species_i], dim=0)
+        print(f"[combine] total rows={primary.shape[0]}  "
+              f"(base={primary_b.shape[0]} + infill={primary_i.shape[0]})")
+        del primary_b, xy_b, E_b, T_b, strat_b, species_b
+        del primary_i, xy_i, E_i, T_i, strat_i, species_i
+
+        n_strat = int(strat_ids.max().item() + 1)
+        for tag, species_val in SPECIES_TAGS:
+            if tag not in wanted:
+                continue
+            ckpt_path = os.path.join(args.finetune_from, f"fnn_{tag}.pt")
+            if not os.path.exists(ckpt_path):
+                raise SystemExit(f"checkpoint not found: {ckpt_path}")
+            idx = torch.nonzero(species_ids == species_val).squeeze(-1)
+            if idx.numel() == 0:
+                raise SystemExit(f"no rows with species id {species_val} ({tag})")
+            assert idx.numel() % n_strat == 0, (idx.numel(), n_strat)
+            finetune_species(
+                tag,
+                primary[idx], xy[idx], E_all[idx], T_all[idx], strat_ids[idx],
+                ckpt_path=ckpt_path,
+                finetune_lr=args.finetune_lr,
+                finetune_epochs=args.finetune_epochs,
+                lbfgs_max_iter=args.lbfgs_iters,
+                output_folder=output_folder,
+            )
+        return
+
+    # ── Normal training mode ───────────────────────────────────────────────
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     print(f"data input dir  : {TRAINING_DATASET_FOLDER}")
     print(f"output dir      : {OUTPUT_FOLDER}")
-    print(f"device          : {DEVICE}")
-    print(f"species         : {sorted(wanted)}")
     print(f"batch           : {BATCH_SIZE}   epochs: {args.epochs}   "
           f"lbfgs iters: {args.lbfgs_iters}")
     print(f"lr              : {LR} -> {LR_MAX} -> {LR_MIN} OneCycleLR (pct_start={ONECYCLE_PCT_START})")
