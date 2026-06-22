@@ -44,6 +44,8 @@ eval "$(mamba shell hook --shell bash)"
 mamba config set changeps1 False
 mamba activate /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/envs/tambo
 
+export PYTHONUNBUFFERED=1
+
 cd /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v5
 
 python 01_run_evolution.py "$@"
