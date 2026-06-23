@@ -66,13 +66,13 @@ from modules_v4.tr_geometry      import load_tr_mountain
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-INIT_SCHEMES         = ("grid", "center")
-RUN_COMBINED         = True
+INIT_SCHEMES         = ("center",)#("grid", "center")
+RUN_COMBINED         = not True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_de_ensemble_{scheme}"
 
 # K perturbed restarts per scheme.
-N_CHAINS            = 3
+N_CHAINS            = 1
 INIT_OVERDISP_SIGMA = 1000.0  # metres — per-restart init spread around scheme init
 
 # Differential evolution (replaces the Adam warm-start + L-BFGS refine)
