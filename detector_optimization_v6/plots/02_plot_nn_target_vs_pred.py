@@ -215,11 +215,11 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     # use the same scale and small ckpt changes are visually comparable.
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
              f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",
-             vmin=10, vmax=50) 
+             vmin=10, vmax=4000) 
             #  vmin=10, vmax=5000) # TODO
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
              f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",
-             vmin=10, vmax=30) 
+             vmin=10, vmax=2500) 
             #  vmin=10, vmax=3000) # TODO
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
@@ -254,10 +254,11 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
 
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
     vmin_s = (1, 1, 1, 1)
-    vmax_s = (350, 350, 250, 600)
+    # vmax_s = (350, 350, 250, 600)
+    vmax_s = (200, 200, 200, 400)
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
     for i, name in enumerate(labels):
-        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i]/100, vmax=vmax_s[i]/100) # TODO
+        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i]) # TODO
     fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
