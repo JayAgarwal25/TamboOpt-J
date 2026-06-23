@@ -959,6 +959,8 @@ def main():
     if args.fnn_folder:
         import modules_v6.constants as _C
         _C.FNN_FOLDER = args.fnn_folder
+        global FNN_FOLDER
+        FNN_FOLDER = args.fnn_folder
         print(f"[fnn_folder] overriding FNN_FOLDER -> {args.fnn_folder}")
 
     fnn, recon = _load_models()

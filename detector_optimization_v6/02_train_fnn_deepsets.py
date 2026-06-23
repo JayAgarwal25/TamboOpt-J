@@ -650,7 +650,14 @@ def finetune_species(tag: str,
     # Apply log-T transform (same as train_species).
     T_all = torch.log1p(T_all * T_LOG_SCALE)
 
-    train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
+    # Plain random split: base and infill strategies have unequal row counts
+    # (100k vs 500), so shower_level_split's equal-count assumption is violated.
+    n_rows = int(primary.shape[0])
+    g_split = torch.Generator().manual_seed(SEED)
+    perm = torch.randperm(n_rows, generator=g_split)
+    n_val = max(1, int(round(VAL_FRAC * n_rows)))
+    val_idx   = perm[:n_val]
+    train_idx = perm[n_val:]
     print(f"[split] train={len(train_idx)}  val={len(val_idx)}")
 
     full_ds  = TensorDataset(primary, xy, E_all, T_all)
@@ -932,7 +939,6 @@ def main():
             idx = torch.nonzero(species_ids == species_val).squeeze(-1)
             if idx.numel() == 0:
                 raise SystemExit(f"no rows with species id {species_val} ({tag})")
-            assert idx.numel() % n_strat == 0, (idx.numel(), n_strat)
             finetune_species(
                 tag,
                 primary[idx], xy[idx], E_all[idx], T_all[idx], strat_ids[idx],

@@ -65,7 +65,9 @@ OPT_SUFFIX=_r${ROUND}
 LOG_DIR=/n/home07/jagarwal/tambo_slurm_logs
 MAMBA_ENV=/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/envs/tambo
 
-if [ ! -f "${CENTER_PT}" ]; then
+# When chaining rounds (PREV_JOB_C set), CENTER_PT will be written by the
+# previous round's Job C before Job A of this round starts — skip the check.
+if [ -z "${PREV_JOB_C}" ] && [ ! -f "${CENTER_PT}" ]; then
     echo "ERROR: centre layout not found: ${CENTER_PT}"
     echo "Create it from the baseline step-4 output first (see script header)."
     exit 1
