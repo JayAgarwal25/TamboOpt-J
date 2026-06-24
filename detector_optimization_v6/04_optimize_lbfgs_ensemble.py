@@ -7,7 +7,12 @@ layouts with a per-position mean and std.
 
 Per scheme:
 
-1.  Sample the scheme's initial layout (`mountain.sample_initial_layout`) and
+Detectors use the **(North, East)** convention (like the DE ensemble): the
+layout is 100 North + 100 East, projected to the mountain with
+`project_to_mountain_ne`; plots project East → Up via `SurfaceUpMap` for the
+(North, Up) cross section.
+
+1.  Sample the scheme's initial layout (`sample_initial_layout_ne`) and
     create K = `N_CHAINS` Gaussian perturbations of it (std
     `INIT_OVERDISP_SIGMA`, projected back to the mountain).
 2.  Run Adam (`N_ADAM_EPOCHS`) independently from each perturbed start → K
@@ -67,18 +72,20 @@ from modules_v6.constants import (
 from modules.utility_functions   import reconstructability, U_E, U_angle, U_PR
 from modules.layout_optimization import LearnableXY
 from modules_v4.tr_geometry      import load_tr_mountain
-from modules_v6.tr_geometry_ne   import project_to_mountain_ne
+from modules_v6.tr_geometry_ne   import project_to_mountain_ne, sample_initial_layout_ne
+from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-INIT_SCHEMES         = ("grid", "center")
-RUN_COMBINED         = True
+# INIT_SCHEMES         = ("grid", "center")
+INIT_SCHEMES         = ("grid", )
+RUN_COMBINED         = not True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_{scheme}"
 
 # K perturbed restarts per scheme.
-N_CHAINS            = 15#4
-INIT_OVERDISP_SIGMA = 1000.0  # metres — per-restart init spread around scheme init
+N_CHAINS            = 15
+INIT_OVERDISP_SIGMA = 0*1000.0  # metres — per-restart init spread around scheme init
 
 # Adam warm-start
 N_ADAM_EPOCHS       = 5_000
@@ -188,20 +195,20 @@ def adam_warm_start(scheme: str,
        is the (already mountain-projected) starting layout; `scheme` is a log
        label. `grad_hist` is a (N_ADAM_EPOCHS, 2*n_det) CPU tensor of the flat
        parameter gradient at each step (for cross-run gradient diagnostics)."""
-    N_init, U_init = init_override
+    N_init, E_init = init_override
     N_init = N_init.float()
-    U_init = U_init.float()
+    E_init = E_init.float()
     print(f"[adam] init {scheme}  N in [{N_init.min():.1f}, {N_init.max():.1f}]  "
-          f"Up in [{U_init.min():.1f}, {U_init.max():.1f}]")
+          f"E in [{E_init.min():.1f}, {E_init.max():.1f}]")
 
-    xy_module = LearnableXY(N_init, U_init, device=str(DEVICE)).to(DEVICE)
+    xy_module = LearnableXY(N_init, E_init, device=str(DEVICE)).to(DEVICE)
     optimizer = torch.optim.Adam(xy_module.parameters(), lr=ADAM_LR)
 
     log = []
     grad_hist = []
     best_u = -float("inf")
     best_x = N_init.clone()
-    best_y = U_init.clone()
+    best_y = E_init.clone()
 
     for epoch in range(N_ADAM_EPOCHS):
         idx = torch.randint(0, n_total_primaries, (PRIMARIES_PER_STEP,))
@@ -222,13 +229,13 @@ def adam_warm_start(scheme: str,
         grad_norm = torch.nn.utils.clip_grad_norm_(xy_module.parameters(), max_norm=GRAD_CLIP)
         optimizer.step()
 
-        # Project to mountain surface.
+        # Project to the mountain surface in the (North, East) plane.
         with torch.no_grad():
-            N_cpu  = xy_module.x.detach().cpu()
-            Up_cpu = xy_module.y.detach().cpu()
-            N_new, Up_new = mountain.project_to_mountain(N_cpu, Up_cpu)
+            N_cpu = xy_module.x.detach().cpu()
+            E_cpu = xy_module.y.detach().cpu()
+            N_new, E_new = project_to_mountain_ne(mountain, N_cpu, E_cpu)
             xy_module.x.data.copy_(N_new.to(DEVICE).to(xy_module.x.dtype))
-            xy_module.y.data.copy_(Up_new.to(DEVICE).to(xy_module.y.dtype))
+            xy_module.y.data.copy_(E_new.to(DEVICE).to(xy_module.y.dtype))
 
         u_val = float(U.item())
         if u_val > best_u:
@@ -248,7 +255,7 @@ def adam_warm_start(scheme: str,
 
     print(f"[adam] best U={best_u:+.3f}")
     grad_hist = torch.stack(grad_hist, dim=0) if grad_hist else torch.zeros(0)
-    return best_x, best_y, N_init, U_init, log, grad_hist
+    return best_x, best_y, N_init, E_init, log, grad_hist
 
 
 def _build_chain_inits(init_x: torch.Tensor, init_y: torch.Tensor,
@@ -295,11 +302,11 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
 
     Returns (adam_bests, adam_logs, perturbed_inits, adam_grads), each length K.
     adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step gradient history."""
-    N_np, U_np = mountain.sample_initial_layout(n_units=N_DETECTORS, scheme=scheme)
+    N_np, E_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
     N_t = torch.as_tensor(N_np, dtype=torch.float32)
-    U_t = torch.as_tensor(U_np, dtype=torch.float32)
-    N_t, U_t = mountain.project_to_mountain(N_t, U_t)
-    chains_init = _build_chain_inits(N_t, U_t, K, generator)                  # (K, D)
+    E_t = torch.as_tensor(E_np, dtype=torch.float32)
+    N_t, E_t = project_to_mountain_ne(mountain, N_t, E_t)
+    chains_init = _build_chain_inits(N_t, E_t, K, generator)                  # (K, D)
 
     adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
     for k in range(K):
@@ -383,7 +390,7 @@ def lbfgs_refine(init_x: torch.Tensor,
     with torch.no_grad():
         x_cpu = xy[:N_DETECTORS].detach().cpu()
         y_cpu = xy[N_DETECTORS:].detach().cpu()
-        x_proj, y_proj = mountain.project_to_mountain(x_cpu, y_cpu)
+        x_proj, y_proj = project_to_mountain_ne(mountain, x_cpu, y_cpu)
         U_proj, _, _ = utility_of_xy(
             x_proj.to(DEVICE), y_proj.to(DEVICE), primary_fixed, fnn, recon,
         )
@@ -589,13 +596,30 @@ def _plot_utility_components(adam_logs, lbfgs_logs, path: str):
         print(f"[plot] utility components skipped ({exc!r})")
 
 
+@torch.no_grad()
+def _project_ne_to_up(surface, north, east):
+    """Map detector (North, East) → Up via the differentiable mountain surface
+    Up = g(North, East) (modules_v6.tr_surface_map_ne.SurfaceUpMap), so the NE
+    layouts can be drawn in the (North, Up) cross section the plots use. Returns a
+    numpy array shaped like `north`."""
+    dev = surface.grid_up.device
+    shp = np.asarray(north).shape
+    n = torch.as_tensor(np.asarray(north).reshape(-1), dtype=torch.float32, device=dev)
+    e = torch.as_tensor(np.asarray(east ).reshape(-1), dtype=torch.float32, device=dev)
+    return surface(n, e).detach().cpu().numpy().reshape(shp)
+
+
 def _plot_ensemble(aligned_xy: np.ndarray,
                    mean_xy: np.ndarray,
                    std_xy: np.ndarray,
                    best_x, best_y,
-                   mountain, path: str):
+                   mountain, path: str, surface=None):
     """Mountain top-down: every aligned run's detectors (faint) + per-group
-    mean (dark) + 1σ ellipses (width=2σx, height=2σy)."""
+    mean (dark) + 1σ ellipses (width=2σx, height=2σy).
+
+    With `surface` the detector East is projected to Up = g(North, East) and the
+    plot is the (North, Up) cross section (mean/std recomputed in that plane);
+    without it the native (North, East) plane is drawn."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -603,9 +627,19 @@ def _plot_ensemble(aligned_xy: np.ndarray,
         from matplotlib.patches import Ellipse
         from matplotlib.collections import PatchCollection
 
+        if surface is not None:
+            up = _project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])
+            aligned_xy = np.stack([aligned_xy[..., 0], up], axis=-1)   # (K, n_det, 2)=(N,Up)
+            mean_xy = aligned_xy.mean(axis=0)
+            std_xy  = aligned_xy.std(axis=0)
+            best_y  = _project_ne_to_up(surface, np.asarray(best_x), np.asarray(best_y))
+            mtn_y, ylab, ylet = mountain.centroids_NUE[:, 1], "Up [m]", "Up"
+        else:
+            mtn_y, ylab, ylet = mountain.centroids_NUE[:, 2], "East [m]", "E"
+
         K = aligned_xy.shape[0]
         fig, ax = plt.subplots(figsize=(12, 8))
-        ax.scatter(mountain.centroids_NUE[:, 0], mountain.centroids_NUE[:, 1],
+        ax.scatter(mountain.centroids_NUE[:, 0], mtn_y,
                    s=2, c="lightgray", alpha=0.6, label="mountain")
 
         colors = plt.cm.tab10(np.linspace(0, 1, max(K, 1)))
@@ -624,10 +658,10 @@ def _plot_ensemble(aligned_xy: np.ndarray,
         ))
         ax.scatter(best_x, best_y, s=26, c="C3",
                    edgecolors="black", linewidths=0.4, alpha=0.95,
-                   label=f"best  (σ̄x={std_xy[:,0].mean():.1f} m, "
-                         f"σ̄y={std_xy[:,1].mean():.1f} m)")
+                   label=f"best  (σ̄N={std_xy[:,0].mean():.1f} m, "
+                         f"σ̄{ylet}={std_xy[:,1].mean():.1f} m)")
 
-        ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
+        ax.set_xlabel("North [m]"); ax.set_ylabel(ylab)
         ax.set_aspect("equal")
         ax.set_title(f"L-BFGS ensemble (K={K}) — aligned best + 1σ ellipses")
         ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=8)
@@ -642,18 +676,27 @@ def _plot_ensemble(aligned_xy: np.ndarray,
 def _plot_density_heatmap(aligned_xy: np.ndarray,
                           best_x, best_y,
                           mountain, path: str,
-                          bins: int = 60):
+                          bins: int = 60, surface=None):
     """Mountain top-down 2D density of where detectors land across the ensemble.
 
     Pools every detector position from all K aligned runs (K * n_det points)
-    into a 2D histogram over (North, Up); brighter cells = positions favored by
-    more runs. The mountain footprint is outlined faintly underneath, and the
-    single best-U layout is overlaid as a scatter so the densest regions can be
-    read against the actual winning layout."""
+    into a 2D histogram; brighter cells = positions favored by more runs. With
+    `surface` the detector East is projected to Up = g(North, East) so the plot is
+    the (North, Up) cross section; without it the native (North, East) plane is
+    drawn. The mountain footprint is outlined faintly underneath, and the single
+    best-U layout is overlaid as a scatter."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+
+        if surface is not None:
+            up = _project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])
+            aligned_xy = np.stack([aligned_xy[..., 0], up], axis=-1)
+            best_y = _project_ne_to_up(surface, np.asarray(best_x), np.asarray(best_y))
+            mtn_col, ylab = 1, "Up [m]"
+        else:
+            mtn_col, ylab = 2, "East [m]"
 
         K, n_det, _ = aligned_xy.shape
         pts = aligned_xy.reshape(-1, 2)                          # (K*n_det, 2)
@@ -665,7 +708,7 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
         cen = getattr(mountain, "centroids_NUE", None)
         if cen is not None:
             allx = np.concatenate([cen[:, 0], pts[:, 0]])
-            ally = np.concatenate([cen[:, 1], pts[:, 1]])
+            ally = np.concatenate([cen[:, mtn_col], pts[:, 1]])
         else:
             allx, ally = pts[:, 0], pts[:, 1]
         xlo, xhi = float(allx.min()), float(allx.max())
@@ -693,7 +736,7 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
         # gaps between the (sparse) centroids, then mask everything else so the
         # off-mountain region renders transparent.
         if cen is not None:
-            occ, _, _ = np.histogram2d(cen[:, 0], cen[:, 1], bins=bins, range=rng)
+            occ, _, _ = np.histogram2d(cen[:, 0], cen[:, mtn_col], bins=bins, range=rng)
             # Detectors are projected onto the mountain, so cells holding a
             # detector are valid mountain too — union them in so no scatter
             # point ever lands outside the colored region (the centroid sample
@@ -738,7 +781,7 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
                    edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
                    label="best-U layout")
 
-        ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
+        ax.set_xlabel("North [m]"); ax.set_ylabel(ylab)
         ax.set_title(f"detector placement density (K={K} runs, {bins}×{bins} bins) "
                      f"+ best-U layout")
         ax.legend(loc="upper right", fontsize=8)
@@ -788,7 +831,7 @@ def _run_one_scheme(scheme: str,
                     recon: Reconstruction,
                     primary_all: torch.Tensor,
                     n_total_primaries: int,
-                    per_source):
+                    per_source, surface=None):
     """Pre-computed Adam-bests → L-BFGS refine each → align ensemble → mean/std.
 
     `per_source` is {source_label: (adam_bests, adam_logs, perturbed_inits)}.
@@ -904,9 +947,9 @@ def _run_one_scheme(scheme: str,
     _plot_utility_components(all_adam_logs, lbfgs_logs,
                             os.path.join(opt_dir, "utility_components.png"))
     _plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y,
-                    mountain, os.path.join(opt_dir, "layout_ensemble.png"))
+                    mountain, os.path.join(opt_dir, "layout_ensemble.png"), surface=surface)
     _plot_density_heatmap(aligned, best_x, best_y,
-                    mountain, os.path.join(opt_dir, "layout_density.png"))
+                    mountain, os.path.join(opt_dir, "layout_density.png"), surface=surface)
 
     print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")
@@ -947,6 +990,10 @@ def main():
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
+    # Differentiable Up = g(North, East): projects the NE layouts into the
+    # (North, Up) cross section for the plots (matching the DE ensemble figures).
+    surface = SurfaceUpMap.from_mountain(mountain).to(DEVICE)
+
     results = []
     per_scheme = {}     # scheme -> (adam_bests, adam_logs, perturbed_inits)
     for scheme in INIT_SCHEMES:
@@ -961,7 +1008,7 @@ def main():
         )
         results.append(_run_one_scheme(
             scheme, mountain, fnn, recon, primary_all, n_total_primaries,
-            {scheme: per_scheme[scheme]},
+            {scheme: per_scheme[scheme]}, surface=surface,
         ))
 
     if RUN_COMBINED and len(per_scheme) > 1:
@@ -971,7 +1018,7 @@ def main():
         print("=" * 72)
         results.append(_run_one_scheme(
             COMBINED_SCHEME_NAME, mountain, fnn, recon, primary_all, n_total_primaries,
-            per_scheme,
+            per_scheme, surface=surface,
         ))
 
     print()
