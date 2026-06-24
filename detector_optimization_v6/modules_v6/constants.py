@@ -36,7 +36,7 @@ SHOWER_CACHE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detec
 # TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_recentered")
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 FNN_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_02_recentered")
-RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered_deepsets")
+RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered")
 # 04_optimize.py appends "_{scheme}" (one folder per init scheme).
 OPT_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_04_optimize")
 
