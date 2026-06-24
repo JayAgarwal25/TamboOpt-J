@@ -66,8 +66,8 @@ from modules_v4.tr_geometry      import load_tr_mountain
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-INIT_SCHEMES         = ("center",)#("grid", "center")
-RUN_COMBINED         = not True
+INIT_SCHEMES         = ("grid", "center")
+RUN_COMBINED         = True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_de_ensemble_{scheme}"
 
