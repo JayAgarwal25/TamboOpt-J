@@ -77,7 +77,7 @@ COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_{scheme}"
 
 # K perturbed restarts per scheme.
-N_CHAINS            = 15#4
+N_CHAINS            = 15
 INIT_OVERDISP_SIGMA = 1000.0  # metres — per-restart init spread around scheme init
 
 # Adam warm-start

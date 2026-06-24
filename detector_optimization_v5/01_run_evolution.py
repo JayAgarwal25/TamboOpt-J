@@ -2,8 +2,8 @@
 
 Scientific context
 ------------------
-Jeffrey's question: does a gradient-free evolutionary algorithm converge to
-the same optimum as v6's gradient-based L-BFGS/DE?
+Does a gradient-free evolutionary algorithm converge to the same optimum as
+v6's gradient-based L-BFGS/DE?
 
 This script answers that using the SAME frozen dual-species surrogate and the
 SAME composite utility U as v6/04_optimize_lbfgs_ensemble.py — the only

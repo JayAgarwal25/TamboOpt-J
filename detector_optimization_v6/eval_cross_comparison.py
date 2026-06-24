@@ -1,16 +1,16 @@
 """Cross-evaluation: 7 optimizer-found layouts x 2 recon networks.
 
-All layouts are post-coordinate-bug-fix (commit 639fe94) and stored in
-(North, East) convention. FNN expects (North, East) inputs.
+All layouts are post-coordinate-bug-fix and stored in (North, East) convention.
+FNN expects (North, East) inputs.
 
 Layouts evaluated:
-  Zlatan DE         -- Zlatan's DE population run, 50k primaries, reference U=138.87
-  Jay L-BFGS + MLP  -- Jay's L-BFGS with flat MLP recon,  U=60.6  at 512 prim
-  Jay L-BFGS + DS   -- Jay's L-BFGS with DeepSets recon,  U=208.9 at 512 prim
-  Jay ES + MLP      -- Jay's ES with flat MLP recon,       U=69.0  at 512 prim
-  Jay ES + DS       -- Jay's ES with DeepSets recon,       U=200.2 at 512 prim
-  Jay CMA-ES + MLP  -- Jay's CMA-ES with flat MLP recon,  U=49.3  at 512 prim
-  Jay CMA-ES + DS   -- Jay's CMA-ES with DeepSets recon,  U=189.1 at 512 prim
+  DE         -- DE population run, 50k primaries, reference U=138.87
+  L-BFGS+MLP -- L-BFGS with flat MLP recon,  U=60.6  at 512 prim
+  L-BFGS+DS  -- L-BFGS with DeepSets recon,  U=208.9 at 512 prim
+  ES+MLP     -- ES with flat MLP recon,       U=69.0  at 512 prim
+  ES+DS      -- ES with DeepSets recon,       U=200.2 at 512 prim
+  CMA-ES+MLP -- CMA-ES with flat MLP recon,   U=49.3  at 512 prim
+  CMA-ES+DS  -- CMA-ES with DeepSets recon,   U=189.1 at 512 prim
 
 Recon networks:
   flat_MLP  -- test_v6_run_03_recentered,          val_total=0.126
@@ -53,24 +53,24 @@ RECONSTRUCT_THRESHOLD = 10.0
 BATCH_PRIMARIES = 512
 SEED = 42
 
-JAGARWAL    = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal"
-ZDIMITROV   = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6"
+_JAGARWAL = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal"
+_ZDIMITROV = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6"
 
 LAYOUT_SPECS = [
-    ("Zlatan DE",
-     f"{ZDIMITROV}/optimization_runs_200k_dual/test_v6_run_04_optimize_de_population/layout_best.pt"),
-    ("Jay L-BFGS+MLP",
-     f"{JAGARWAL}/v6_runs/test_v6_run_04_optimize_lbfgs_ensemble_mlp_combined/layout_best.pt"),
-    ("Jay L-BFGS+DS",
-     f"{JAGARWAL}/v6_runs/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"),
-    ("Jay ES+MLP",
-     f"{JAGARWAL}/v5_es_runs/20260624_053311/layout_best.pt"),
-    ("Jay ES+DS",
-     f"{JAGARWAL}/v5_es_runs/20260624_061237/layout_best.pt"),
-    ("Jay CMA-ES+MLP",
-     f"{JAGARWAL}/v5_es_runs/cmaes_20260624_053315/layout_best.pt"),
-    ("Jay CMA-ES+DS",
-     f"{JAGARWAL}/v5_es_runs/cmaes_20260624_061214/layout_best.pt"),
+    ("DE",
+     f"{_ZDIMITROV}/optimization_runs_200k_dual/test_v6_run_04_optimize_de_population/layout_best.pt"),
+    ("L-BFGS+MLP",
+     f"{_JAGARWAL}/v6_runs/test_v6_run_04_optimize_lbfgs_ensemble_mlp_combined/layout_best.pt"),
+    ("L-BFGS+DS",
+     f"{_JAGARWAL}/v6_runs/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"),
+    ("ES+MLP",
+     f"{_JAGARWAL}/v5_es_runs/20260624_053311/layout_best.pt"),
+    ("ES+DS",
+     f"{_JAGARWAL}/v5_es_runs/20260624_061237/layout_best.pt"),
+    ("CMA-ES+MLP",
+     f"{_JAGARWAL}/v5_es_runs/cmaes_20260624_053315/layout_best.pt"),
+    ("CMA-ES+DS",
+     f"{_JAGARWAL}/v5_es_runs/cmaes_20260624_061214/layout_best.pt"),
 ]
 
 
@@ -153,18 +153,11 @@ def main():
     recons = {}
     for name, path in recon_paths.items():
         ckpt = torch.load(path, map_location=DEVICE, weights_only=False)
-        recon = build_recon_from_ckpt(ckpt, N_DETECTORS, DEVICE)
-        recon.eval()
+        r = build_recon_from_ckpt(ckpt, N_DETECTORS, DEVICE)
+        r.eval()
         cfg = ckpt.get("config", {})
         vt = cfg.get("val_total", ckpt.get("val_total", "?"))
         print(f"  [recon '{name}'] val_total={vt}")
-    recons["flat_MLP"] = recon  # overwrite with last; reload properly
-    # Reload correctly
-    recons = {}
-    for name, path in recon_paths.items():
-        ckpt = torch.load(path, map_location=DEVICE, weights_only=False)
-        r = build_recon_from_ckpt(ckpt, N_DETECTORS, DEVICE)
-        r.eval()
         recons[name] = r
 
     print("\n[load] Layouts:")
@@ -213,9 +206,9 @@ def main():
     print(f"\n{'=' * 80}")
     print("CROSS-EVAL INTERPRETATION:")
     for opt_method, mlp_key, ds_key in [
-        ("L-BFGS", "Jay L-BFGS+MLP", "Jay L-BFGS+DS"),
-        ("ES",     "Jay ES+MLP",      "Jay ES+DS"),
-        ("CMA-ES", "Jay CMA-ES+MLP",  "Jay CMA-ES+DS"),
+        ("L-BFGS", "L-BFGS+MLP", "L-BFGS+DS"),
+        ("ES",     "ES+MLP",      "ES+DS"),
+        ("CMA-ES", "CMA-ES+MLP",  "CMA-ES+DS"),
     ]:
         mlp_with_mlp = results[(mlp_key, "flat_MLP")]
         mlp_with_ds  = results[(mlp_key, "DeepSets")]

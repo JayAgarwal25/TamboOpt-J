@@ -9,9 +9,8 @@
 #SBATCH --output=/n/home07/jagarwal/tambo_slurm_logs/%x_%j.out
 #SBATCH --error=/n/home07/jagarwal/tambo_slurm_logs/%x_%j.err
 
-# 2x2 controlled utility evaluation: Jay's layout vs Zlatan's layout
+# 2x2 controlled utility evaluation: L-BFGS layout vs DE layout
 # x flat-MLP recon vs DeepSets recon.
-# Diagnoses whether low U in Jay's runs is due to the recon or the layout.
 
 set -euo pipefail
 
