@@ -36,7 +36,7 @@ _V6_RUNS = (
     "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 )
 FNN_FOLDER   = os.path.join(_V6_RUNS, "test_v6_run_02_recentered")
-RECON_FOLDER = os.path.join(_V6_RUNS, "test_v6_run_03_recentered_deepsets")
+RECON_FOLDER = os.path.join(_V6_RUNS, "test_v6_run_03_recentered")
 
 # ── Primary encoding bounds (must match v6/modules_v6/constants.py) ──────────
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
