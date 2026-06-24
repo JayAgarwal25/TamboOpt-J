@@ -1,20 +1,19 @@
 """2x2 controlled utility evaluation: layout x recon.
 
 Evaluates utility U for all combinations of:
-  - Jay's best layout   (L_star_r0.pt, found by buggy lbfgs_ensemble — (North, Up) coords)
-  - Zlatan's best layout (zdimitrov/.../test_v6_run_04_optimize_de_population/layout_best.pt,
-                          found with correct DE — (North, East) coords)
+  - L-BFGS layout  (L_star_r0.pt, stored in (North, Up) coords — coordinate bug, now fixed)
+  - DE layout      (test_v6_run_04_optimize_de_population/layout_best.pt, (North, East))
   x
   - Flat MLP recon  (test_v6_run_03_recentered/recon.pt,    val=0.126)
   - DeepSets recon  (test_v6_run_03_recentered_deepsets/recon.pt, val=0.001118)
 
-COORDINATE NOTE: The FNN expects (North, East) inputs. Jay's layout is stored in
-(North, Up) because lbfgs_ensemble.py had a coordinate bug (now fixed). Jay's layout
-is converted to (North, East) by snapping each detector to the nearest mountain
-centroid in NE space (project_to_mountain_ne with Up treated as if it were East).
-This conversion is approximate but gives the most faithful NE version of Jay's layout.
+COORDINATE NOTE: The FNN expects (North, East) inputs. The L-BFGS layout is stored in
+(North, Up) because lbfgs_ensemble.py had a coordinate bug (now fixed). It is converted
+to (North, East) by snapping each detector to the nearest mountain centroid in NE space
+(project_to_mountain_ne with Up treated as if it were East). This conversion is
+approximate but gives the most faithful NE version of the layout.
 
-Zlatan's layout is already in (North, East) and is evaluated as-is.
+The DE layout is already in (North, East) and is evaluated as-is.
 
 Primary batch: 512 primaries sampled with seed=42 from the training primary.pt,
                matching the fixed batch used by lbfgs_refine in 04_optimize_lbfgs_ensemble.py.
@@ -192,19 +191,19 @@ def main():
         recons[name] = recon
 
     # ── Layouts ──────────────────────────────────────────────────────────────
-    # Jay's layout: saved by old lbfgs_ensemble which used (North, Up) — must convert to NE.
-    # Zlatan's layout: saved by DE which uses correct (North, East) — load as-is.
+    # L-BFGS layout: saved by old lbfgs_ensemble which used (North, Up) — must convert to NE.
+    # DE layout: saved by DE which uses correct (North, East) — load as-is.
     print()
     layouts = {}
-    layouts["Jay (buggy Up→NE conv)"] = load_layout(
+    layouts["lbfgs (Up→NE conv)"] = load_layout(
         os.path.join(RUN_LOCATION, "L_star_r0.pt"),
-        label="Jay (buggy Up→NE conv)",
+        label="lbfgs (Up→NE conv)",
         mountain=mountain,
         is_north_up=True,
     )
-    layouts["Zlatan (correct NE)"] = load_layout(
+    layouts["de (correct NE)"] = load_layout(
         os.path.join(ZDIMITROV_V6, "test_v6_run_04_optimize_de_population", "layout_best.pt"),
-        label="Zlatan (correct NE)",
+        label="de (correct NE)",
     )
 
     # ── Evaluation ───────────────────────────────────────────────────────────
@@ -237,26 +236,26 @@ def main():
 
     print()
     # Interpretation
-    jay_mlp      = results[("Jay (buggy Up→NE conv)",  "flat_MLP")]
-    jay_ds       = results[("Jay (buggy Up→NE conv)",  "DeepSets")]
-    zlatan_mlp   = results[("Zlatan (correct NE)",     "flat_MLP")]
-    zlatan_ds    = results[("Zlatan (correct NE)",     "DeepSets")]
+    lbfgs_mlp = results[("lbfgs (Up→NE conv)", "flat_MLP")]
+    lbfgs_ds  = results[("lbfgs (Up→NE conv)", "DeepSets")]
+    de_mlp    = results[("de (correct NE)",    "flat_MLP")]
+    de_ds     = results[("de (correct NE)",    "DeepSets")]
 
     print("Interpretation:")
-    print(f"  Jay layout:    MLP={jay_mlp:.3f}  DS={jay_ds:.3f}  "
-          f"ratio MLP/DS={jay_mlp/max(jay_ds,1e-6):.2f}x")
-    print(f"  Zlatan layout: MLP={zlatan_mlp:.3f}  DS={zlatan_ds:.3f}  "
-          f"ratio MLP/DS={zlatan_mlp/max(zlatan_ds,1e-6):.2f}x")
-    if jay_mlp > jay_ds and zlatan_mlp > zlatan_ds:
+    print(f"  L-BFGS layout: MLP={lbfgs_mlp:.3f}  DS={lbfgs_ds:.3f}  "
+          f"ratio MLP/DS={lbfgs_mlp/max(lbfgs_ds,1e-6):.2f}x")
+    print(f"  DE layout:     MLP={de_mlp:.3f}  DS={de_ds:.3f}  "
+          f"ratio MLP/DS={de_mlp/max(de_ds,1e-6):.2f}x")
+    if lbfgs_mlp > lbfgs_ds and de_mlp > de_ds:
         print("  -> Flat MLP recon gives higher U for BOTH layouts.")
-        print("     The recon is the primary cause of Jay's low U (not the layout).")
-    elif jay_ds < zlatan_ds:
-        print("  -> DeepSets recon degrades Jay's layout more than Zlatan's.")
+        print("     The recon is the primary driver of utility differences (not the layout).")
+    elif lbfgs_ds < de_ds:
+        print("  -> DeepSets recon degrades the L-BFGS layout more than the DE layout.")
         print("     Consistent with OOD sensitivity hypothesis.")
-    elif jay_mlp < zlatan_mlp:
-        diff = zlatan_mlp - jay_mlp
-        print(f"  -> With flat MLP recon, Jay's layout is still {diff:.3f} below Zlatan's.")
-        print("     Zlatan's optimizer found a genuinely better region.")
+    elif lbfgs_mlp < de_mlp:
+        diff = de_mlp - lbfgs_mlp
+        print(f"  -> With flat MLP recon, L-BFGS layout is still {diff:.3f} below DE layout.")
+        print("     DE optimizer found a genuinely better region.")
     print("=" * 72)
 
 

@@ -31,7 +31,7 @@ LAYER_EAST_DX  = 150.0
 N_DETECTORS = 100   # matches v6 surrogate; ES operates in this 200-D layout space
 
 # ── Frozen v6 surrogate paths ─────────────────────────────────────────────────
-# jagarwal's 1.4M-pair dual-species surrogates (200k showers × 7 layouts).
+# 1.4M-pair dual-species surrogates (200k showers × 7 layouts).
 _V6_RUNS = (
     "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 )
@@ -40,7 +40,7 @@ RECON_FOLDER = os.path.join(_V6_RUNS, "test_v6_run_03_recentered")
 
 # ── Primary encoding bounds (must match v6/modules_v6/constants.py) ──────────
 LOG_E_MIN = 5.0   # log10(1e5 GeV)
-LOG_E_MAX  = 7.0   # log10(1e7 GeV) — matches jagarwal's v6 surrogates
+LOG_E_MAX  = 7.0   # log10(1e7 GeV) — matches v6 surrogates
 
 # ── Utility weights — identical to v6/04_optimize_lbfgs_ensemble.py ──────────
 # These values define the composite U = (W_THETA*u_θ + W_PHI*u_φ + W_E*u_E) / W_DIV.

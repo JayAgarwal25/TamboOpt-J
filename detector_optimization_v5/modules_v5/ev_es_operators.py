@@ -1,36 +1,8 @@
 """(mu+lambda)-ES operators for v5 detector layout optimization.
 
-All fitness evaluations are GRADIENT-FREE — this module never calls
-.backward() and wraps every surrogate call in torch.no_grad().  The ES
-must remain gradient-free to be a scientifically fair comparison against
-v6's gradient-based L-BFGS/DE on the same objective.
-
-Layout representation
----------------------
-A layout is a (N_DETECTORS, 2) float32 numpy array whose columns are
-[North, Up] in metres.  Numpy is used for layouts in the loop; torch
-tensors only appear inside evaluate_single_layout where the frozen
-surrogate runs.
-
-Fitness function
-----------------
-Identical to v6's utility_of_xy (04_optimize_lbfgs_ensemble.py):
-
-    U = (W_THETA * u_θ + W_PHI * u_φ + W_E * u_E) / W_DIV
-
-U_PR is returned for logging but excluded from the composite, matching
-v6 production.  The surrogate is the frozen dual-species FNN + flat-MLP
-recon from test_v6_run_02_recentered / test_v6_run_03_recentered.
-
-Public API
-----------
-    anneal_sigma(gen, n_gen)
-    sample_layout(mountain, rng, scheme='random')
-    mutate_and_project(xy_np, sigma, mountain, rng)
-    crossover_layouts(xy_a, xy_b, rng)
-    evaluate_single_layout(xy_np, fnn, recon, primary_batch)
-    evaluate_population(layouts, fnn, recon, primary_batch)
-    sample_primaries(n, seed)
+All fitness evaluations are gradient-free — no .backward() is ever called on
+detector positions. Layouts are (N_DETECTORS, 2) float32 numpy arrays [North, East].
+Fitness is the same composite U as v6's 04_optimize_lbfgs_ensemble.py.
 """
 
 import math
@@ -89,16 +61,7 @@ def anneal_sigma(gen: int, n_gen: int) -> float:
 # ── Layout sampling ───────────────────────────────────────────────────────────
 
 def sample_layout(mountain, rng: np.random.Generator, scheme: str = "random") -> np.ndarray:
-    """Sample one (N_DETECTORS, 2) layout from the mountain surface.
-
-    Args:
-        mountain : MountainData from modules_v4.tr_geometry.load_tr_mountain.
-        rng      : numpy Generator for reproducible sampling.
-        scheme   : 'random' (default) or 'grid' or 'center'.
-
-    Returns:
-        (N_DETECTORS, 2) float32 numpy array, columns = [North, East].
-    """
+    """Sample one (N_DETECTORS, 2) layout [North, East] from the mountain surface."""
     north_np, east_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
     return np.stack([north_np, east_np], axis=1).astype(np.float32)
 
@@ -111,17 +74,7 @@ def mutate_and_project(
     mountain,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Add isotropic Gaussian noise to every detector, then project to mountain.
-
-    Args:
-        xy_np   : (N_DETECTORS, 2) float32 numpy layout [North, East].
-        sigma   : mutation standard deviation [m].
-        mountain: MountainData — used for NE mountain projection.
-        rng     : numpy Generator.
-
-    Returns:
-        New (N_DETECTORS, 2) float32 numpy layout on the mountain surface.
-    """
+    """Add isotropic Gaussian noise (std=sigma [m]) to every detector, then project to mountain."""
     noise = rng.normal(0.0, sigma, size=xy_np.shape).astype(np.float32)
     xy_noisy = xy_np + noise
     x_t = torch.as_tensor(xy_noisy[:, 0])
@@ -138,23 +91,7 @@ def crossover_layouts(
     xy_b: np.ndarray,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Hungarian-aligned uniform crossover between two parent layouts.
-
-    Steps:
-      1. Solve the min-cost assignment aligning xy_b's detectors to xy_a's.
-      2. Randomly swap ~50% of the aligned detector pairs.
-
-    The alignment ensures that swapped pairs are geographically co-located,
-    so the child layout is a physically meaningful blend rather than a
-    scrambled concatenation.
-
-    Args:
-        xy_a, xy_b : (N_DETECTORS, 2) float32 layouts [North, Up].
-        rng        : numpy Generator.
-
-    Returns:
-        Child layout (N_DETECTORS, 2) float32.
-    """
+    """Hungarian-aligned uniform crossover: align xy_b to xy_a, swap ~50% of pairs."""
     n = xy_a.shape[0]
     # Pairwise squared-distance matrix between detectors of a and b.
     diff = xy_a[:, None, :] - xy_b[None, :, :]   # (n, n, 2)
@@ -173,24 +110,8 @@ def crossover_layouts(
 def sample_primaries(n: int, seed: int = 42) -> torch.Tensor:
     """Generate n synthetic primary encodings matching the v6 training distribution.
 
-    Distribution (matches AllShowers corpus used to train the surrogate):
-      - log10(E/GeV) ~ Uniform[5, 8]
-      - cos(theta)   ~ Uniform[cos(100°), cos(60°)]  (downward-going showers)
-      - phi          ~ Uniform[0, 2*pi]
-      - pdg          alternates 0 (electron) / 1 (muon)
-
-    Encoding: [dir_x, dir_y, dir_z, log_e_norm, pdg]  shape (n, 5)
-    where log_e_norm = (log10(E) - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN).
-
-    The DualSpeciesSurrogate overrides the pdg column internally, so its
-    exact value here does not affect the combined output.
-
-    Args:
-        n    : number of primaries.
-        seed : numpy rng seed for full reproducibility.
-
-    Returns:
-        (n, 5) float32 tensor on CPU.
+    Encoding: [dir_x, dir_y, dir_z, log_e_norm, pdg] shape (n, 5).
+    Distribution matches AllShowers corpus: E uniform in log, zenith in [60°,100°], phi uniform.
     """
     rng = np.random.default_rng(seed)
     cos_theta = rng.uniform(COS_THETA_MIN, COS_THETA_MAX, n).astype(np.float32)
@@ -235,22 +156,7 @@ def evaluate_single_layout(
     recon,
     primary_batch: torch.Tensor,
 ) -> Tuple[float, float]:
-    """Compute utility U for one layout against the fixed primary batch.
-
-    This is a PURE FORWARD PASS — no gradients, no backward.  The
-    @torch.no_grad() decorator guarantees that no gradient tape is built
-    even if the caller forgot to disable gradients.
-
-    Args:
-        xy_np        : (N_DETECTORS, 2) float32 numpy layout [North, East].
-        fnn          : frozen DualSpeciesSurrogate.
-        recon        : frozen reconstruction network.
-        primary_batch: (B, 5) float32 tensor on the same device as fnn.
-
-    Returns:
-        (U, u_pr) where U is the composite utility (the ES fitness) and
-        u_pr is the reconstructability term (for logging only).
-    """
+    """Compute (U, u_pr) for one layout against the fixed primary batch. Pure forward pass."""
     device = primary_batch.device
     B = primary_batch.shape[0]
 
@@ -292,16 +198,7 @@ def evaluate_population(
     recon,
     primary_batch: torch.Tensor,
 ) -> np.ndarray:
-    """Evaluate U for every layout in `layouts`.
-
-    Args:
-        layouts      : list of (N_DETECTORS, 2) float32 numpy arrays.
-        fnn, recon   : frozen surrogate models.
-        primary_batch: (B, 5) tensor on GPU.
-
-    Returns:
-        (len(layouts),) float64 numpy array of U values.
-    """
+    """Return (len(layouts),) float64 array of U values for each layout."""
     fitnesses = np.empty(len(layouts), dtype=np.float64)
     for i, xy_np in enumerate(layouts):
         u, _ = evaluate_single_layout(xy_np, fnn, recon, primary_batch)

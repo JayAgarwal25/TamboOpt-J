@@ -12,8 +12,7 @@
 # v6 step-4: L-BFGS ensemble optimizer over detector positions.
 # Runs INIT_SCHEMES=("grid","center") × N_CHAINS=15 Adam warm-starts each,
 # then L-BFGS refinement on a fixed primary batch, plus a "combined" ensemble.
-# Reads surrogates from FNN_FOLDER + RECON_FOLDER in modules_v6/constants.py
-# (Jay's 1.4M-pair DeepSets checkpoints).
+# Reads surrogates from FNN_FOLDER + RECON_FOLDER in modules_v6/constants.py.
 #
 # Wall-time estimate: ~8h for 3×15 L-BFGS chains on a V100/A100.
 # Outputs: test_v6_run_04_optimize_lbfgs_ensemble_{grid,center,combined}/
