@@ -641,6 +641,7 @@ def finetune_species(tag: str,
 
     from modules_v6.deepsets_surrogate import build_surrogate_from_ckpt
     model = build_surrogate_from_ckpt(base_ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
+    model.requires_grad_(True)   # build_surrogate_from_ckpt freezes for inference; unfreeze for fine-tune
     model.set_normalization(norm_stats)
     model.train()
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
