@@ -258,8 +258,6 @@ def main():
         print(f"[center] N in [{center_N.min():.1f}, {center_N.max():.1f}]  "
               f"E in [{center_E.min():.1f}, {center_E.max():.1f}]")
 
-        # Sample n_infill_layouts Gaussian perturbations of the center layout,
-        # then snap each to the mountain surface via project_to_mountain_ne.
         rng = np.random.default_rng(SEED)
         sigma = args.infill_sigma
         n_lay = args.n_infill_layouts
@@ -270,10 +268,8 @@ def main():
             dE = torch.tensor(rng.normal(0.0, sigma, N_DETECTORS).astype(np.float32))
             N_i = (center_N + dN).clamp(mountain.n_min, mountain.n_max)
             E_i = (center_E + dE).clamp(mountain.east_lo, mountain.east_hi)
-            # Snap to nearest mountain centroid for any out-of-surface points.
             layouts_N[i], layouts_E[i] = project_to_mountain_ne(mountain, N_i, E_i)
-        print(f"[infill] sampled {n_lay} perturbed layouts  "
-              f"sigma={sigma:.0f}m")
+        print(f"[infill] sampled {n_lay} perturbed layouts  sigma={sigma:.0f}m")
 
         t0 = time.time()
         primary, xy, E, T, strat, species = build_infill_pairs(
