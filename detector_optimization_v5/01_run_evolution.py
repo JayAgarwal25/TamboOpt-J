@@ -305,7 +305,17 @@ def main():
                         help="max generations per restart")
     parser.add_argument("--n-restart",  type=int, default=ES_N_RESTART,
                         help="number of independent restarts")
+    parser.add_argument("--recon-folder", type=str, default=None,
+                        help="Override RECON_FOLDER from constants.py "
+                             "(e.g. to swap between flat MLP and DeepSets recon).")
     args = parser.parse_args()
+
+    if args.recon_folder:
+        import modules_v5.constants as _C
+        _C.RECON_FOLDER = args.recon_folder
+        global RECON_FOLDER
+        RECON_FOLDER = args.recon_folder
+        print(f"[recon_folder] overriding RECON_FOLDER -> {args.recon_folder}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir   = os.path.join(args.output_dir, timestamp)
