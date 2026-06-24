@@ -12,7 +12,7 @@ positions.
 
 Algorithm: (mu+lambda)-ES
 --------------------------
-  Population : MU=20 complete 100-detector layouts, each a (100, 2) North+Up array.
+  Population : MU=20 complete 100-detector layouts, each a (100, 2) North+East array.
   Generation :
     1. For each of MU parents, produce LAMBDA=5 offspring:
        - with probability P_CROSSOVER: Hungarian-align with a random other parent
@@ -281,7 +281,7 @@ def _plot_ensemble(results: list, mountain, run_dir: str) -> None:
                        label=f"restart {i}  U={r['best_U']:+.3f}")
 
         ax.set_xlabel("North [m]")
-        ax.set_ylabel("Up [m]")
+        ax.set_ylabel("East [m]")
         ax.set_title("v5 ES — best layout per restart")
         ax.legend(fontsize=8, loc="upper right")
         fig.tight_layout()
@@ -349,7 +349,7 @@ def main():
     )
     print(f"  done ({time.time()-t0:.1f}s)  "
           f"N=[{mountain.n_min:.0f}, {mountain.n_max:.0f}]  "
-          f"Up=[{mountain.u_min:.0f}, {mountain.u_max:.0f}]")
+          f"E=[{mountain.east_lo:.0f}, {mountain.east_hi:.0f}]")
 
     # ── Load surrogate ────────────────────────────────────────────────────────
     print("[load] surrogate models …")

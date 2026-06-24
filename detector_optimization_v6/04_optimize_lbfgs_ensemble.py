@@ -67,7 +67,7 @@ from modules_v6.constants import (
 from modules.utility_functions   import reconstructability, U_E, U_angle, U_PR
 from modules.layout_optimization import LearnableXY
 from modules_v4.tr_geometry      import load_tr_mountain
-from modules_v6.tr_geometry_ne   import project_to_mountain_ne
+from modules_v6.tr_geometry_ne   import project_to_mountain_ne, sample_initial_layout_ne
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -187,20 +187,20 @@ def adam_warm_start(scheme: str,
        is the (already mountain-projected) starting layout; `scheme` is a log
        label. `grad_hist` is a (N_ADAM_EPOCHS, 2*n_det) CPU tensor of the flat
        parameter gradient at each step (for cross-run gradient diagnostics)."""
-    N_init, U_init = init_override
+    N_init, E_init = init_override
     N_init = N_init.float()
-    U_init = U_init.float()
+    E_init = E_init.float()
     print(f"[adam] init {scheme}  N in [{N_init.min():.1f}, {N_init.max():.1f}]  "
-          f"Up in [{U_init.min():.1f}, {U_init.max():.1f}]")
+          f"E in [{E_init.min():.1f}, {E_init.max():.1f}]")
 
-    xy_module = LearnableXY(N_init, U_init, device=str(DEVICE)).to(DEVICE)
+    xy_module = LearnableXY(N_init, E_init, device=str(DEVICE)).to(DEVICE)
     optimizer = torch.optim.Adam(xy_module.parameters(), lr=ADAM_LR)
 
     log = []
     grad_hist = []
     best_u = -float("inf")
     best_x = N_init.clone()
-    best_y = U_init.clone()
+    best_y = E_init.clone()
 
     for epoch in range(N_ADAM_EPOCHS):
         idx = torch.randint(0, n_total_primaries, (PRIMARIES_PER_STEP,))
@@ -223,11 +223,11 @@ def adam_warm_start(scheme: str,
 
         # Project to mountain surface.
         with torch.no_grad():
-            N_cpu  = xy_module.x.detach().cpu()
-            Up_cpu = xy_module.y.detach().cpu()
-            N_new, Up_new = mountain.project_to_mountain(N_cpu, Up_cpu)
+            N_cpu = xy_module.x.detach().cpu()
+            E_cpu = xy_module.y.detach().cpu()
+            N_new, E_new = project_to_mountain_ne(mountain, N_cpu, E_cpu)
             xy_module.x.data.copy_(N_new.to(DEVICE).to(xy_module.x.dtype))
-            xy_module.y.data.copy_(Up_new.to(DEVICE).to(xy_module.y.dtype))
+            xy_module.y.data.copy_(E_new.to(DEVICE).to(xy_module.y.dtype))
 
         u_val = float(U.item())
         if u_val > best_u:
@@ -247,7 +247,7 @@ def adam_warm_start(scheme: str,
 
     print(f"[adam] best U={best_u:+.3f}")
     grad_hist = torch.stack(grad_hist, dim=0) if grad_hist else torch.zeros(0)
-    return best_x, best_y, N_init, U_init, log, grad_hist
+    return best_x, best_y, N_init, E_init, log, grad_hist
 
 
 def _build_chain_inits(init_x: torch.Tensor, init_y: torch.Tensor,
@@ -309,11 +309,10 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
                                   device="cpu").to(DEVICE) * 10.0
         chains_init = base.unsqueeze(0) + small_noise
     else:
-        N_np, U_np = mountain.sample_initial_layout(n_units=N_DETECTORS, scheme=scheme)
+        N_np, E_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
         N_t = torch.as_tensor(N_np, dtype=torch.float32)
-        U_t = torch.as_tensor(U_np, dtype=torch.float32)
-        N_t, U_t = mountain.project_to_mountain(N_t, U_t)
-        chains_init = _build_chain_inits(N_t, U_t, K, generator)              # (K, D)
+        E_t = torch.as_tensor(E_np, dtype=torch.float32)
+        chains_init = _build_chain_inits(N_t, E_t, K, generator)              # (K, D)
 
     adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
     for k in range(K):
@@ -397,7 +396,7 @@ def lbfgs_refine(init_x: torch.Tensor,
     with torch.no_grad():
         x_cpu = xy[:N_DETECTORS].detach().cpu()
         y_cpu = xy[N_DETECTORS:].detach().cpu()
-        x_proj, y_proj = mountain.project_to_mountain(x_cpu, y_cpu)
+        x_proj, y_proj = project_to_mountain_ne(mountain, x_cpu, y_cpu)
         U_proj, _, _ = utility_of_xy(
             x_proj.to(DEVICE), y_proj.to(DEVICE), primary_fixed, fnn, recon,
         )
@@ -641,7 +640,7 @@ def _plot_ensemble(aligned_xy: np.ndarray,
                    label=f"best  (σ̄x={std_xy[:,0].mean():.1f} m, "
                          f"σ̄y={std_xy[:,1].mean():.1f} m)")
 
-        ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
+        ax.set_xlabel("North [m]"); ax.set_ylabel("East [m]")
         ax.set_aspect("equal")
         ax.set_title(f"L-BFGS ensemble (K={K}) — aligned best + 1σ ellipses")
         ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=8)
@@ -660,7 +659,7 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
     """Mountain top-down 2D density of where detectors land across the ensemble.
 
     Pools every detector position from all K aligned runs (K * n_det points)
-    into a 2D histogram over (North, Up); brighter cells = positions favored by
+    into a 2D histogram over (North, East); brighter cells = positions favored by
     more runs. The mountain footprint is outlined faintly underneath, and the
     single best-U layout is overlaid as a scatter so the densest regions can be
     read against the actual winning layout."""
@@ -752,7 +751,7 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
                    edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
                    label="best-U layout")
 
-        ax.set_xlabel("North [m]"); ax.set_ylabel("Up [m]")
+        ax.set_xlabel("North [m]"); ax.set_ylabel("East [m]")
         ax.set_title(f"detector placement density (K={K} runs, {bins}×{bins} bins) "
                      f"+ best-U layout")
         ax.legend(loc="upper right", fontsize=8)

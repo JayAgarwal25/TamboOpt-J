@@ -283,7 +283,7 @@ def _plot_ensemble(results, mountain, run_dir):
             ax.scatter(xy[:, 0], xy[:, 1], s=15, color=colors[i], alpha=0.6,
                        label=f"restart {i}  U={r['best_U']:+.3f}")
         ax.set_xlabel("North [m]")
-        ax.set_ylabel("Up [m]")
+        ax.set_ylabel("East [m]")
         ax.set_title("v5b sep-CMA-ES — best layout per restart")
         ax.legend(fontsize=8, loc="upper right")
         fig.tight_layout()
