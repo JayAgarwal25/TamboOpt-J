@@ -58,17 +58,19 @@ def project_layout(xy_flat: np.ndarray, mountain) -> np.ndarray:
     mountain surface after every ask(). We tell() CMA-ES the ORIGINAL flat vectors
     so its covariance model is not distorted by the projection.
 
-    Returns (N_DETECTORS, 2) float32 [North, Up].
+    Returns (N_DETECTORS, 2) float32 [North, East].
     """
     xy = xy_flat.reshape(N_DETECTORS, 2).astype(np.float32)
     x_t = torch.as_tensor(xy[:, 0])
     y_t = torch.as_tensor(xy[:, 1])
     with torch.no_grad():
-        x_proj, y_proj = mountain.project_to_mountain(x_t, y_t)
+        x_proj, y_proj = project_to_mountain_ne(mountain, x_t, y_t)
     return np.stack([x_proj.numpy(), y_proj.numpy()], axis=1).astype(np.float32)
 
 # These are injected by modules_v5/__init__.py (v3 on sys.path).
 from modules.utility_functions import reconstructability, U_angle, U_E, U_PR
+# modules_v6 is on sys.path because 01_run_evolution.py / 02_run_cmaes.py add it.
+from modules_v6.tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
 
 
 # ── Sigma schedule ────────────────────────────────────────────────────────────
@@ -95,18 +97,10 @@ def sample_layout(mountain, rng: np.random.Generator, scheme: str = "random") ->
         scheme   : 'random' (default) or 'grid' or 'center'.
 
     Returns:
-        (N_DETECTORS, 2) float32 numpy array, columns = [North, Up].
+        (N_DETECTORS, 2) float32 numpy array, columns = [North, East].
     """
-    # sample_initial_layout uses its own internal rng, so we pass a seed
-    # derived from the caller's rng to get deterministic but varied layouts.
-    seed = int(rng.integers(0, 2**31))
-    _orig = np.random.get_state()
-    np.random.seed(seed)
-    try:
-        north_np, up_np = mountain.sample_initial_layout(n_units=N_DETECTORS, scheme=scheme)
-    finally:
-        np.random.set_state(_orig)
-    return np.stack([north_np, up_np], axis=1).astype(np.float32)
+    north_np, east_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
+    return np.stack([north_np, east_np], axis=1).astype(np.float32)
 
 
 # ── Mutation ──────────────────────────────────────────────────────────────────
@@ -120,9 +114,9 @@ def mutate_and_project(
     """Add isotropic Gaussian noise to every detector, then project to mountain.
 
     Args:
-        xy_np   : (N_DETECTORS, 2) float32 numpy layout [North, Up].
+        xy_np   : (N_DETECTORS, 2) float32 numpy layout [North, East].
         sigma   : mutation standard deviation [m].
-        mountain: MountainData — provides project_to_mountain().
+        mountain: MountainData — used for NE mountain projection.
         rng     : numpy Generator.
 
     Returns:
@@ -130,12 +124,10 @@ def mutate_and_project(
     """
     noise = rng.normal(0.0, sigma, size=xy_np.shape).astype(np.float32)
     xy_noisy = xy_np + noise
-    # project_to_mountain snaps any point that drifted off the mountain to its
-    # nearest centroid; it operates on torch tensors.
     x_t = torch.as_tensor(xy_noisy[:, 0])
     y_t = torch.as_tensor(xy_noisy[:, 1])
     with torch.no_grad():
-        x_proj, y_proj = mountain.project_to_mountain(x_t, y_t)
+        x_proj, y_proj = project_to_mountain_ne(mountain, x_t, y_t)
     return np.stack([x_proj.numpy(), y_proj.numpy()], axis=1).astype(np.float32)
 
 
@@ -250,7 +242,7 @@ def evaluate_single_layout(
     even if the caller forgot to disable gradients.
 
     Args:
-        xy_np        : (N_DETECTORS, 2) float32 numpy layout [North, Up].
+        xy_np        : (N_DETECTORS, 2) float32 numpy layout [North, East].
         fnn          : frozen DualSpeciesSurrogate.
         recon        : frozen reconstruction network.
         primary_batch: (B, 5) float32 tensor on the same device as fnn.

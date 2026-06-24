@@ -1,14 +1,21 @@
 """2x2 controlled utility evaluation: layout x recon.
 
 Evaluates utility U for all combinations of:
-  - Jay's best layout   (L_star_r0.pt, found with DeepSets recon)
+  - Jay's best layout   (L_star_r0.pt, found by buggy lbfgs_ensemble — (North, Up) coords)
   - Zlatan's best layout (zdimitrov/.../test_v6_run_04_optimize_de_population/layout_best.pt,
-                          found with flat MLP recon)
+                          found with correct DE — (North, East) coords)
   x
   - Flat MLP recon  (test_v6_run_03_recentered/recon.pt,    val=0.126)
   - DeepSets recon  (test_v6_run_03_recentered_deepsets/recon.pt, val=0.001118)
 
-Both layouts are already mountain-projected; we evaluate them as-is.
+COORDINATE NOTE: The FNN expects (North, East) inputs. Jay's layout is stored in
+(North, Up) because lbfgs_ensemble.py had a coordinate bug (now fixed). Jay's layout
+is converted to (North, East) by snapping each detector to the nearest mountain
+centroid in NE space (project_to_mountain_ne with Up treated as if it were East).
+This conversion is approximate but gives the most faithful NE version of Jay's layout.
+
+Zlatan's layout is already in (North, East) and is evaluated as-is.
+
 Primary batch: 512 primaries sampled with seed=42 from the training primary.pt,
                matching the fixed batch used by lbfgs_refine in 04_optimize_lbfgs_ensemble.py.
 
@@ -28,12 +35,16 @@ import torch
 import modules_v6  # injects v3/v4 into sys.path
 from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.reconstruction import build_recon_from_ckpt
+from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     FNN_FOLDER, RUN_LOCATION,
     TRAINING_DATASET_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
+    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
+from modules_v4.tr_geometry import load_tr_mountain
 from modules.utility_functions import reconstructability, U_E, U_angle
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,7 +110,13 @@ def utility_of_xy(x_det, y_det, primary_batch, fnn, recon):
     )
 
 
-def load_layout(path, label):
+def load_layout(path, label, mountain=None, is_north_up=False):
+    """Load a layout from path.
+
+    If is_north_up=True, the file stores (North, Up) and must be converted to
+    (North, East) by snapping each detector to the nearest mountain centroid in
+    NE space. This is the case for layouts saved by the old (buggy) lbfgs_ensemble.
+    """
     raw = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(raw, dict):
         x = raw["x"].float().reshape(-1)
@@ -109,8 +126,22 @@ def load_layout(path, label):
         assert raw.ndim == 2 and raw.shape[1] == 2, f"unexpected layout shape {raw.shape}"
         x = raw[:, 0]
         y = raw[:, 1]
+
+    if is_north_up:
+        # y currently holds Up (elevation ~2442-3886m). The FNN expects East (-2019 to +1182m).
+        # Convert by finding each detector's nearest mountain centroid in NE space.
+        # project_to_mountain_ne snaps any point whose "East" value is far from all
+        # centroids to the nearest centroid — since Up≈3000 >> East≈0, all detectors
+        # snap to centroids with East closest to their Up value, which gives an NE
+        # layout that preserves the North distribution but corrects the East channel.
+        print(f"[layout] {label}: (North, Up) stored — converting to (North, East)")
+        print(f"  N in [{x.min():.1f}, {x.max():.1f}]  Up in [{y.min():.1f}, {y.max():.1f}]")
+        x_ne, y_ne = project_to_mountain_ne(mountain, x, y)
+        print(f"  -> N in [{x_ne.min():.1f}, {x_ne.max():.1f}]  E in [{y_ne.min():.1f}, {y_ne.max():.1f}]")
+        return x_ne.to(DEVICE), y_ne.to(DEVICE)
+
     print(f"[layout] {label}: N in [{x.min():.1f}, {x.max():.1f}]  "
-          f"Up in [{y.min():.1f}, {y.max():.1f}]  shape=({len(x)},)")
+          f"E in [{y.min():.1f}, {y.max():.1f}]  shape=({len(x)},)")
     return x.to(DEVICE), y.to(DEVICE)
 
 
@@ -132,6 +163,15 @@ def main():
     primary_batch = primary_all[idx].to(DEVICE)
     print(f"[sample] fixed batch of {LBFGS_BATCH_PRIMARIES} primaries (seed={SEED})")
 
+    # ── Mountain (needed for North+Up → North+East conversion) ───────────────
+    print(f"\n[load] mountain geometry from {GEOMETRY_PATH}")
+    mountain = load_tr_mountain(
+        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+        east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
+    )
+    print(f"[mountain] N=[{mountain.n_min:.0f}, {mountain.n_max:.0f}]  "
+          f"E=[{mountain.east_lo:.0f}, {mountain.east_hi:.0f}]")
+
     # ── FNN (shared across all evaluations) ──────────────────────────────────
     print(f"\n[load] FNN from {FNN_FOLDER}")
     fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
@@ -152,16 +192,20 @@ def main():
         recons[name] = recon
 
     # ── Layouts ──────────────────────────────────────────────────────────────
-    layout_paths = {
-        "Jay (DeepSets-opt)":
-            os.path.join(RUN_LOCATION, "L_star_r0.pt"),
-        "Zlatan (flat-MLP-opt)":
-            os.path.join(ZDIMITROV_V6, "test_v6_run_04_optimize_de_population", "layout_best.pt"),
-    }
+    # Jay's layout: saved by old lbfgs_ensemble which used (North, Up) — must convert to NE.
+    # Zlatan's layout: saved by DE which uses correct (North, East) — load as-is.
     print()
     layouts = {}
-    for name, path in layout_paths.items():
-        layouts[name] = load_layout(path, name)
+    layouts["Jay (buggy Up→NE conv)"] = load_layout(
+        os.path.join(RUN_LOCATION, "L_star_r0.pt"),
+        label="Jay (buggy Up→NE conv)",
+        mountain=mountain,
+        is_north_up=True,
+    )
+    layouts["Zlatan (correct NE)"] = load_layout(
+        os.path.join(ZDIMITROV_V6, "test_v6_run_04_optimize_de_population", "layout_best.pt"),
+        label="Zlatan (correct NE)",
+    )
 
     # ── Evaluation ───────────────────────────────────────────────────────────
     print(f"\n{'=' * 72}")
@@ -193,10 +237,10 @@ def main():
 
     print()
     # Interpretation
-    jay_mlp      = results[("Jay (DeepSets-opt)",     "flat_MLP")]
-    jay_ds       = results[("Jay (DeepSets-opt)",     "DeepSets")]
-    zlatan_mlp   = results[("Zlatan (flat-MLP-opt)",  "flat_MLP")]
-    zlatan_ds    = results[("Zlatan (flat-MLP-opt)",  "DeepSets")]
+    jay_mlp      = results[("Jay (buggy Up→NE conv)",  "flat_MLP")]
+    jay_ds       = results[("Jay (buggy Up→NE conv)",  "DeepSets")]
+    zlatan_mlp   = results[("Zlatan (correct NE)",     "flat_MLP")]
+    zlatan_ds    = results[("Zlatan (correct NE)",     "DeepSets")]
 
     print("Interpretation:")
     print(f"  Jay layout:    MLP={jay_mlp:.3f}  DS={jay_ds:.3f}  "
