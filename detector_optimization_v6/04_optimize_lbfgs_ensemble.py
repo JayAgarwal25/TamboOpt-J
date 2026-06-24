@@ -931,6 +931,9 @@ def main():
     ap.add_argument("--fnn_folder", type=str, default=None,
                     help="Override FNN_FOLDER from constants.py (use a fine-tuned "
                          "checkpoint directory from the adaptive retraining loop).")
+    ap.add_argument("--recon_folder", type=str, default=None,
+                    help="Override RECON_FOLDER from constants.py "
+                         "(e.g. to swap between flat MLP and DeepSets recon).")
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to the output directory name for each "
                          "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
@@ -961,6 +964,13 @@ def main():
         global FNN_FOLDER
         FNN_FOLDER = args.fnn_folder
         print(f"[fnn_folder] overriding FNN_FOLDER -> {args.fnn_folder}")
+
+    if args.recon_folder:
+        import modules_v6.constants as _C
+        _C.RECON_FOLDER = args.recon_folder
+        global RECON_FOLDER
+        RECON_FOLDER = args.recon_folder
+        print(f"[recon_folder] overriding RECON_FOLDER -> {args.recon_folder}")
 
     fnn, recon = _load_models()
 

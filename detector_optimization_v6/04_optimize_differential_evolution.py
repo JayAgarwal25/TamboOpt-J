@@ -692,6 +692,27 @@ def _run_one_scheme(scheme: str,
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--recon_folder", type=str, default=None,
+                    help="Override RECON_FOLDER from constants.py "
+                         "(e.g. to swap between flat MLP and DeepSets recon).")
+    ap.add_argument("--opt_suffix", type=str, default="",
+                    help="Suffix appended to output directory name "
+                         "(e.g. '_mlp' to get de_ensemble_mlp_{scheme}/).")
+    args = ap.parse_args()
+
+    if args.recon_folder:
+        import modules_v6.constants as _C
+        _C.RECON_FOLDER = args.recon_folder
+        global RECON_FOLDER
+        RECON_FOLDER = args.recon_folder
+        print(f"[recon_folder] overriding RECON_FOLDER -> {args.recon_folder}")
+
+    if args.opt_suffix:
+        global OPT_DIR_TEMPLATE
+        OPT_DIR_TEMPLATE = OPT_FOLDER + "_de_ensemble" + args.opt_suffix + "_{scheme}"
+
     print("=" * 72)
     print("v6/04_optimize_differential_evolution.py — perturbed starts + DE ensemble (North, East)")
     print("=" * 72)
