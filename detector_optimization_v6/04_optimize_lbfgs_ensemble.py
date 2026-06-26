@@ -75,6 +75,9 @@ INIT_SCHEMES         = ("grid", "center")
 RUN_COMBINED         = True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_{scheme}"
+# Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
+# with --recon_folder (exact path). utility_of_xy feeds recon (B, n_det, 4).
+RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.
 N_CHAINS            = 15
@@ -770,11 +773,11 @@ def _load_models():
     single fnn, and gradients flow through both branches."""
     fnn = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE,
+    recon_ckpt = torch.load(os.path.join(RECON_DIR, "recon.pt"), map_location=DEVICE,
                             weights_only=False)
     recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
     print(f"[load] recon.pt  model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
-          f"epoch={recon_ckpt.get('epoch','?')}  val={recon_ckpt.get('val_total', '?')}")
+          f"epoch={recon_ckpt.get('epoch','?')}  val={recon_ckpt.get('val_total', '?')}  <- {RECON_DIR}")
 
     return fnn, recon
 
@@ -932,8 +935,8 @@ def main():
                     help="Override FNN_FOLDER from constants.py (use a fine-tuned "
                          "checkpoint directory from the adaptive retraining loop).")
     ap.add_argument("--recon_folder", type=str, default=None,
-                    help="Override RECON_FOLDER from constants.py "
-                         "(e.g. to swap between flat MLP and DeepSets recon).")
+                    help="Exact path to the recon dir to load (default: "
+                         "RECON_FOLDER + '_deepsets', the 03_train_recon_deepsets.py output).")
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to the output directory name for each "
                          "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
@@ -966,11 +969,9 @@ def main():
         print(f"[fnn_folder] overriding FNN_FOLDER -> {args.fnn_folder}")
 
     if args.recon_folder:
-        import modules_v6.constants as _C
-        _C.RECON_FOLDER = args.recon_folder
-        global RECON_FOLDER
-        RECON_FOLDER = args.recon_folder
-        print(f"[recon_folder] overriding RECON_FOLDER -> {args.recon_folder}")
+        global RECON_DIR
+        RECON_DIR = args.recon_folder
+        print(f"[recon_folder] overriding recon dir -> {args.recon_folder}")
 
     fnn, recon = _load_models()
 
