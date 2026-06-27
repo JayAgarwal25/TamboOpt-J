@@ -68,6 +68,7 @@ from modules.utility_functions   import reconstructability, U_E, U_angle, U_PR
 from modules.layout_optimization import LearnableXY
 from modules_v4.tr_geometry      import load_tr_mountain
 from modules_v6.tr_geometry_ne   import project_to_mountain_ne, sample_initial_layout_ne
+from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -116,6 +117,10 @@ RECONSTRUCT_THRESHOLD = 10.0
 
 SEED   = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Density heatmap colorbar upper limit (plots [0, DENSITY_VMAX]); keeps faint
+# structure from being washed out by a few hot cells. <=0 → auto-scale.
+DENSITY_VMAX = 0.2
 
 
 def primary_to_physical_labels(primary: torch.Tensor):
@@ -605,164 +610,36 @@ def _plot_utility_components(adam_logs, lbfgs_logs, path: str):
         print(f"[plot] utility components skipped ({exc!r})")
 
 
-def _plot_ensemble(aligned_xy: np.ndarray,
-                   mean_xy: np.ndarray,
-                   std_xy: np.ndarray,
-                   best_x, best_y,
-                   mountain, path: str):
-    """Mountain top-down: every aligned run's detectors (faint) + per-group
-    mean (dark) + 1σ ellipses (width=2σx, height=2σy)."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Ellipse
-        from matplotlib.collections import PatchCollection
-
-        K = aligned_xy.shape[0]
-        fig, ax = plt.subplots(figsize=(12, 8))
-        ax.scatter(mountain.centroids_NUE[:, 0], mountain.centroids_NUE[:, 1],
-                   s=2, c="lightgray", alpha=0.6, label="mountain")
-
-        colors = plt.cm.tab10(np.linspace(0, 1, max(K, 1)))
-        for k in range(K):
-            ax.scatter(aligned_xy[k, :, 0], aligned_xy[k, :, 1], s=8,
-                       color=colors[k % 10], alpha=0.35, edgecolors="none",
-                       label=f"run {k}" if k < 10 else None)
-
-        ellipses = [
-            Ellipse(xy=(float(mx), float(my)),
-                    width=2.0 * float(sx), height=2.0 * float(sy))
-            for (mx, my), (sx, sy) in zip(mean_xy, std_xy)
-        ]
-        ax.add_collection(PatchCollection(
-            ellipses, facecolor="C1", edgecolor="C1", alpha=0.25, linewidths=0.6,
-        ))
-        ax.scatter(best_x, best_y, s=26, c="C3",
-                   edgecolors="black", linewidths=0.4, alpha=0.95,
-                   label=f"best  (σ̄x={std_xy[:,0].mean():.1f} m, "
-                         f"σ̄y={std_xy[:,1].mean():.1f} m)")
-
-        ax.set_xlabel("North [m]"); ax.set_ylabel("East [m]")
-        ax.set_aspect("equal")
-        ax.set_title(f"L-BFGS ensemble (K={K}) — aligned best + 1σ ellipses")
-        ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=8)
-        fig.tight_layout()
-        fig.savefig(path, dpi=110)
-        plt.close(fig)
-        print(f"[plot] wrote {path}")
-    except Exception as exc:
-        print(f"[plot] ensemble skipped ({exc!r})")
+def _load_de_plot_module():
+    """Import the DE optimizer module (filename starts with a digit) by path so
+    we can reuse its FIXED ensemble/density plotters — the (North, Up) cross
+    section via SurfaceUpMap, identical to replot_de_ensemble_up.py. Keeping a
+    single plotting implementation avoids the old East-on-Up bug reappearing in
+    a duplicated L-BFGS copy."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "de_opt_plots", os.path.join(_HERE, "04_optimize_differential_evolution.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def _plot_density_heatmap(aligned_xy: np.ndarray,
-                          best_x, best_y,
-                          mountain, path: str,
-                          bins: int = 60):
-    """Mountain top-down 2D density of where detectors land across the ensemble.
+def _plot_ensemble(aligned_xy, mean_xy, std_xy, best_x, best_y, mountain, path,
+                   surface=None):
+    """Delegate to the DE module's (North, Up) ensemble plot (see
+    `_load_de_plot_module`)."""
+    _load_de_plot_module()._plot_ensemble(
+        aligned_xy, mean_xy, std_xy, best_x, best_y, mountain, path,
+        surface=surface)
 
-    Pools every detector position from all K aligned runs (K * n_det points)
-    into a 2D histogram over (North, East); brighter cells = positions favored by
-    more runs. The mountain footprint is outlined faintly underneath, and the
-    single best-U layout is overlaid as a scatter so the densest regions can be
-    read against the actual winning layout."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
 
-        K, n_det, _ = aligned_xy.shape
-        pts = aligned_xy.reshape(-1, 2)                          # (K*n_det, 2)
-
-        # Histogram extent spans EXACTLY the union of the mountain footprint and
-        # the detector positions — no outer padding, otherwise the pad rows/cols
-        # carry no data and render as a permanent transparent border (the white
-        # top/bottom lines). The extreme points then live in the edge bins.
-        cen = getattr(mountain, "centroids_NUE", None)
-        if cen is not None:
-            allx = np.concatenate([cen[:, 0], pts[:, 0]])
-            ally = np.concatenate([cen[:, 1], pts[:, 1]])
-        else:
-            allx, ally = pts[:, 0], pts[:, 1]
-        xlo, xhi = float(allx.min()), float(allx.max())
-        ylo, yhi = float(ally.min()), float(ally.max())
-        extent = [xlo, xhi, ylo, yhi]
-
-        rng = [[extent[0], extent[1]], [extent[2], extent[3]]]
-        H, xedges, yedges = np.histogram2d(
-            pts[:, 0], pts[:, 1], bins=bins, range=rng,
-        )
-        H = H / max(K, 1)            # → expected detectors per cell per run
-
-        # Aligned detectors cluster into ~n_det tight spots, so raw bins read as
-        # scattered specks. A light Gaussian blur turns those into legible
-        # density blobs ("where detectors concentrate"). Falls back to raw H if
-        # scipy is unavailable.
-        try:
-            from scipy.ndimage import gaussian_filter
-            H = gaussian_filter(H, sigma=1.0)
-        except Exception:
-            pass
-
-        # Color ONLY the mountain footprint: histogram the centroids onto the
-        # same grid → cells that contain mountain, dilated a little to bridge the
-        # gaps between the (sparse) centroids, then mask everything else so the
-        # off-mountain region renders transparent.
-        if cen is not None:
-            occ, _, _ = np.histogram2d(cen[:, 0], cen[:, 1], bins=bins, range=rng)
-            # Detectors are projected onto the mountain, so cells holding a
-            # detector are valid mountain too — union them in so no scatter
-            # point ever lands outside the colored region (the centroid sample
-            # is slightly narrower than the layout footprint at the edges).
-            det_occ, _, _ = np.histogram2d(pts[:, 0], pts[:, 1], bins=bins, range=rng)
-            mask = (occ > 0) | (det_occ > 0)
-            try:
-                from scipy.ndimage import (binary_dilation, binary_fill_holes,
-                                           binary_erosion)
-                # Dilate to bridge gaps between the sparse centroids, fill the
-                # interior, then erode back so the outer boundary stays put —
-                # leaves a solid mountain footprint with no speckle holes.
-                mask = binary_dilation(mask, iterations=2)
-                mask = binary_fill_holes(mask)
-                # border_value=1 so the erosion doesn't strip the array-edge
-                # rows/cols (otherwise the top & bottom lines go transparent).
-                mask = binary_erosion(mask, iterations=1, border_value=1)
-            except Exception:
-                pass
-            H = np.ma.masked_array(H, mask=~mask)
-
-        # Figure aspect ≈ data aspect so the equal-aspect map fills the frame
-        # vertically (and the axes-height colorbar ends up as tall as the image).
-        data_ar = (extent[3] - extent[2]) / (extent[1] - extent[0])
-        fig_w = 14.0
-        fig, ax = plt.subplots(figsize=(fig_w, max(fig_w * data_ar + 1.2, 3.0)))
-
-        cmap = plt.cm.magma.copy()
-        cmap.set_bad(alpha=0.0)          # masked / off-mountain → transparent
-        im = ax.imshow(
-            H.T, origin="lower", extent=extent, aspect="equal",
-            cmap=cmap, interpolation="bilinear", zorder=0,
-        )
-
-        # Colorbar exactly as tall as the map.
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
-        cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
-        cbar = fig.colorbar(im, cax=cax)
-        cbar.set_label("detector density (count per run per cell)")
-
-        ax.scatter(np.asarray(best_x), np.asarray(best_y), s=22, c="cyan",
-                   edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
-                   label="best-U layout")
-
-        ax.set_xlabel("North [m]"); ax.set_ylabel("East [m]")
-        ax.set_title(f"detector placement density (K={K} runs, {bins}×{bins} bins) "
-                     f"+ best-U layout")
-        ax.legend(loc="upper right", fontsize=8)
-        fig.savefig(path, dpi=110, bbox_inches="tight")
-        plt.close(fig)
-        print(f"[plot] wrote {path}")
-    except Exception as exc:
-        print(f"[plot] density heatmap skipped ({exc!r})")
+def _plot_density_heatmap(aligned_xy, best_x, best_y, mountain, path,
+                          bins=60, surface=None, vmax=None):
+    """Delegate to the DE module's (North, Up) density heatmap (see
+    `_load_de_plot_module`). `vmax` clamps the colorbar to [0, vmax]."""
+    _load_de_plot_module()._plot_density_heatmap(
+        aligned_xy, best_x, best_y, mountain, path,
+        bins=bins, surface=surface, vmax=vmax)
 
 
 def _load_models():
@@ -903,10 +780,22 @@ def _run_one_scheme(scheme: str,
                  os.path.join(opt_dir, "optimize_curves.png"))
     _plot_utility_components(all_adam_logs, lbfgs_logs,
                             os.path.join(opt_dir, "utility_components.png"))
-    _plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y,
-                    mountain, os.path.join(opt_dir, "layout_ensemble.png"))
-    _plot_density_heatmap(aligned, best_x, best_y,
-                    mountain, os.path.join(opt_dir, "layout_density.png"))
+    # Render the ensemble + density in the (North, Up) cross section. The
+    # optimiser works in (North, East); SurfaceUpMap projects East -> Up =
+    # g(North, East) so detectors sit ON the mountain profile (CPU is fine —
+    # plotting is the last, read-only step). DENSITY_VMAX clamps the heatmap
+    # colorbar to [0, DENSITY_VMAX]; <=0 auto-scales.
+    try:
+        surface = SurfaceUpMap.from_mountain(mountain).to("cpu")
+        vmax = DENSITY_VMAX if DENSITY_VMAX and DENSITY_VMAX > 0 else None
+        _plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y,
+                       mountain, os.path.join(opt_dir, "layout_ensemble.png"),
+                       surface=surface)
+        _plot_density_heatmap(aligned, best_x, best_y,
+                       mountain, os.path.join(opt_dir, "layout_density.png"),
+                       surface=surface, vmax=vmax)
+    except Exception as exc:
+        print(f"[plot] ensemble/density skipped ({exc!r})")
 
     print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")
@@ -918,12 +807,15 @@ def _run_one_scheme(scheme: str,
 
 
 def main():
-    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER
+    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--chains", type=int, default=N_CHAINS)
     ap.add_argument("--adam-epochs", type=int, default=N_ADAM_EPOCHS)
     ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    ap.add_argument("--density-vmax", type=float, default=DENSITY_VMAX,
+                    help="density heatmap colorbar upper limit (plots [0, vmax]); "
+                         "pass <=0 to auto-scale (default from config)")
     ap.add_argument("--save_best_layout", type=str, default=None,
                     help="Path to save the globally best layout as a "
                          "(N_DETECTORS, 2) tensor with (North, East) per detector.")
@@ -943,6 +835,7 @@ def main():
     args = ap.parse_args()
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
+    DENSITY_VMAX = float(args.density_vmax)
 
     print("=" * 72)
     print("v6/04_optimize_lbfgs_ensemble.py — Adam warm-start + L-BFGS ensemble")

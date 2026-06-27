@@ -463,12 +463,14 @@ def _plot_ensemble(aligned_xy: np.ndarray,
 def _plot_density_heatmap(aligned_xy: np.ndarray,
                           best_x, best_y,
                           mountain, path: str,
-                          bins: int = 60, surface=None):
+                          bins: int = 60, surface=None, vmax=None):
     """Mountain top-down 2D density of detector placements across the ensemble.
 
     With `surface` the detector East is projected to Up = g(North, East) so the
     plot is the (North, Up) cross section — matching the L-BFGS ensemble heatmap;
-    without it the native (North, East) plane is drawn."""
+    without it the native (North, East) plane is drawn. `vmax` pins the colorbar
+    to [0, vmax] (e.g. 0.25) so faint structure isn't squashed by a few hot
+    cells; None auto-scales."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -523,7 +525,8 @@ def _plot_density_heatmap(aligned_xy: np.ndarray,
         cmap = plt.cm.magma.copy()
         cmap.set_bad(alpha=0.0)
         im = ax.imshow(H.T, origin="lower", extent=extent, aspect="equal",
-                       cmap=cmap, interpolation="bilinear", zorder=0)
+                       cmap=cmap, interpolation="bilinear", zorder=0,
+                       vmin=(0.0 if vmax is not None else None), vmax=vmax)
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
         cbar = fig.colorbar(im, cax=cax)
