@@ -42,3 +42,4 @@ detector_optimization_v3/outputs/
 detector_optimization_v4/outputs/
 detector_optimization_v6/outputs/
 detector_optimization_v6/slurm_logs/
+detector_optimization_v6/pipeline_status.json
