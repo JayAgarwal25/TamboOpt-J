@@ -42,7 +42,15 @@ def _load_dir(d):
 
 
 def main():
-    dirs = sys.argv[1:] or [de.OPT_DIR_TEMPLATE.format(scheme="grid")]
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("dirs", nargs="*", help="scheme output dir(s) with layouts_all.pt")
+    ap.add_argument("--vmax", type=float, default=0.2,
+                    help="density colorbar upper limit (plots 0..vmax); pass <=0 to auto-scale")
+    args = ap.parse_args()
+    dirs = args.dirs or [de.OPT_DIR_TEMPLATE.format(scheme="grid")]
+    vmax = args.vmax if args.vmax and args.vmax > 0 else None
 
     mountain = de.load_tr_mountain(
         de.GEOMETRY_PATH_RESOLVED, de.GEOMETRY_GROUP, de.DET_KEY,
@@ -56,11 +64,12 @@ def main():
             print(f"[skip] {d} (no layouts_all.pt)")
             continue
         aligned, mean_xy, std_xy, best_x, best_y = _load_dir(d)
-        print(f"[replot] {d}  aligned={aligned.shape}")
+        print(f"[replot] {d}  aligned={aligned.shape}  density vmax={vmax}")
         de._plot_ensemble(aligned, mean_xy, std_xy, best_x, best_y,
                           mountain, os.path.join(d, "layout_ensemble.png"), surface=surface)
         de._plot_density_heatmap(aligned, best_x, best_y,
-                          mountain, os.path.join(d, "layout_density.png"), surface=surface)
+                          mountain, os.path.join(d, "layout_density.png"),
+                          surface=surface, vmax=vmax)
 
 
 if __name__ == "__main__":

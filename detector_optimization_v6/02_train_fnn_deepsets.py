@@ -603,6 +603,7 @@ def train_species(tag:        str,
             primary=primary, xy=xy,
             E_true=E_all, T_true=T_all,
             val_idx=val_idx,
+            species=tag,
             output_path=os.path.join(OUTPUT_FOLDER, tvp_name))
     except Exception as exc:
         print(f"[plot-tvp] skipped ({exc!r})")

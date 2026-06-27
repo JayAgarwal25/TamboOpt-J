@@ -1,18 +1,30 @@
-"""Grid of showers across input angles — DUAL-species checkpoints (one shower per cell).
+"""Grid of showers across input angles — DUAL-species checkpoints (2D and/or 3D).
 
-(Electron/muon) sibling of `plot_angle_grid.py`. Identical grid + plotting; the
-only change is the generation backend: instead of the small default home05
-AllShowers + PointCountFM, this drives the **per-species best checkpoints** used
-by `00_generate_data_dual_species.py` (stage a Generator-loadable run-dir →
-`Generator` with an explicit per-species `max_points` → `generate`). Pick the
-species with `--species electron|muon`; the checkpoint paths and point caps come
-straight from that script's `SPECIES` config (imported, so the two stay in sync).
+Merged tool combining the former `plot_angle_grid_dual_species.py` (2D ground-plane
+scatter) and `plot_angle_grid_3d_dual_species.py` (3D x, y, layer/depth point
+cloud). A single shower for each of a grid of incident directions — **azimuth
+varies across columns, zenith across rows** — at a FIXED energy and species, so
+you can see how morphology changes with angle. Pick the render mode with
+``--mode {2d,3d,both}`` (default ``both``).
 
-Like `plot_angle_grid.py`: a single shower for each of a 5×5 grid of incident
-directions — **azimuth varies across columns, zenith across rows** — at a FIXED
-energy and species, so you can see how morphology changes with angle. Angle/energy
-ranges match `00_generate_data.py`: zenith ∈ [60°, 100°], azimuth ∈ [0°, 360°),
-energy ∈ [1e5, 1e8] GeV (held fixed at one value here).
+Angle/energy ranges match `00_generate_data.py`: zenith ∈ [60°, 100°], azimuth ∈
+[0°, 360°), energy ∈ [1e5, 1e8] GeV (held fixed at one value here).
+
+Generation backend (shared) is the **per-species best checkpoints** used by
+`00_generate_data_dual_species.py`: stage a Generator-loadable run-dir →
+`Generator` with the explicit per-species `max_points` → `generate`. The
+checkpoint paths and point caps come straight from that script's `SPECIES` config
+(imported, so the two stay in sync). Showers are generated ONCE and rendered in
+whichever mode(s) you ask for, so ``--mode both`` is ~free beyond the extra
+figures. Over-cap cells are re-rolled (`resample_overclip`, shared policy) so the
+plotted showers match the corpus truncation.
+
+Each mode writes an energy figure and a companion ``_time`` figure:
+  2d : shower_angle_grid_<species>.png      + _time   (size ∝ energy / color = time)
+  3d : shower_angle_grid_3d_<species>.png   + _time   (color = energy / color = time)
+
+2D-only: ``--mountain`` recenters each cell to the mountain bbox centre and
+overlays the detector footprint (North/Up), the pipeline mountain normalization.
 
 These models are heavy and use flex_attention — run on GPU. PointCountFM
 (`compiled.pt`) is forced to CPU (TorchScript device-baked), same as the
@@ -21,8 +33,9 @@ generation script; AllShowers runs on the chosen device (default cuda).
 Run:
 
     cd TambOpt/detector_optimization_v6
-    python plots/plot_angle_grid_dual_species.py --species electron            # 5×5, E=1e7 GeV
-    python plots/plot_angle_grid_dual_species.py --species muon --energy 1e6 --mountain
+    python plots/plot_angle_grid_dual_species.py --species electron               # both modes, E=1e7
+    python plots/plot_angle_grid_dual_species.py --species muon --mode 2d --mountain
+    python plots/plot_angle_grid_dual_species.py --species electron --mode 3d --energy 1e6
 """
 import argparse
 import importlib.util
@@ -56,11 +69,12 @@ _GEN_DUAL_PATH = os.path.join(_V6, "00_generate_data_dual_species.py")
 _spec = importlib.util.spec_from_file_location("gen_dual_species", _GEN_DUAL_PATH)
 gen_dual = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gen_dual)
-SPECIES       = gen_dual.SPECIES
-stage_run_dir = gen_dual.stage_run_dir
-Generator     = gen_dual.Generator
-NUM_TIMESTEPS = gen_dual.NUM_TIMESTEPS
-SOLVER        = gen_dual.SOLVER
+SPECIES           = gen_dual.SPECIES
+stage_run_dir     = gen_dual.stage_run_dir
+Generator         = gen_dual.Generator
+NUM_TIMESTEPS     = gen_dual.NUM_TIMESTEPS
+SOLVER            = gen_dual.SOLVER
+resample_overclip = gen_dual.resample_overclip   # anti-clip re-roll (shared policy)
 
 # 00_generate_data.py uses GenerateShowers defaults for the sampling ranges:
 from modules_v6.constants import (
@@ -101,10 +115,21 @@ def _recenter_to_mountain(pts, mountain):
     return q
 
 
+def _out_for(mode, species, custom):
+    """Output PNG path for one render mode. ``custom`` (--out) overrides only when
+    a single mode is selected; for --mode both the per-mode defaults are used."""
+    if custom and mode in ("2d", "3d"):
+        return custom
+    tag = "3d_" if mode == "3d" else ""
+    return os.path.join(_HERE, f"shower_angle_grid_{tag}{species}.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--species", type=str, default="electron", choices=list(SPECIES.keys()),
                     help="which per-species checkpoint to use (from the dual-species config)")
+    ap.add_argument("--mode", type=str, default="both", choices=("2d", "3d", "both"),
+                    help="render the 2D ground-plane grid, the 3D (x,y,layer) grid, or both")
     ap.add_argument("--rows", type=int, default=5, help="zenith steps (rows)")
     ap.add_argument("--cols", type=int, default=5, help="azimuth steps (cols)")
     ap.add_argument("--energy", type=float, default=1e7, help="fixed primary energy [GeV]")
@@ -121,12 +146,17 @@ def main():
                     help="default cuda. These models use flex_attention: on CPU it falls back "
                          "to a slow O(P^2) math path (materializes the full scores matrix); on "
                          "GPU a fused kernel is compiled. Use cpu only if no GPU.")
+    ap.add_argument("--batch", type=int, default=12,
+                    help="AllShowers generation batch size (lower if CUDA OOM)")
     ap.add_argument("--mountain", action="store_true",
-                    help="mountain-normalize each cell (recenter to bbox centre) + overlay footprint")
+                    help="(2D) mountain-normalize each cell (recenter to bbox centre) + overlay footprint")
     ap.add_argument("--out", type=str, default=None,
-                    help="output PNG (default: shower_angle_grid_<species>.png)")
+                    help="output PNG (single-mode only; default: shower_angle_grid[_3d]_<species>.png)")
     args = ap.parse_args()
-    out = args.out or os.path.join(_HERE, f"shower_angle_grid_{args.species}.png")
+
+    modes = ["2d", "3d"] if args.mode == "both" else [args.mode]
+    if args.out and args.mode == "both":
+        print("[warn] --out ignored for --mode both; using default per-mode names")
 
     if not (E_MIN <= args.energy <= E_MAX):
         print(f"[warn] energy {args.energy:.2e} outside training range [{E_MIN:.0e},{E_MAX:.0e}]")
@@ -141,7 +171,7 @@ def main():
     azimuths = np.linspace(args.azimuth_min, args.azimuth_max, args.cols, endpoint=False)
     grid = [(z, a) for z in zeniths for a in azimuths]           # row-major
     ncell = len(grid)
-    print(f"[grid] {args.rows}×{args.cols} = {ncell} showers  "
+    print(f"[grid] mode={args.mode}  {args.rows}×{args.cols} = {ncell} showers  "
           f"species={args.species}  E={args.energy:.2e} GeV  "
           f"label(EM/had)={label}  max_points={cfg['max_points']}")
     print(f"  zenith  rows: {np.round(zeniths,1).tolist()}")
@@ -163,10 +193,15 @@ def main():
     num_points = run_point_count_fm(
         model_path=pcfm, energies=energies, directions=directions, labels=labels,
     )
+    # Anti-clip re-roll over-cap cells (mainly muons at high E) so the plotted
+    # showers use the same truncation policy as the generated corpus.
+    num_points = resample_overclip(
+        pcfm, energies, directions, labels, num_points, cap=int(cfg["max_points"]),
+    )
     # Stage 2 — AllShowers on the chosen device (max_points already set on gen).
     samples = generate(
         generator=gen, energies=energies, num_points=num_points,
-        angles=directions, batch_size=1, device=args.device, labels=labels,
+        angles=directions, batch_size=int(args.batch), device=args.device, labels=labels,
     ).float().cpu().numpy()                                       # (ncell, P, 5)
 
     cells = []
@@ -175,26 +210,33 @@ def main():
         pts = pts[pts[:, 3] > 0]                                  # drop padding (energy>0)
         cells.append(pts)
 
+    # Mountain normalization is a 2D ground-plane concept; only recenter/overlay
+    # when 2D is being drawn and --mountain is set.
     mountain = None
-    if args.mountain:
+    if args.mountain and "2d" in modes:
         print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering each cell")
         mountain = _load_mountain()
         cells = [_recenter_to_mountain(p, mountain) for p in cells]
+    elif args.mountain:
+        print("[warn] --mountain only applies to the 2D grid; ignored for --mode 3d")
 
-    # Energy/morphology grid (color = energy) + a companion time grid (color =
-    # arrival time), both spanning every angle cell.
-    base, ext = os.path.splitext(out)
-    out_time = f"{base}_time{ext or '.png'}"
-    _plot_grid(cells, zeniths, azimuths, args.energy, label, args.species, out, mountain,
-               color_by="energy")
-    print(f"[done] wrote {out}")
-    _plot_grid(cells, zeniths, azimuths, args.energy, label, args.species, out_time, mountain,
-               color_by="time")
-    print(f"[done] wrote {out_time}")
+    for mode in modes:
+        out = _out_for(mode, args.species, args.out)
+        base, ext = os.path.splitext(out)
+        out_time = f"{base}_time{ext or '.png'}"
+        plot = _plot_grid if mode == "2d" else _plot_grid_3d
+        extra = (mountain,) if mode == "2d" else ()
+        plot(cells, zeniths, azimuths, args.energy, label, args.species, out, *extra,
+             color_by="energy")
+        print(f"[done] wrote {out}")
+        plot(cells, zeniths, azimuths, args.energy, label, args.species, out_time, *extra,
+             color_by="time")
+        print(f"[done] wrote {out_time}")
 
 
 def _plot_grid(cells, zeniths, azimuths, energy, label, species, out, mountain,
                color_by="energy"):
+    """2D ground-plane grid: x-y scatter per cell, size ∝ energy, optional time color."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -286,6 +328,79 @@ def _plot_grid(cells, zeniths, azimuths, energy, label, species, out, mountain,
     if not (color_by == "time" and sc is not None):
         fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out, dpi=120)
+    plt.close(fig)
+
+
+def _plot_grid_3d(cells, zeniths, azimuths, energy, label, species, out, color_by="energy"):
+    """3D grid: (x, y, layer/depth) point cloud per cell, color = energy or time."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm, Normalize
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers 3d projection
+
+    R, C = len(zeniths), len(azimuths)
+
+    # Shared limits + shared color scale across all cells so cells are comparable.
+    allpts = np.concatenate([p for p in cells if len(p)], axis=0) \
+        if any(len(p) for p in cells) else np.zeros((1, 5))
+    xs, ys, ls = allpts[:, 0], allpts[:, 1], allpts[:, 2]
+
+    def _lim(a):
+        lo, hi = float(a.min()), float(a.max())
+        m = 0.05 * (hi - lo + 1e-6)
+        return lo - m, hi + m
+    xlim, ylim, llim = _lim(xs), _lim(ys), _lim(ls)
+
+    if color_by == "time":
+        tvals = allpts[:, 4]
+        lo, hi = np.percentile(tvals, [2, 98]) if tvals.size else (0.0, 1.0)
+        if hi <= lo:
+            hi = lo + 1e-9
+        norm = Normalize(vmin=float(lo), vmax=float(hi))
+        cmap = "viridis"; col_idx = 4; col_label = "arrival time (cluster)"
+    else:
+        e_pos = allpts[:, 3][allpts[:, 3] > 0]
+        vmin = float(e_pos.min()) if e_pos.size else 1e-3
+        vmax = float(allpts[:, 3].max()) if allpts[:, 3].max() > 0 else 1.0
+        norm = LogNorm(vmin=max(vmin, 1e-6), vmax=max(vmax, vmin * 10))
+        cmap = "inferno"; col_idx = 3; col_label = "cluster energy"
+
+    fig = plt.figure(figsize=(3.4 * C, 3.4 * R))
+    sc = None
+    for i in range(R):
+        for j in range(C):
+            k = i * C + j
+            ax = fig.add_subplot(R, C, k + 1, projection="3d")
+            pts = cells[k]
+            if len(pts):
+                e = pts[:, 3]
+                s = 2 + 14 * (e / (e.max() + 1e-12))
+                sc = ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=pts[:, col_idx],
+                                s=s, cmap=cmap, norm=norm, alpha=0.55, edgecolors="none")
+            ax.set_xlim(*xlim); ax.set_ylim(*ylim); ax.set_zlim(*llim)
+            ax.tick_params(labelsize=5)
+            ax.set_zlabel("layer", fontsize=6)
+            ax.view_init(elev=18, azim=-60)
+            ax.text2D(0.02, 0.95, f"n={len(pts)}", transform=ax.transAxes,
+                      fontsize=6, va="top", color="0.4")
+            if i == 0:
+                ax.set_title(f"φ = {azimuths[j]:.0f}°", fontsize=9)
+            if j == 0:
+                ax.text2D(-0.18, 0.5, f"θ = {zeniths[i]:.0f}°", transform=ax.transAxes,
+                          fontsize=9, va="center", ha="right", rotation=90)
+
+    if sc is not None:
+        cb = fig.colorbar(sc, ax=fig.axes, shrink=0.5, pad=0.01)
+        cb.set_label(col_label, fontsize=9)
+
+    fig.suptitle(
+        f"3D shower vs incident angle — azimuth φ across columns, zenith θ across rows\n"
+        f"{species} model (label={label}, EM/had), fixed E = {energy:.2e} GeV   "
+        f"(x, y, layer/depth; color = {('time' if color_by=='time' else 'energy')}; "
+        f"points = clustered cell centroids)",
+        fontsize=12)
+    fig.savefig(out, dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 

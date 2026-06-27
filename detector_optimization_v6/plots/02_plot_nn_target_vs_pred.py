@@ -184,10 +184,12 @@ def load_species_fnn(species: str):
     return fnn
 
 
-def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
+def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path,
+                        vmin_E=10, vmax_E=4000, vmin_T=10, vmax_T=2500):
     """Pure rendering — no I/O for models or corpus. Caller supplies a loaded
     FNN in eval mode plus the in-memory tensors. T_true must already be
-    log1p(T*1e8)-transformed (matching what the FNN was trained against)."""
+    log1p(T*1e8)-transformed (matching what the FNN was trained against).
+    vmin/vmax_{E,T} pin each panel's hexbin colour (count) scale (per species)."""
     p   = primary[val_idx]
     x   = xy[val_idx]
     E_t = E_true[val_idx]
@@ -195,16 +197,12 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path):
     E_p, T_p = fnn_predict(fnn, p, x)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
-    # Pin the FNN heatmap colour scale to [10, 10000] counts so both panels
-    # use the same scale and small ckpt changes are visually comparable.
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
              f"FNN  log1p(E)  (N={E_t.numel():,} detector-samples)",
-             vmin=10, vmax=4000) 
-            #  vmin=10, vmax=5000) # TODO
+             vmin=vmin_E, vmax=vmax_E)
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
              f"FNN  log1p(T·1e8)  (N={T_t.numel():,} detector-samples)",
-             vmin=10, vmax=2500) 
-            #  vmin=10, vmax=3000) # TODO
+             vmin=vmin_T, vmax=vmax_T)
     fig.suptitle("FNN target vs prediction — val split", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
@@ -232,8 +230,8 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
             xy_b = x[lo:hi].to(DEVICE)
             E_b  = E_pred[lo:hi].to(DEVICE)
             T_b  = T_pred[lo:hi].to(DEVICE)
-            feats = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
-            pred[lo:hi] = recon(feats).cpu()
+            feats = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)  # (B, n_det, 4)
+            pred[lo:hi] = recon(feats).cpu()                                     # DeepSets recon takes (B, n_det, 4)
 
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
     vmin_s = (1, 1, 1, 1)
@@ -268,6 +266,7 @@ def plot_fnn_only(*, fnn=None,
                   primary=None, xy=None,
                   E_true=None, T_true=None,
                   val_idx=None,
+                  species=None,
                   output_path=None):
     """Render fnn_target_vs_pred.png. Every argument is optional: anything
     left as None gets loaded from disk so the standalone CLI still works.
@@ -276,6 +275,10 @@ def plot_fnn_only(*, fnn=None,
     have in memory — fnn (with best weights reloaded), primary, xy, E_all,
     T_all (already log1p-transformed in 02), val_idx — and no disk I/O for
     the corpus is performed. T_true MUST be in log-T space if provided.
+
+    `species` ("electron"/"muon") selects the per-species hexbin colour
+    scale from FNN_DUAL_VLIM; left None it falls back to the generic
+    _render_fnn_scatter defaults.
     """
     if primary is None or xy is None or E_true is None or T_true is None:
         primary, xy, E_true, T_true, strat_ids_disk = _load_corpus()
@@ -292,7 +295,8 @@ def plot_fnn_only(*, fnn=None,
     if output_path is None:
         os.makedirs(FNN_FOLDER, exist_ok=True)
         output_path = os.path.join(FNN_FOLDER, "fnn_target_vs_pred.png")
-    _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path)
+    _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path,
+                        **FNN_DUAL_VLIM.get(species, {}))
 
 
 def plot_recon_only(*, fnn=None, recon=None,
@@ -323,12 +327,21 @@ def plot_recon_only(*, fnn=None, recon=None,
     _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path)
 
 
+# Per-species hexbin colour (count) limits for the dual FNN scatters:
+# (vmin_E, vmax_E, vmin_T, vmax_T). Muon signals are denser than electron.
+FNN_DUAL_VLIM = {
+    "electron": dict(vmin_E=0, vmax_E=500,  vmin_T=0, vmax_T=500),
+    "muon":     dict(vmin_E=0, vmax_E=3000, vmin_T=0, vmax_T=1000),
+}
+
+
 def plot_fnn_dual(output_dir=None):
     """Per-species FNN scatter for the dual-species surrogate. Each species'
     DeepSets model is evaluated against its OWN species subset (split on the
     Step-1 species_ids sidecar, the corpus E/T being per-species), reproducing
     02_train_fnn_deepsets.py's split. Writes
-    FNN_FOLDER/fnn_<species>_target_vs_pred.png per species."""
+    FNN_FOLDER/fnn_<species>_target_vs_pred.png per species. Per-species colour
+    scales come from FNN_DUAL_VLIM."""
     primary, xy, E_true, T_true, strat_ids = _load_corpus()
     species_ids = torch.load(
         os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt")).long()
@@ -347,7 +360,8 @@ def plot_fnn_dual(output_dir=None):
         val_idx = shower_level_val_idx(strat_ids[idx], VAL_FRAC, FNN_VAL_SEED)
         out = os.path.join(output_dir, f"fnn_{tag}_target_vs_pred.png")
         _render_fnn_scatter(fnn, primary[idx], xy[idx],
-                            E_true[idx], T_true[idx], val_idx, out)
+                            E_true[idx], T_true[idx], val_idx, out,
+                            **FNN_DUAL_VLIM[tag])
 
 
 def plot_recon_dual(output_path=None):

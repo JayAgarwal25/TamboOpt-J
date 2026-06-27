@@ -37,12 +37,12 @@ run_step () {
 # # file)
 # RESUME_ROW=520000
 
-# run_step 00_generate_data.py
 run_step 00_generate_data_dual_species.py
 run_step 01_build_dataset_northeast.py
 run_step 02_train_fnn_deepsets.py
-run_step 03_train_recon.py
-# run_step 04_optimize_lbfgs_ensemble.py
+run_step 03_train_recon_deepsets.py
+run_step 04_optimize_lbfgs_ensemble.py
 run_step 04_optimize_differential_evolution.py
+run_step 04_optimize_differential_evolution_pop.py
 # run_step plots/02_plot_nn_target_vs_pred.py
 

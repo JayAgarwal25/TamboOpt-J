@@ -77,21 +77,60 @@ def layout_rings(mountain, n_det: int = N_DETECTORS,
     return project_to_mountain_ne(mountain, N_t, E_t)
 
 
+def layout_uniform_random(mountain, n_det: int = N_DETECTORS, rng=None):
+    """Detectors drawn i.i.d. uniformly over the mountain (North, East) bbox, then
+    projected to the surface — maximally unstructured coverage (no clustering, no
+    lattice regularity)."""
+    if rng is None:
+        rng = np.random.default_rng()
+    N = rng.uniform(mountain.n_min,   mountain.n_max,   n_det).astype(np.float32)
+    E = rng.uniform(mountain.east_lo, mountain.east_hi, n_det).astype(np.float32)
+    return project_to_mountain_ne(mountain,
+                                  torch.as_tensor(N, dtype=torch.float32),
+                                  torch.as_tensor(E, dtype=torch.float32))
+
+
+def layout_latin_hypercube(mountain, n_det: int = N_DETECTORS, rng=None):
+    """Latin-hypercube sample over the mountain (North, East) bbox: each axis is
+    split into `n_det` equal strata with exactly one sample per stratum (the two
+    axes permuted independently), giving more even space-filling coverage than
+    i.i.d. uniform while staying irregular. Projected to the surface."""
+    if rng is None:
+        rng = np.random.default_rng()
+    # One sample per stratum on [0, 1), then shuffle each axis independently so the
+    # (North, East) pairing is random (the Latin-hypercube property).
+    u_n = (np.arange(n_det) + rng.random(n_det)) / n_det
+    u_e = (np.arange(n_det) + rng.random(n_det)) / n_det
+    u_n = u_n[rng.permutation(n_det)]
+    u_e = u_e[rng.permutation(n_det)]
+    N = (mountain.n_min   + u_n * (mountain.n_max   - mountain.n_min)).astype(np.float32)
+    E = (mountain.east_lo + u_e * (mountain.east_hi - mountain.east_lo)).astype(np.float32)
+    return project_to_mountain_ne(mountain,
+                                  torch.as_tensor(N, dtype=torch.float32),
+                                  torch.as_tensor(E, dtype=torch.float32))
+
+
 # ── Dataset builder ──────────────────────────────────────────────────────────
 
-# Seven layout strategies; `args` threaded in below.
+# Nine layout strategies; `args` threaded in below.
 _STRATEGIES = [
-    ("grid_jit20",        "layout_grid",            dict(jitter_sigma=20.0)),
-    ("grid_jit200",       "layout_grid",            dict(jitter_sigma=200.0)),
-    ("center_gauss200",   "layout_center_gaussian", dict(sigma=200.0)),
+    # ("grid_jit20",        "layout_grid",            dict(jitter_sigma=20.0)),
+    # ("grid_jit200",       "layout_grid",            dict(jitter_sigma=200.0)),
+    # ("center_gauss200",   "layout_center_gaussian", dict(sigma=200.0)),
     ("center_gauss400",   "layout_center_gaussian", dict(sigma=400.0)),
-    ("rings_R300",        "layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=200.0)),
-    ("rings_R800",        "layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=200.0)),
-    ("rings_R1800",       "layout_rings",           dict(outer_radius=1800.0, n_rings=8, jitter_sigma=200.0)),
+    # ("rings_R300",        "layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=200.0)),
+    # ("rings_R800",        "layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=200.0)),
+    # ("rings_R1800",       "layout_rings",           dict(outer_radius=1800.0, n_rings=8, jitter_sigma=200.0)),
+    ("uniform_random",    "layout_uniform_random",  dict()),
+    ("uniform_random",    "layout_uniform_random",  dict()),
+    ("latin_hypercube",   "layout_latin_hypercube", dict()),
+    ("latin_hypercube",   "layout_latin_hypercube", dict()),
 ]
 
 _STRATEGY_FNS = {
     "layout_grid":            layout_grid,
     "layout_center_gaussian": layout_center_gaussian,
     "layout_rings":           layout_rings,
+    "layout_uniform_random":  layout_uniform_random,
+    "layout_latin_hypercube": layout_latin_hypercube,
 }
