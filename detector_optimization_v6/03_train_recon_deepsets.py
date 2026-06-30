@@ -232,10 +232,26 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
 def main():
     global N_EPOCHS, LBFGS_MAX_ITER
     ap = argparse.ArgumentParser()
-    ap.add_argument("--epochs",      type=int, default=N_EPOCHS)
-    ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    ap.add_argument("--epochs",        type=int,  default=N_EPOCHS)
+    ap.add_argument("--lbfgs-iters",   type=int,  default=LBFGS_MAX_ITER)
+    ap.add_argument("--fnn_folder",    type=str,  default=None,
+                    help="Override FNN_FOLDER: directory containing fnn_electron.pt "
+                         "and fnn_muon.pt.  Use this after adaptive-loop FNN fine-tune "
+                         "so the recon is retrained with the updated surrogate's predictions.")
+    ap.add_argument("--output_folder", type=str,  default=None,
+                    help="Override the recon output directory (default: "
+                         "RECON_FOLDER + '_deepsets').  Use a round-suffixed path "
+                         "(e.g. …_deepsets_r1) to keep the base recon intact.")
     args = ap.parse_args()
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
+    if args.fnn_folder:
+        global FNN_FOLDER
+        FNN_FOLDER = args.fnn_folder
+        import modules_v6.constants as _C
+        _C.FNN_FOLDER = args.fnn_folder
+    if args.output_folder:
+        global OUTPUT_FOLDER
+        OUTPUT_FOLDER = args.output_folder
 
     print("=" * 72)
     print("v6/03_train_recon_deepsets.py — DeepSets recon on dual-species preds")
