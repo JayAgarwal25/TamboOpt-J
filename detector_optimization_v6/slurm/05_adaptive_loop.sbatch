@@ -60,6 +60,8 @@ CENTER_PT=${RUN_DIR}/L_star_r$((ROUND - 1)).pt
 OUTPUT_PT=${RUN_DIR}/L_star_r${ROUND}.pt
 INFILL_DIR=${RUN_DIR}/test_v6_run_01_northeast_infill_r${ROUND}
 FNN_DIR=${FNN_BASE}_r${ROUND}
+RECON_BASE=/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+RECON_DIR=${RECON_BASE}_r${ROUND}
 OPT_SUFFIX=_r${ROUND}
 
 LOG_DIR=/n/home07/jagarwal/tambo_slurm_logs
@@ -79,6 +81,7 @@ echo "  centre   : ${CENTER_PT}"
 echo "  infill   : ${INFILL_DIR}"
 echo "  FNN out  : ${FNN_DIR}"
 echo "  opt out  : test_v6_run_04_optimize_lbfgs_ensemble_r${ROUND}_{scheme}/"
+echo "  recon    : ${RECON_DIR}"
 echo "  L_star   : ${OUTPUT_PT}"
 echo "======================================================================"
 
@@ -147,6 +150,29 @@ echo \"Done: \$(date)\"
 ")
 echo "Submitted Job B (finetune):    ${JOB_B}"
 
+# ── Job B2: step-3 recon retrain with updated FNN ────────────────────────────
+# The recon uses FNN predictions as input features; if the FNN changes the
+# recon must be retrained with the updated predictions or optimization runs on
+# a distorted landscape (u_theta, u_phi collapse ~3x).
+JOB_B2=$(sbatch --parsable \
+    --job-name=tambo_03_recon_r${ROUND} \
+    --partition=gpu_requeue \
+    --time=0-04:00:00 \
+    --gres=gpu:1 \
+    --mem=64G \
+    --cpus-per-task=4 \
+    --requeue \
+    --output=${LOG_DIR}/tambo_03_recon_r${ROUND}_%j.out \
+    --error=${LOG_DIR}/tambo_03_recon_r${ROUND}_%j.err \
+    --dependency=afterok:${JOB_B} \
+    --wrap="${PREAMBLE}
+python 03_train_recon_deepsets.py \\
+    --fnn_folder ${FNN_DIR} \\
+    --output_folder ${RECON_DIR}
+echo \"Done: \$(date)\"
+")
+echo "Submitted Job B2 (recon retrain): ${JOB_B2}"
+
 # ── Job C: step-4 L-BFGS ensemble re-optimize ────────────────────────────────
 JOB_C=$(sbatch --parsable \
     --job-name=tambo_04_reopt_r${ROUND} \
@@ -158,10 +184,11 @@ JOB_C=$(sbatch --parsable \
     --requeue \
     --output=${LOG_DIR}/tambo_04_reopt_r${ROUND}_%j.out \
     --error=${LOG_DIR}/tambo_04_reopt_r${ROUND}_%j.err \
-    --dependency=afterok:${JOB_B} \
+    --dependency=afterok:${JOB_B2} \
     --wrap="${PREAMBLE}
 python 04_optimize_lbfgs_ensemble.py \\
     --fnn_folder ${FNN_DIR} \\
+    --recon_folder ${RECON_DIR} \\
     --init_from ${CENTER_PT} \\
     --opt_suffix ${OPT_SUFFIX} \\
     --save_best_layout ${OUTPUT_PT}
@@ -170,7 +197,7 @@ echo \"Done: \$(date)\"
 echo "Submitted Job C (re-optimize): ${JOB_C}"
 
 echo ""
-echo "Chain: A=${JOB_A} -> B=${JOB_B} -> C=${JOB_C}"
+echo "Chain: A=${JOB_A} -> B=${JOB_B} -> B2=${JOB_B2} -> C=${JOB_C}"
 echo "L_star_r${ROUND}.pt will be written to ${OUTPUT_PT} when Job C finishes."
 echo "Monitor: squeue -u \$USER"
 echo "Logs:    ${LOG_DIR}/tambo_*_r${ROUND}_*.out"

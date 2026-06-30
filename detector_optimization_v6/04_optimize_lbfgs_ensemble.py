@@ -556,14 +556,19 @@ def main():
 
     results = []
     per_scheme = {}     # scheme -> (adam_bests, adam_logs, perturbed_inits)
-    for scheme in INIT_SCHEMES:
+    for i, scheme in enumerate(INIT_SCHEMES):
         print()
         print("=" * 72)
         print(f"init scheme: {scheme}"
               f"{'  (warm-start from --init_from)' if init_center is not None else ''}")
         print("=" * 72)
-        torch.manual_seed(SEED); np.random.seed(SEED)
-        g = torch.Generator().manual_seed(SEED)
+        # Use a per-scheme seed offset so chains from different schemes are
+        # independent when --init_from is provided (otherwise every scheme gets
+        # identical perturbations from init_center because the generator is reset
+        # to the same state before each scheme).
+        scheme_seed = SEED + i
+        torch.manual_seed(scheme_seed); np.random.seed(scheme_seed)
+        g = torch.Generator().manual_seed(scheme_seed)
         per_scheme[scheme] = _perturbed_adam_runs(
             scheme, N_CHAINS, g, mountain, fnn, recon, primary_all, n_total_primaries,
             init_center=init_center,
