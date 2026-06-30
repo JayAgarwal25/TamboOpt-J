@@ -72,12 +72,13 @@ SEED                = 0
 NUM_WORKERS         = 0
 DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# DeepSets shape (parameter-light vs the 6.7M flat MLP).
-DS_HIDDEN   = 256
-DS_CONTEXT  = 64
+# DeepSets shape.
+DS_HIDDEN   = 512   # was 256; larger context captures more per-shower variation
+DS_CONTEXT  = 128   # was 64
 DS_N_ENC    = 3
 DS_N_DEC    = 3
 DS_DROPOUT  = 0.0
+DS_POOL     = "maxmean"  # mean+max pooling gives richer invariant context than mean alone
 
 # ── L-BFGS fine-tuning (full-batch, chunked closure) ─────────────
 LBFGS_LR            = 1.0
@@ -197,7 +198,7 @@ def _ckpt_config(tag: str):
         model_type="deepsets", species=tag,
         n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
         hidden=DS_HIDDEN, context=DS_CONTEXT, n_enc=DS_N_ENC, n_dec=DS_N_DEC,
-        dropout=DS_DROPOUT,
+        dropout=DS_DROPOUT, pool=DS_POOL,
     )
 
 
@@ -259,11 +260,11 @@ def train_species(tag:        str,
     model = DeepSetsSurrogate(
         n_det=N_DETECTORS, primary_dim=PRIMARY_DIM,
         hidden=DS_HIDDEN, context=DS_CONTEXT,
-        n_enc=DS_N_ENC, n_dec=DS_N_DEC, dropout=DS_DROPOUT,
+        n_enc=DS_N_ENC, n_dec=DS_N_DEC, dropout=DS_DROPOUT, pool=DS_POOL,
     ).to(DEVICE)
     model.set_normalization(norm_stats)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[model] DeepSets params={n_params:,}  (flat MLP was ~6.7M)")
+    print(f"[model] DeepSets params={n_params:,}  pool={DS_POOL}  hidden={DS_HIDDEN}  context={DS_CONTEXT}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     steps_per_epoch = len(train_loader)
@@ -857,6 +858,10 @@ def main():
                     help="L-BFGS max iterations per species (default from config)")
     ap.add_argument("--species", type=str, default="electron,muon",
                     help="comma-separated subset of {electron,muon} to (re)train")
+    ap.add_argument("--output_folder", type=str, default=None,
+                    help="Override output directory for checkpoints and logs "
+                         "(default: FNN_FOLDER from constants.py). Use to avoid "
+                         "overwriting existing checkpoints.")
     # Fine-tune mode: load an existing checkpoint and run a short Adam+L-BFGS
     # pass on the combined base + infill dataset at a low learning rate.
     ap.add_argument("--finetune_from", type=str, default=None,
@@ -877,6 +882,10 @@ def main():
     unknown = wanted - {tag for tag, _ in SPECIES_TAGS}
     if unknown:
         raise SystemExit(f"unknown species {sorted(unknown)}; valid: electron, muon")
+
+    if args.output_folder:
+        global OUTPUT_FOLDER
+        OUTPUT_FOLDER = args.output_folder
 
     print("=" * 72)
     print("v6/02_train_fnn_deepsets.py — two parallel per-species DeepSets surrogates")

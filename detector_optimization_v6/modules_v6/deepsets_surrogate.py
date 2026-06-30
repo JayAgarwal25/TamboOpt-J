@@ -76,16 +76,19 @@ class DeepSetsSurrogate(nn.Module):
                  context:     int = 64,
                  n_enc:       int = 3,
                  n_dec:       int = 3,
-                 dropout:     float = 0.0):
+                 dropout:     float = 0.0,
+                 pool:        str = "mean"):
         super().__init__()
         self.n_det       = n_det
         self.primary_dim = primary_dim
         self.hidden      = hidden
         self.context     = context
+        self.pool        = pool  # "mean" or "maxmean"
 
         token_dim = primary_dim + 2                      # [q, x_i, y_i]
+        pool_dim  = hidden * 2 if pool == "maxmean" else hidden
         self.encoder = _mlp(token_dim, hidden, hidden, n_enc, dropout)
-        self.context_proj = nn.Linear(hidden, context)
+        self.context_proj = nn.Linear(pool_dim, context)
         self.decoder = _mlp(hidden + context, hidden, 2, n_dec, dropout)
 
         # SAME buffer layout as FNNSurrogate so set_normalization is identical
@@ -132,7 +135,11 @@ class DeepSetsSurrogate(nn.Module):
         token = torch.cat([q_n, x_n.unsqueeze(-1), y_n.unsqueeze(-1)], dim=-1)  # (B, nd, 7)
 
         h = self.encoder(token)                                       # (B, nd, hidden)
-        c = self.context_proj(h.mean(dim=1))                          # (B, context)  invariant pool
+        if self.pool == "maxmean":
+            pooled = torch.cat([h.mean(dim=1), h.max(dim=1).values], dim=-1)  # (B, 2*hidden)
+        else:
+            pooled = h.mean(dim=1)                                     # (B, hidden)
+        c = self.context_proj(pooled)                                  # (B, context)  invariant pool
         c = c.unsqueeze(1).expand(B, nd, -1)                          # (B, nd, context)
         out_n = self.decoder(torch.cat([h, c], dim=-1))              # (B, nd, 2)  z-scored
 
@@ -165,6 +172,7 @@ def build_surrogate_from_ckpt(ckpt: dict, n_det: int, primary_dim: int, device=N
             n_enc=int(cfg.get("n_enc", 3)),
             n_dec=int(cfg.get("n_dec", 3)),
             dropout=float(cfg.get("dropout", 0.0)),
+            pool=cfg.get("pool", "mean"),
         )
     else:
         model = FNNSurrogate(
