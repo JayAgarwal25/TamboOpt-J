@@ -77,6 +77,43 @@ def layout_rings(mountain, n_det: int = N_DETECTORS,
     return project_to_mountain_ne(mountain, N_t, E_t)
 
 
+def layout_edge_ring(mountain, n_det: int = N_DETECTORS, rng=None):
+    """Detectors evenly spaced along the perimeter of the mountain (North, East)
+    bounding rectangle, then projected to the surface -- zero interior coverage,
+    maximal boundary reach. Tests whether the utility rewards full-area coverage
+    or only the envelope of the area (Tommaso, 2026-07-01)."""
+    if rng is None:
+        rng = np.random.default_rng()
+    width  = mountain.east_hi - mountain.east_lo
+    height = mountain.n_max   - mountain.n_min
+    perim  = 2.0 * (width + height)
+    phase  = rng.random()
+    s = (np.arange(n_det) + phase) / n_det * perim
+
+    N = np.empty(n_det, dtype=np.float32)
+    E = np.empty(n_det, dtype=np.float32)
+    on_bottom = s < width
+    on_right  = (s >= width) & (s < width + height)
+    on_top    = (s >= width + height) & (s < 2 * width + height)
+    on_left   = s >= 2 * width + height
+
+    N[on_bottom] = mountain.n_min
+    E[on_bottom] = mountain.east_lo + s[on_bottom]
+
+    N[on_right] = mountain.n_min + (s[on_right] - width)
+    E[on_right] = mountain.east_hi
+
+    N[on_top] = mountain.n_max
+    E[on_top] = mountain.east_hi - (s[on_top] - width - height)
+
+    N[on_left] = mountain.n_max - (s[on_left] - 2 * width - height)
+    E[on_left] = mountain.east_lo
+
+    N_t = torch.as_tensor(N, dtype=torch.float32)
+    E_t = torch.as_tensor(E, dtype=torch.float32)
+    return project_to_mountain_ne(mountain, N_t, E_t)
+
+
 def layout_uniform_random(mountain, n_det: int = N_DETECTORS, rng=None):
     """Detectors drawn i.i.d. uniformly over the mountain (North, East) bbox, then
     projected to the surface — maximally unstructured coverage (no clustering, no
