@@ -109,7 +109,7 @@ JOB_A=$(sbatch --parsable \
     --job-name=tambo_01_infill_r${ROUND} \
     --partition=gpu_requeue \
     --time=0-04:00:00 \
-    --gres=gpu:1 \
+    --gres=gpu:nvidia_a100-sxm4-80gb:1 \
     --mem=64G \
     --cpus-per-task=4 \
     --requeue \
@@ -131,8 +131,8 @@ echo "Submitted Job A (infill):      ${JOB_A}"
 JOB_B=$(sbatch --parsable \
     --job-name=tambo_02_finetune_r${ROUND} \
     --partition=gpu_requeue \
-    --time=0-04:00:00 \
-    --gres=gpu:1 \
+    --time=0-08:00:00 \
+    --gres=gpu:nvidia_a100-sxm4-80gb:1 \
     --mem=64G \
     --cpus-per-task=4 \
     --requeue \
@@ -157,8 +157,8 @@ echo "Submitted Job B (finetune):    ${JOB_B}"
 JOB_B2=$(sbatch --parsable \
     --job-name=tambo_03_recon_r${ROUND} \
     --partition=gpu_requeue \
-    --time=0-04:00:00 \
-    --gres=gpu:1 \
+    --time=0-16:00:00 \
+    --gres=gpu:nvidia_a100-sxm4-80gb:1 \
     --mem=64G \
     --cpus-per-task=4 \
     --requeue \
@@ -178,7 +178,7 @@ JOB_C=$(sbatch --parsable \
     --job-name=tambo_04_reopt_r${ROUND} \
     --partition=gpu_requeue \
     --time=0-12:00:00 \
-    --gres=gpu:1 \
+    --gres=gpu:nvidia_a100-sxm4-80gb:1 \
     --mem=64G \
     --cpus-per-task=4 \
     --requeue \
