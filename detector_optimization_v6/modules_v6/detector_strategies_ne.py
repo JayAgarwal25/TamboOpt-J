@@ -81,7 +81,7 @@ def layout_edge_ring(mountain, n_det: int = N_DETECTORS, rng=None):
     """Detectors evenly spaced along the perimeter of the mountain (North, East)
     bounding rectangle, then projected to the surface -- zero interior coverage,
     maximal boundary reach. Tests whether the utility rewards full-area coverage
-    or only the envelope of the area (Tommaso, 2026-07-01)."""
+    or only the envelope of the area."""
     if rng is None:
         rng = np.random.default_rng()
     width  = mountain.east_hi - mountain.east_lo
