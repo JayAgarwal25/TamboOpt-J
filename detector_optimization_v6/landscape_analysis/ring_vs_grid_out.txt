@@ -1,0 +1,33 @@
+======================================================================
+Q3 follow-up: edge-ring vs. uniform grid coverage
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+  edge_ring       seed=0: U mean=46.428  std=2.311  mean_r=1.0000
+  edge_ring       seed=1: U mean=45.951  std=2.133  mean_r=1.0000
+  edge_ring       seed=2: U mean=45.937  std=2.286  mean_r=1.0000
+  edge_ring       seed=3: U mean=46.055  std=2.106  mean_r=1.0000
+  edge_ring       seed=4: U mean=45.985  std=2.266  mean_r=1.0000
+  grid            seed=0: U mean=205.389  std=0.491  mean_r=1.0000
+  grid            seed=1: U mean=203.364  std=0.619  mean_r=1.0000
+  grid            seed=2: U mean=203.262  std=0.613  mean_r=1.0000
+  grid            seed=3: U mean=204.309  std=0.521  mean_r=1.0000
+  grid            seed=4: U mean=204.381  std=0.727  mean_r=1.0000
+  uniform_random  seed=0: U mean=157.508  std=1.383  mean_r=1.0000
+  uniform_random  seed=1: U mean=160.197  std=1.186  mean_r=1.0000
+  uniform_random  seed=2: U mean=140.032  std=1.904  mean_r=1.0000
+  uniform_random  seed=3: U mean=169.613  std=1.483  mean_r=1.0000
+  uniform_random  seed=4: U mean=167.921  std=0.914  mean_r=1.0000
+
+======================================================================
+SUMMARY (mean +/- std over all seeds x batches)
+======================================================================
+  edge_ring      : U = 46.071 +/- 2.230  (n=25)
+  grid           : U = 204.141 +/- 0.982  (n=25)
+  uniform_random : U = 159.054 +/- 10.636  (n=25)
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/ring_vs_grid_results.json
+
+Grid - Edge-ring gap: +158.070
+  => Grid clearly beats edge-only ring: interior coverage matters, utility needs full-area evaluation, not just the envelope.

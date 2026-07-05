@@ -1,0 +1,57 @@
+======================================================================
+Broad detector grid scan: 8 detectors spanning near-center to far-edge
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+L-BFGS best U (saved): 208.8643  (re-evaluated, 5 fresh batches): 195.8752
+Sweeping detectors (sorted by distance from center) at percentile positions [0, 14, 28, 42, 57, 71, 85, 99]:
+  idx= 14  dist_to_center=63.3m
+  idx= 28  dist_to_center=507.0m
+  idx= 43  dist_to_center=711.4m
+  idx=  8  dist_to_center=913.9m
+  idx= 64  dist_to_center=1138.1m
+  idx= 30  dist_to_center=1450.8m
+  idx= 88  dist_to_center=1778.5m
+  idx= 74  dist_to_center=2533.2m
+
+[idx=14] dist_to_center=63.3m  sweeping 15x15 grid ...
+[idx=14] done in 883s.  U range=[194.618, 195.926]  span=1.309  base U=195.875  argmax gain=+0.051  argmax displacement=1788.6m
+
+[idx=28] dist_to_center=507.0m  sweeping 15x15 grid ...
+[idx=28] done in 885s.  U range=[193.880, 195.339]  span=1.459  base U=195.875  argmax gain=-0.536  argmax displacement=330.9m
+
+[idx=43] dist_to_center=711.4m  sweeping 15x15 grid ...
+[idx=43] done in 883s.  U range=[195.085, 196.364]  span=1.278  base U=195.875  argmax gain=+0.488  argmax displacement=2487.9m
+
+[idx=8] dist_to_center=913.9m  sweeping 15x15 grid ...
+[idx=8] done in 861s.  U range=[194.777, 196.116]  span=1.339  base U=195.875  argmax gain=+0.241  argmax displacement=999.9m
+
+[idx=64] dist_to_center=1138.1m  sweeping 15x15 grid ...
+[idx=64] done in 865s.  U range=[194.469, 195.947]  span=1.478  base U=195.875  argmax gain=+0.071  argmax displacement=211.1m
+
+[idx=30] dist_to_center=1450.8m  sweeping 15x15 grid ...
+[idx=30] done in 866s.  U range=[194.845, 196.131]  span=1.286  base U=195.875  argmax gain=+0.256  argmax displacement=2909.0m
+
+[idx=88] dist_to_center=1778.5m  sweeping 15x15 grid ...
+[idx=88] done in 865s.  U range=[194.860, 196.072]  span=1.212  base U=195.875  argmax gain=+0.197  argmax displacement=3113.3m
+
+[idx=74] dist_to_center=2533.2m  sweeping 15x15 grid ...
+[idx=74] done in 862s.  U range=[194.265, 195.867]  span=1.602  base U=195.875  argmax gain=-0.009  argmax displacement=127.8m
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_scan_broad_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_scan_broad_summary.png
+
+======================================================================
+SUMMARY
+======================================================================
+  idx= 14  dist=   63.3m  span=1.309  gain=+0.051  disp= 1788.6m
+  idx= 28  dist=  507.0m  span=1.459  gain=-0.536  disp=  330.9m
+  idx= 43  dist=  711.4m  span=1.278  gain=+0.488  disp= 2487.9m
+  idx=  8  dist=  913.9m  span=1.339  gain=+0.241  disp=  999.9m
+  idx= 64  dist= 1138.1m  span=1.478  gain=+0.071  disp=  211.1m
+  idx= 30  dist= 1450.8m  span=1.286  gain=+0.256  disp= 2909.0m
+  idx= 88  dist= 1778.5m  span=1.212  gain=+0.197  disp= 3113.3m
+  idx= 74  dist= 2533.2m  span=1.602  gain=-0.009  disp=  127.8m
+
+Mean span across all 8 detectors: 1.370  (base U=195.875, so relative span = 0.70%)

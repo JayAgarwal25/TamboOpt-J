@@ -1,0 +1,60 @@
+[norm] using floor's corpus_std for BOTH models (consistent, direct comparison): E=3.2737 T=0.7575
+
+[load] corpus ...
+[load] primary=(1400000, 5)  E=(1400000, 100)
+
+[electron] species rows=700000  val pairs=70000
+[electron] base ckpt val_total(own split)=0.4084   r1 ckpt val_total(own split)=0.3430
+[electron] SAME base-only held-out split, SAME normalizer:
+[electron]   base FNN  z-mse(E,T,total) = (0.4155, 0.3393, 0.3774)
+[electron]   r1   FNN  z-mse(E,T,total) = (0.4072, 0.3323, 0.3697)
+[electron]   change: -2.0%  (positive = r1 is WORSE on base-only data)
+[electron] per-strategy z-mse (total), base -> r1:
+[electron]   strategy_0           (n= 10000): base=0.1516  r1=0.1520  (+0.3%)
+[electron]   strategy_1           (n= 10000): base=0.1543  r1=0.1548  (+0.3%)
+[electron]   strategy_2           (n= 10000): base=0.6589  r1=0.6365  (-3.4%)
+[electron]   strategy_3           (n= 10000): base=0.4837  r1=0.4731  (-2.2%)
+[electron]   strategy_4           (n= 10000): base=0.6012  r1=0.5834  (-3.0%)
+[electron]   strategy_5           (n= 10000): base=0.3943  r1=0.3885  (-1.5%)
+[electron]   strategy_6           (n= 10000): base=0.1978  r1=0.1997  (+1.0%)
+[electron] fired fraction: 0.419
+[electron]   fired      (n= 2933845): base=0.7856  r1=0.7706  (-1.9%, positive = r1 WORSE)
+[electron]   non_fired  (n= 4066155): base=0.0828  r1=0.0804  (-2.9%, positive = r1 WORSE)
+[electron] within-event cross-detector E pattern:
+[electron]   true  within-event std (avg over events) = 2.8845
+[electron]   base  pred  within-event std             = 2.2464  (pred/true ratio=0.779)
+[electron]   r1    pred  within-event std             = 2.2536  (pred/true ratio=0.781)
+[electron]   base  mean per-event corr(pred,true) across 100 detectors = 0.7641
+[electron]   r1    mean per-event corr(pred,true) across 100 detectors = 0.7660
+
+[muon] species rows=700000  val pairs=70000
+[muon] base ckpt val_total(own split)=0.4277   r1 ckpt val_total(own split)=0.3710
+[muon] SAME base-only held-out split, SAME normalizer:
+[muon]   base FNN  z-mse(E,T,total) = (0.3597, 0.5296, 0.4446)
+[muon]   r1   FNN  z-mse(E,T,total) = (0.3529, 0.5221, 0.4375)
+[muon]   change: -1.6%  (positive = r1 is WORSE on base-only data)
+[muon] per-strategy z-mse (total), base -> r1:
+[muon]   strategy_0           (n= 10000): base=0.2570  r1=0.2568  (-0.1%)
+[muon]   strategy_1           (n= 10000): base=0.2561  r1=0.2559  (-0.0%)
+[muon]   strategy_2           (n= 10000): base=0.5758  r1=0.5593  (-2.9%)
+[muon]   strategy_3           (n= 10000): base=0.5531  r1=0.5420  (-2.0%)
+[muon]   strategy_4           (n= 10000): base=0.5811  r1=0.5660  (-2.6%)
+[muon]   strategy_5           (n= 10000): base=0.5301  r1=0.5231  (-1.3%)
+[muon]   strategy_6           (n= 10000): base=0.3592  r1=0.3596  (+0.1%)
+[muon] fired fraction: 0.455
+[muon]   fired      (n= 3182744): base=0.8991  r1=0.8849  (-1.6%, positive = r1 WORSE)
+[muon]   non_fired  (n= 3817256): base=0.0656  r1=0.0645  (-1.8%, positive = r1 WORSE)
+[muon] within-event cross-detector E pattern:
+[muon]   true  within-event std (avg over events) = 2.3098
+[muon]   base  pred  within-event std             = 1.9011  (pred/true ratio=0.823)
+[muon]   r1    pred  within-event std             = 1.9063  (pred/true ratio=0.825)
+[muon]   base  mean per-event corr(pred,true) across 100 detectors = 0.7847
+[muon]   r1    mean per-event corr(pred,true) across 100 detectors = 0.7849
+
+======================================================================
+SUMMARY
+======================================================================
+  electron  : base z-mse=0.3774  r1 z-mse=0.3697  (-2.0%)
+  muon      : base z-mse=0.4446  r1 z-mse=0.4375  (-1.6%)
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/finetune_regression_check_results.json

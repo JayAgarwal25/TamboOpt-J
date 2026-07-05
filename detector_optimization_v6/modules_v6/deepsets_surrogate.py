@@ -116,7 +116,8 @@ class DeepSetsSurrogate(nn.Module):
             (B, n_det, 2) — col0 = E, col1 = T, unnormalized units.
         """
         B = primary.shape[0]
-        nd = self.n_det
+        nd = self.n_det          # fixed buffer offset (T-block starts at index n_det)
+        n_active = xy.shape[1]   # actual detector count for this call (may differ from n_det)
 
         # Per-feature z-score scalars pulled from the broadcast-shared buffers:
         #   in_mean = [primary(5), x0,y0, x1,y1, ...]  → x stat at idx 5, y at 6.
@@ -129,18 +130,18 @@ class DeepSetsSurrogate(nn.Module):
         T_mean, T_std = self.out_mean[nd], self.out_std[nd]
 
         q_n = (primary - p_mean) / p_std                              # (B, 5)
-        q_n = q_n.unsqueeze(1).expand(B, nd, -1)                       # (B, nd, 5)
-        x_n = (xy[..., 0] - x_mean) / x_std                           # (B, nd)
+        q_n = q_n.unsqueeze(1).expand(B, n_active, -1)                 # (B, n_active, 5)
+        x_n = (xy[..., 0] - x_mean) / x_std                           # (B, n_active)
         y_n = (xy[..., 1] - y_mean) / y_std
-        token = torch.cat([q_n, x_n.unsqueeze(-1), y_n.unsqueeze(-1)], dim=-1)  # (B, nd, 7)
+        token = torch.cat([q_n, x_n.unsqueeze(-1), y_n.unsqueeze(-1)], dim=-1)  # (B, n_active, 7)
 
-        h = self.encoder(token)                                       # (B, nd, hidden)
+        h = self.encoder(token)                                       # (B, n_active, hidden)
         if self.pool == "maxmean":
             pooled = torch.cat([h.mean(dim=1), h.max(dim=1).values], dim=-1)  # (B, 2*hidden)
         else:
             pooled = h.mean(dim=1)                                     # (B, hidden)
         c = self.context_proj(pooled)                                  # (B, context)  invariant pool
-        c = c.unsqueeze(1).expand(B, nd, -1)                          # (B, nd, context)
+        c = c.unsqueeze(1).expand(B, n_active, -1)                    # (B, n_active, context)
         out_n = self.decoder(torch.cat([h, c], dim=-1))              # (B, nd, 2)  z-scored
 
         E_out = out_n[..., 0] * E_std + E_mean                        # (B, nd)

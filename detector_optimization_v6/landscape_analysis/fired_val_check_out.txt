@@ -1,0 +1,26 @@
+[floor] corpus_std_fired: E=3.7272 T=0.9950
+[floor] floor_zmse.total_fired_vs_fired=0.6009  max_R2.total_fired_vs_fired=0.3991
+
+[load] corpus ...
+[load] primary=(1400000, 5)  E=(1400000, 100)
+
+[electron] species rows=700000  val pairs=70000
+[electron] loaded /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_02_recentered/fnn_electron.pt  epoch=101  reported val_total=0.4084
+[electron] val (primary,detector) pairs=7000000  fired=2933845 (41.9%)
+[electron] PER-SPECIES fired z-mse(E,T,total) = (0.6284, 0.4386, 0.5335)  achieved R²=0.4665  [reference only -- not comparable to the pooled ceiling on its own]
+[electron] all-detector  z-mse(E,T,total) = (0.4155, 0.3393, 0.3774)   [cross-check vs ckpt's own out_std-normalized val_total=0.4084 -- expect close but not identical, different normalization std source]
+
+[muon] species rows=700000  val pairs=70000
+[muon] loaded /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_02_recentered/fnn_muon.pt  epoch=101  reported val_total=0.4277
+[muon] val (primary,detector) pairs=7000000  fired=3182744 (45.5%)
+[muon] PER-SPECIES fired z-mse(E,T,total) = (0.5348, 0.6405, 0.5876)  achieved R²=0.4124  [reference only -- not comparable to the pooled ceiling on its own]
+[muon] all-detector  z-mse(E,T,total) = (0.3597, 0.5296, 0.4446)   [cross-check vs ckpt's own out_std-normalized val_total=0.4277 -- expect close but not identical, different normalization std source]
+
+======================================================================
+POOLED (electron+muon combined) fired-only result
+======================================================================
+n_fired pooled: E=6116589  T=6116589
+pooled fired z-mse(E,T,total) = (0.5797, 0.5436, 0.5617)
+pooled fired-only achieved R² = 0.4383
+fired ceiling R²max           = 0.3991
+fraction of fired ceiling reached = 109.8%

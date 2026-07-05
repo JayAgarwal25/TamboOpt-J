@@ -1,0 +1,34 @@
+======================================================================
+Detector grid scan CONTROL: random (non-optimized) layout
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+Random layout (seed=7) U (re-evaluated, 5 fresh batches): 162.8928
+Sweeping detectors at percentile positions [0, 50, 99]:
+  idx= 48  dist_to_center=73.4m
+  idx= 63  dist_to_center=1485.0m
+  idx= 16  dist_to_center=2656.5m
+
+[idx=48] dist_to_center=73.4m  sweeping 15x15 grid ...
+[idx=48] done in 868s.  U range=[160.489, 169.712]  span=9.223  base U=162.893  argmax gain=+6.819  argmax displacement=1270.5m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_48.png
+
+[idx=63] dist_to_center=1485.0m  sweeping 15x15 grid ...
+[idx=63] done in 869s.  U range=[162.635, 172.298]  span=9.663  base U=162.893  argmax gain=+9.405  argmax displacement=2547.0m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_63.png
+
+[idx=16] dist_to_center=2656.5m  sweeping 15x15 grid ...
+[idx=16] done in 868s.  U range=[162.151, 171.485]  span=9.334  base U=162.893  argmax gain=+8.592  argmax displacement=2185.5m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_16.png
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_scan_random_control_results.json
+
+======================================================================
+SUMMARY (compare against detector_grid_scan_broad_results.json)
+======================================================================
+  idx= 48  dist=   73.4m  span=9.223  gain=+6.819  disp= 1270.5m
+  idx= 63  dist= 1485.0m  span=9.663  gain=+9.405  disp= 2547.0m
+  idx= 16  dist= 2656.5m  span=9.334  gain=+8.592  disp= 2185.5m
+
+Mean span (random layout): 9.407  base U=162.893

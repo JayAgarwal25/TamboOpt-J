@@ -1,0 +1,129 @@
+======================================================================
+TAMBO v6 Landscape Analysis
+======================================================================
+Device: cpu
+
+Loading models...
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+Models loaded in 1.6s
+Loading mountain geometry...
+Loading primaries...
+  1400000 primaries loaded
+GES best U (saved): 210.1760
+L-BFGS DS best U (saved): 208.8643
+
+======================================================================
+Q1: Random Baselines (8 uniformly random layouts)
+======================================================================
+  random_00: U=179.030  mean_r=1.0000  u_e=24.632  u_theta=77.532  u_phi=76.866
+  random_01: U=177.780  mean_r=1.0000  u_e=24.677  u_theta=75.550  u_phi=77.552
+  random_02: U=177.844  mean_r=1.0000  u_e=24.631  u_theta=77.601  u_phi=75.612
+  random_03: U=149.080  mean_r=1.0000  u_e=24.032  u_theta=60.621  u_phi=64.426
+  random_04: U=162.454  mean_r=1.0000  u_e=24.393  u_theta=66.290  u_phi=71.770
+  random_05: U=160.236  mean_r=1.0000  u_e=24.400  u_theta=69.998  u_phi=65.837
+  random_06: U=170.853  mean_r=1.0000  u_e=24.571  u_theta=73.906  u_phi=72.377
+  random_07: U=173.927  mean_r=1.0000  u_e=24.668  u_theta=75.806  u_phi=73.453
+
+Random U:     mean=168.900  std=10.000  range=[149.08, 179.03]
+Optimized U:  210.176
+Gap:          41.276  (24.4% above random mean)
+
+======================================================================
+Q2: GES vs L-BFGS DS Layout Agreement (Hungarian alignment)
+======================================================================
+GES U re-evaluated on fixed batch:   210.1633
+L-BFGS DS U re-evaluated:            208.8643
+
+Hungarian alignment displacements:
+  mean   = 259.6 m
+  median = 236.4 m
+  std    = 160.2 m
+  max    = 991.7 m
+  p25/p75 = 148.7 / 345.9 m
+
+Verdict: DIFFERENT basins (> 200m) — genuinely distinct local optima with similar U
+
+======================================================================
+Q3: Batch Sensitivity (5 independent 512-primary batches, GES best layout)
+======================================================================
+  seed=1: U=196.9672
+  seed=2: U=198.4432
+  seed=3: U=196.7292
+  seed=4: U=196.6710
+  seed=5: U=197.5355
+  seed=42 (GES fixed): U=210.1633
+
+All 6 U values: mean=199.4182  std=4.8432
+Batch std (5 fresh): 0.6618
+GES vs L-BFGS gap: 1.3117
+=> Std < 1.0: the GES vs L-BFGS gap MAY be real signal above noise
+
+======================================================================
+Q4: Theoretical Ceiling
+======================================================================
+GES best:     U=210.163  mean_r=1.0000
+  components: u_theta=92.8393  u_phi=92.4529  u_e=24.8711
+
+Perfect-recon ceiling (mean_r=1.0000):
+  u_ang_ceil = mean_r / 0.001 = 1000.0
+  u_e_ceil   = mean_r / 0.01  = 100.0
+  U_perfect  = (100.0*1000.0 + 100.0*1000.0 + 250.0*100.0) / 1000
+             = 225.0
+
+Current/Ceiling: 210.2 / 225.0 = 93.4%
+Gap to ceiling:  14.8
+
+FNN aleatoric floor z-MSE:  0.4493
+Max achievable FNN R²:      0.5507
+Note: FNN floor limits per-detector signal quality; the recon ceiling
+      above assumes perfect reconstruction given any detector signal.
+
+======================================================================
+Q5: Gradient Norm at GES Best Layout
+======================================================================
+U at GES best: 210.1633
+||grad||_2:    13006951.000000
+||grad||_inf:  12907092.000000
+Mean |grad|:   83946.250000
+Grad-x stats:  min=-1591613.12500  max=22628.79688  mean=-9396.47852
+Grad-y stats:  min=-52437.66797  max=12907092.00000  mean=135891.53125
+
+For comparison — gradient at a random layout:
+  U=156.5201  ||grad||_2=0.105658
+  Optimum/random grad ratio: 123104441.438
+
+======================================================================
+Q6: Landscape Width — U along random directions from GES best
+======================================================================
+Base U at GES best: 210.1633
+
+  d=  10m:  mean U=210.123  drop=+0.040  [210.13  210.11  210.13  210.13  210.13]
+  d=  50m:  mean U=209.573  drop=+0.591  [209.62  209.45  209.63  209.56  209.61]
+  d= 100m:  mean U=208.526  drop=+1.637  [208.64  208.30  208.66  208.46  208.56]
+  d= 200m:  mean U=205.937  drop=+4.226  [206.09  205.16  206.37  206.13  205.94]
+  d= 500m:  mean U=199.139  drop=+11.025  [198.90  198.28  201.40  199.01  198.09]
+
+Landscape summary:
+  d=  10m:  U drops by 0.040 (0.02%)
+  d=  50m:  U drops by 0.591 (0.28%)
+  d= 100m:  U drops by 1.637 (0.78%)
+  d= 200m:  U drops by 4.226 (2.01%)
+  d= 500m:  U drops by 11.025 (5.25%)
+
+======================================================================
+SUMMARY
+======================================================================
+Q1 Random gap:       41.3 pts  (random mean=168.9, optimized=210.2)
+Q2 Optimizer agreement: mean displacement=259.6m — DIFFERENT basins (> 200m) — genuinely distinct local optima with similar U
+Q3 Batch std:        0.662  (GES vs LBFGS gap=1.312)
+Q4 Ceiling:          U_perfect=225.0, current=210.2 (93.4%)
+Q5 Gradient norm:    ||g||=13006951.0000  (random layout: 0.1057)
+Q6 Landscape width:  U at 200m drops by 4.226 pts
+
+Conclusions:
+  [STRUCTURED] Large gap from random => surrogate has real landscape structure
+  [MULTI-MODAL] Different basins with similar U => broad plateau
+  [STABLE] Batch std < 1.0 => U estimates are reliable
+  [NEAR CEILING] 93.4% of perfect-recon ceiling => surrogate is the bottleneck

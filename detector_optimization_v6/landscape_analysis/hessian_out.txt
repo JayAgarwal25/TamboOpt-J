@@ -1,0 +1,43 @@
+======================================================================
+TAMBO v6 Hessian Curvature Probe
+======================================================================
+Device: cpu   D=200 (N_DETECTORS=100)
+
+Loading models...
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+Models loaded in 0.5s
+Fixed batch: 512 primaries (seed=42)
+
+Loading layouts...
+GES best U (saved): 210.1760
+L-BFGS DS best U (saved): 208.8643
+
+[Random layout] U=156.5201  ||grad||=0.1057  Hessian computed in 416.2s
+  eig range: [-0.0053, 0.0003]
+  # positive=66  # negative=131  # ~flat=3  (D=200)
+  condition number (nonzero eigs): 8.457e+05
+
+[GES best] U=210.1633  ||grad||=13006951.0000  Hessian computed in 411.3s
+  eig range: [-1804154565558272.0000, 14705630.0000]
+  # positive=0  # negative=1  # ~flat=199  (D=200)
+  condition number (nonzero eigs): 1.000e+00
+
+[L-BFGS DS best] U=208.8643  ||grad||=0.0071  Hessian computed in 410.9s
+  eig range: [-0.0055, 0.0000]
+  # positive=2  # negative=198  # ~flat=0  (D=200)
+  condition number (nonzero eigs): 4.688e+05
+
+Saved full spectra to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/hessian_probe_results.json
+
+======================================================================
+SUMMARY
+======================================================================
+  random      : U= 156.520  eig=[    -0.005,      0.000]  flat=  3/200  cond=8.46e+05
+  ges_best    : U= 210.163  eig=[-1804154565558272.000, 14705630.000]  flat=199/200  cond=1.00e+00
+  lbfgs_best  : U= 208.864  eig=[    -0.006,      0.000]  flat=  0/200  cond=4.69e+05
+
+Conclusions:
+  [FLATTER AT OPTIMUM] optimized layouts have far more ~zero-curvature directions (199/200) than random (3/200) => broad plateau confirmed quantitatively.
+  [DIFFERENT CURVATURE] GES-best and L-BFGS-best have meaningfully different curvature signatures => may be genuinely distinct basins, not just displaced points on one plateau.
