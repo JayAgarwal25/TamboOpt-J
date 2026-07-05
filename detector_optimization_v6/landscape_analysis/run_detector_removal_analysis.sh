@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH -c 4
-#SBATCH -t 06:00:00
+#SBATCH -t 10:00:00
 #SBATCH -o /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_analysis_out.txt
 #SBATCH -e /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_analysis_err.txt
 

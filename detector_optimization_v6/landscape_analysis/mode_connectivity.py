@@ -39,7 +39,7 @@ from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.opt_core import utility_of_xy, load_models, align_to_reference
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512

@@ -43,7 +43,7 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512

@@ -36,7 +36,7 @@ import modules_v6  # noqa: F401
 from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
 from modules_v6.opt_core import utility_of_xy, load_models
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000     # avoid seed=42 (the training/scoring batch, a known outlier)
 BATCH_SIZE = 512
