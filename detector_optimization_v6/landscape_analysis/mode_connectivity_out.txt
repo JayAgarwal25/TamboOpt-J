@@ -1,0 +1,31 @@
+======================================================================
+Mode connectivity: grid-scheme vs. center-scheme L-BFGS optima
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+grid-scheme   layout: U saved=205.8684    re-evaluated=194.1078
+center-scheme layout: U saved=208.8643  re-evaluated=195.8421
+mean per-detector displacement, index-to-index (before alignment): 1888.1m
+mean per-detector displacement, AFTER Hungarian alignment: 563.4m
+center-scheme U after alignment (sanity check, should match re-evaluated): 195.8421
+
+[path] sweeping 41 points along the straight line from grid-scheme to (aligned) center-scheme layout ...
+  10/41  t=0.225  U=195.602  (3s elapsed)
+  20/41  t=0.475  U=194.062  (5s elapsed)
+  30/41  t=0.725  U=193.573  (8s elapsed)
+  40/41  t=0.975  U=195.861  (10s elapsed)
+[path] done in 10s
+
+Endpoints: U(t=0)=194.108  U(t=1)=195.842
+Minimum along path: U=193.026 at t=0.575
+Dip below the endpoints' average: 1.949 (1.00%)
+Mean mountain-projection correction along path: 0.9m (large values here would mean the straight line often leaves the mountain surface)
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/mode_connectivity_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/mode_connectivity.png
+
+======================================================================
+CONCLUSION
+======================================================================
+  U barely dips (1.00%) along the straight path -> consistent with ONE connected plateau, not two separate basins.
