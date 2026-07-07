@@ -1,0 +1,36 @@
+======================================================================
+Single-detector utility grid scan -- layout: de
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+[de] U (saved): 54.4281
+[de] U (re-evaluated, 8 fresh batches): 186.9196
+idx_center=15  pos=(-31.3,-306.2)  dist_to_bbox_center=114.0m
+idx_edge  =78    pos=(2131.0,199.5)  dist_to_bbox_center=2229.8m
+
+[center] sweeping detector idx=15 over 25x25 grid ...
+  200/625  (67s elapsed)
+  400/625  (134s elapsed)
+  600/625  (201s elapsed)
+[center] done in 210s. U range [186.582, 188.745]  orig U=186.920 at (-31.3,-306.2)  argmax U=188.745 at (1853.0,915.2)
+
+[edge] sweeping detector idx=78 over 25x25 grid ...
+  200/625  (67s elapsed)
+  400/625  (134s elapsed)
+  600/625  (202s elapsed)
+[edge] done in 210s. U range [186.292, 188.306]  orig U=186.920 at (2131.0,199.5)  argmax U=188.306 at (-1254.5,-418.4)
+
+[shared scale] U range across both panels: [186.292, 188.745]
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/de/detector_grid_center_3d.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/de/detector_grid_center.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/de/detector_grid_edge_3d.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/de/detector_grid_edge.png
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/de/detector_grid_results.json
+
+======================================================================
+SUMMARY
+======================================================================
+  center   (idx= 15): base U=186.920  grid-argmax U=188.745  gain=+1.825  displacement from optimized position=2245.5m
+  edge     (idx= 78): base U=186.920  grid-argmax U=188.306  gain=+1.386  displacement from optimized position=3441.4m
