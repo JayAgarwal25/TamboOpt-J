@@ -1,0 +1,46 @@
+======================================================================
+Critical-detector geometry follow-up
+======================================================================
+
+Leave-one-out dip stats: mean=0.2980 std=0.5334 min=-0.2172 max=3.0755
+
+[correlations] Pearson r between leave-one-out dip and each geometric feature (across all 100 detectors):
+  Up                            : r = +0.164
+  z_cont                        : r = +0.125
+  dist_from_centroid            : r = +0.118
+  dist_nearest_other_detector   : r = +0.312
+  dist_to_bbox_edge             : r = +0.116
+
+[highlight] top 5 MOST CRITICAL detectors (largest dip):
+
+  critical:
+    det  97  dip=+3.0755  N=  +197.6  E=  -824.3  Up= 3529.3  z_cont=15.50  dist_centroid=  500.1  nearest_other= 166.3  dist_edge= 1194.4
+    det  25  dip=+2.9535  N= +1422.0  E=   -67.1  Up= 3003.9  z_cont=10.45  dist_centroid= 1330.6  nearest_other= 307.0  dist_edge= 1052.5
+    det  72  dip=+1.8557  N= -1651.4  E=   +53.9  Up= 3171.5  z_cont= 9.64  dist_centroid= 1810.5  nearest_other= 460.8  dist_edge=  846.0
+    det  28  dip=+1.3850  N=  -404.0  E=   -97.4  Up= 3110.6  z_cont=10.65  dist_centroid=  571.5  nearest_other= 325.2  dist_edge= 1279.3
+    det  58  dip=+1.2815  N= -1369.3  E=  -675.2  Up= 3514.4  z_cont=14.50  dist_centroid= 1526.4  nearest_other= 320.5  dist_edge= 1128.2
+
+[highlight] top 5 MOST REDUNDANT detectors (smallest/most negative dip):
+
+  redundant:
+    det  16  dip=-0.2172  N=  -328.4  E= -1175.6  Up= 3704.4  z_cont=17.84  dist_centroid=  955.5  nearest_other= 112.3  dist_edge=  843.1
+    det  37  dip=-0.1588  N=  +156.1  E=  -273.7  Up= 3119.4  z_cont=11.82  dist_centroid=   68.6  nearest_other=  89.7  dist_edge= 1455.6
+    det  87  dip=-0.1402  N=   -50.4  E=  -290.1  Up= 3140.3  z_cont=11.93  dist_centroid=  172.9  nearest_other= 192.7  dist_edge= 1472.0
+    det  57  dip=-0.1284  N=  +569.2  E= -1281.2  Up= 3802.8  z_cont=18.54  dist_centroid= 1052.4  nearest_other= 170.8  dist_edge=  737.5
+    det  39  dip=-0.1280  N=  +558.4  E=  -500.5  Up= 3267.7  z_cont=13.34  dist_centroid=  472.3  nearest_other= 199.2  dist_edge= 1518.2
+
+[group means] critical-5 vs redundant-5 vs remaining 90:
+  Up                            : critical= 3265.95  redundant= 3406.94  rest= 3188.70
+  z_cont                        : critical=   12.15  redundant=   14.69  rest=   12.07
+  dist_from_centroid            : critical= 1147.82  redundant=  544.36  rest= 1110.01
+  dist_nearest_other_detector   : critical=  315.96  redundant=  152.93  rest=  176.22
+  dist_to_bbox_edge             : critical= 1100.09  redundant= 1205.28  rest=  887.21
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/critical_detector_geometry_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/critical_detector_geometry.png
+
+======================================================================
+SUMMARY
+======================================================================
+  Strongest correlate of dip: dist_nearest_other_detector (r=+0.312)
+  (|r| < 0.3 for all features would mean location/elevation/depth/density alone don't explain criticality -- it may depend on the shower-population structure the utility function weights, not simple geometry.)

@@ -1,0 +1,54 @@
+======================================================================
+Random full-space 2D slice, fine step range (all 100 detectors perturbed at once)
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+L-BFGS best U (re-evaluated, 4 fresh batches): 196.0637
+Random layout U (re-evaluated, 4 fresh batches): 162.1629
+
+[optimized_pair0] sweeping 21x21 grid, step range +/-100m ...
+  row 5/21  (19s elapsed)
+  row 10/21  (37s elapsed)
+  row 15/21  (55s elapsed)
+  row 20/21  (72s elapsed)
+[optimized_pair0] done in 76s. U range=[180.672, 196.064]  span=15.391  base U=196.064  argmax gain=+0.000
+[optimized_pair0] mountain-projection correction: mean=7.2m  max=24.2m  (large values mean many grid points needed off-surface snapping, which can distort the flatness reading)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/full_space_2d_slice_fine_optimized_pair0.png
+
+[optimized_pair1] sweeping 21x21 grid, step range +/-100m ...
+  row 5/21  (18s elapsed)
+  row 10/21  (36s elapsed)
+  row 15/21  (54s elapsed)
+  row 20/21  (72s elapsed)
+[optimized_pair1] done in 75s. U range=[185.096, 196.188]  span=11.092  base U=196.064  argmax gain=+0.124
+[optimized_pair1] mountain-projection correction: mean=5.5m  max=17.0m  (large values mean many grid points needed off-surface snapping, which can distort the flatness reading)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/full_space_2d_slice_fine_optimized_pair1.png
+
+[random_pair0] sweeping 21x21 grid, step range +/-100m ...
+  row 5/21  (18s elapsed)
+  row 10/21  (36s elapsed)
+  row 15/21  (54s elapsed)
+  row 20/21  (72s elapsed)
+[random_pair0] done in 75s. U range=[158.570, 173.989]  span=15.419  base U=162.163  argmax gain=+11.826
+[random_pair0] mountain-projection correction: mean=7.0m  max=22.6m  (large values mean many grid points needed off-surface snapping, which can distort the flatness reading)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/full_space_2d_slice_fine_random_pair0.png
+
+[random_pair1] sweeping 21x21 grid, step range +/-100m ...
+  row 5/21  (18s elapsed)
+  row 10/21  (36s elapsed)
+  row 15/21  (54s elapsed)
+  row 20/21  (71s elapsed)
+[random_pair1] done in 75s. U range=[158.628, 172.390]  span=13.763  base U=162.163  argmax gain=+10.227
+[random_pair1] mountain-projection correction: mean=5.2m  max=25.1m  (large values mean many grid points needed off-surface snapping, which can distort the flatness reading)
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/full_space_2d_slice_fine_random_pair1.png
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/full_space_2d_slice_fine_results.json
+
+======================================================================
+SUMMARY
+======================================================================
+  optimized_pair0     : base U=196.064  span=15.391  (7.85% of base U)  gain=+0.000  snap disp mean/max=7.2/24.2m
+  optimized_pair1     : base U=196.064  span=11.092  (5.66% of base U)  gain=+0.124  snap disp mean/max=5.5/17.0m
+  random_pair0        : base U=162.163  span=15.419  (9.51% of base U)  gain=+11.826  snap disp mean/max=7.0/22.6m
+  random_pair1        : base U=162.163  span=13.763  (8.49% of base U)  gain=+10.227  snap disp mean/max=5.2/25.1m
