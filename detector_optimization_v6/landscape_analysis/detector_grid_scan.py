@@ -15,7 +15,16 @@ position.
 Two detectors are swept: the one closest to the mountain bbox center, and the
 one farthest from it (closest to the boundary), to compare interior vs.
 edge sensitivity.
+
+Reusable across any saved layout via --layout_path/--layout_tag (defaults to
+the L-BFGS-best layout, matching the original single-layout investigation).
+Pass --layout_tag to run this on a different optimizer's layout (EvoGrad, DE,
+GES, v5's (mu+lambda)-ES, etc.) -- outputs then land in
+other_optimizers/<tag>/ instead of this directory directly, keeping the
+per-optimizer extension study cleanly separated from the original L-BFGS
+results.
 """
+import argparse
 import sys, os, json, time
 import numpy as np
 import torch
@@ -38,6 +47,22 @@ from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
 DEVICE = torch.device("cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+DEFAULT_LAYOUT_PATH = f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--layout_path", type=str, default=DEFAULT_LAYOUT_PATH,
+                help="Path to a layout_best.pt to analyze (default: L-BFGS-best).")
+ap.add_argument("--layout_tag", type=str, default=None,
+                help="Label for this layout (e.g. 'evograd', 'de', 'ges', 'mu_lambda_es'). "
+                     "If given, outputs land in other_optimizers/<tag>/ instead of this "
+                     "directory directly; if omitted, outputs use the original flat "
+                     "filenames (backward-compatible with the L-BFGS-only results).")
+args = ap.parse_args()
+LAYOUT_LABEL = args.layout_tag or "L-BFGS-best"
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "other_optimizers", args.layout_tag) if args.layout_tag else HERE
+os.makedirs(OUT_DIR, exist_ok=True)
+
 # NOTE: seed=42 is the exact batch every optimizer script (04_optimize_*.py)
 # trains/scores against, so layouts are specifically overfit to it -- it reads
 # ~10-15pts high vs genuinely fresh batches (see landscape_analysis.py Q3:
@@ -51,7 +76,7 @@ N_BATCHES = 8     # average over several fresh batches to damp batch noise
 GRID_N = 25       # GRID_N x GRID_N points per swept detector
 
 print("=" * 70)
-print("Single-detector utility grid scan")
+print(f"Single-detector utility grid scan -- layout: {LAYOUT_LABEL}")
 print("=" * 70)
 
 fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
@@ -86,11 +111,10 @@ def load_layout(path):
     return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
 
 
-lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt")
-print(f"L-BFGS best U (saved): {lbfgs_U_saved:.4f}")
+lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(args.layout_path)
+print(f"[{LAYOUT_LABEL}] U (saved): {lbfgs_U_saved:.4f}")
 base_U = eval_U_mean(lbfgs_x, lbfgs_y)
-print(f"L-BFGS best U (re-evaluated, {N_BATCHES} fresh batches): {base_U:.4f}")
+print(f"[{LAYOUT_LABEL}] U (re-evaluated, {N_BATCHES} fresh batches): {base_U:.4f}")
 
 # Pick two detectors: closest to bbox center, and farthest from it (edge).
 cn = 0.5 * (mountain.n_min + mountain.n_max)
@@ -163,14 +187,14 @@ for tag, r in results.items():
     ax.scatter(lbfgs_y[other_mask], lbfgs_x[other_mask], s=8, c="white",
                edgecolor="black", linewidth=0.3, label="other 99 detectors (fixed)")
     ax.scatter([orig_E], [orig_N], marker="*", s=250, c="red",
-               edgecolor="black", label="optimized position (L-BFGS-best)")
+               edgecolor="black", label=f"optimized position ({LAYOUT_LABEL})")
     ax.scatter([argmax_E], [argmax_N], marker="X", s=150, c="cyan",
                edgecolor="black", label="grid argmax")
     ax.set_xlabel("East (m)")
     ax.set_ylabel("North (m)")
-    ax.set_title(f"U vs. position of detector {idx} ({tag}), others fixed at L-BFGS-best")
+    ax.set_title(f"U vs. position of detector {idx} ({tag}), others fixed at {LAYOUT_LABEL}")
     ax.legend(loc="upper right", fontsize=8)
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_{tag}.png")
+    out_png = os.path.join(OUT_DIR, f"detector_grid_{tag}.png")
     fig.tight_layout()
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
@@ -191,13 +215,13 @@ for tag, r in results.items():
     ax3d.set_title(f"U vs. position of detector {idx} ({tag}), 3D")
     ax3d.view_init(elev=25, azim=-60)
     fig3d.tight_layout()
-    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_{tag}_3d.png")
+    out_png_3d = os.path.join(OUT_DIR, f"detector_grid_{tag}_3d.png")
     fig3d.savefig(out_png_3d, dpi=150)
     plt.close(fig3d)
     print(f"[plot] wrote {out_png_3d}")
     print(f"[plot] wrote {out_png}")
 
-out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_results.json")
+out_json = os.path.join(OUT_DIR, "detector_grid_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")

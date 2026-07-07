@@ -9,5 +9,9 @@
 #SBATCH -e /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_scan_err.txt
 
 export PYTHONUNBUFFERED=1
+# Extra args ("$@") pass through to the python script, e.g.:
+#   sbatch --job-name=grid_evograd \
+#       -o .../detector_grid_scan_evograd_out.txt -e .../detector_grid_scan_evograd_err.txt \
+#       run_detector_grid_scan.sh --layout_path <path> --layout_tag evograd
 /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/envs/tambo/bin/python3 \
-    /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_scan.py
+    /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_scan.py "$@"

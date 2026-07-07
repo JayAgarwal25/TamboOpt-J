@@ -21,7 +21,15 @@ hopping/infill scripts elsewhere in this project.
 Complements the single-detector grid scans (which vary only 2 of 200 dims,
 tied to ONE detector): this varies all 200 dims at once, testing a more
 global notion of flatness.
+
+Reusable across any saved layout via --layout_path/--layout_tag (defaults to
+the L-BFGS-best layout, matching the original single-layout investigation).
+Pass --layout_tag to run this on a different optimizer's layout -- outputs
+then land in other_optimizers/<tag>/ instead of this directory directly. The
+random-layout comparison panel is always included regardless of --layout_tag,
+so each optimizer's layout still gets its own contrast baseline.
 """
+import argparse
 import os, sys, json, time
 import numpy as np
 import torch
@@ -45,6 +53,21 @@ from modules_v6.detector_strategies_ne import layout_uniform_random
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+DEFAULT_LAYOUT_PATH = f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--layout_path", type=str, default=DEFAULT_LAYOUT_PATH,
+                help="Path to a layout_best.pt to analyze (default: L-BFGS-best).")
+ap.add_argument("--layout_tag", type=str, default=None,
+                help="Label for this layout. If given, outputs land in "
+                     "other_optimizers/<tag>/; if omitted, outputs use the original "
+                     "flat filenames (backward-compatible with L-BFGS-only results).")
+args = ap.parse_args()
+LAYOUT_LABEL = args.layout_tag or "L-BFGS-best"
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "other_optimizers", args.layout_tag) if args.layout_tag else HERE
+os.makedirs(OUT_DIR, exist_ok=True)
+
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 4
@@ -54,7 +77,7 @@ N_DIR_PAIRS = 2
 RANDOM_LAYOUT_SEED = 7
 
 print("=" * 70)
-print("Random full-space 2D slice (all 100 detectors perturbed at once)")
+print(f"Random full-space 2D slice (all 100 detectors perturbed at once) -- layout: {LAYOUT_LABEL}")
 print("=" * 70)
 
 fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
@@ -86,10 +109,9 @@ def load_layout(path):
     return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
 
 
-lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt")
+lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(args.layout_path)
 base_U_opt = eval_U(lbfgs_x, lbfgs_y)
-print(f"L-BFGS best U (re-evaluated, {N_BATCHES} fresh batches): {base_U_opt:.4f}")
+print(f"[{LAYOUT_LABEL}] U (re-evaluated, {N_BATCHES} fresh batches): {base_U_opt:.4f}")
 
 rng_np = np.random.default_rng(RANDOM_LAYOUT_SEED)
 rand_x, rand_y = layout_uniform_random(mountain, rng=rng_np)
@@ -165,10 +187,10 @@ for tag, r in results.items():
     ax.scatter([0], [0], marker="*", s=250, c="red", edgecolor="black", label="base layout")
     ax.set_xlabel("beta (m, direction 2)")
     ax.set_ylabel("alpha (m, direction 1)")
-    ax.set_title(f"Full-space random 2D slice: {tag}")
+    ax.set_title(f"Full-space random 2D slice ({LAYOUT_LABEL}): {tag}")
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"full_space_2d_slice_{tag}.png")
+    out_png = os.path.join(OUT_DIR, f"full_space_2d_slice_{tag}.png")
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
     print(f"[plot] wrote {out_png}")
@@ -184,16 +206,15 @@ for tag, r in results.items():
     ax3d.set_xlabel("beta (m, direction 2)")
     ax3d.set_ylabel("alpha (m, direction 1)")
     ax3d.set_zlabel("U")
-    ax3d.set_title(f"Full-space random 2D slice (3D): {tag}")
+    ax3d.set_title(f"Full-space random 2D slice (3D, {LAYOUT_LABEL}): {tag}")
     ax3d.view_init(elev=25, azim=-60)
     fig3d.tight_layout()
-    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               f"full_space_2d_slice_{tag}_3d.png")
+    out_png_3d = os.path.join(OUT_DIR, f"full_space_2d_slice_{tag}_3d.png")
     fig3d.savefig(out_png_3d, dpi=150)
     plt.close(fig3d)
     print(f"[plot] wrote {out_png_3d}")
 
-out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "full_space_2d_slice_results.json")
+out_json = os.path.join(OUT_DIR, "full_space_2d_slice_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")

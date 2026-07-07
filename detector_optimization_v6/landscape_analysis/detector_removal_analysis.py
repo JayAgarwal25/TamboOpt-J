@@ -24,7 +24,13 @@ finding), "lowest_dip_first" should be able to strip away many detectors
 before U drops much, while "highest_dip_first" should crater quickly.
 Comparing the three curves is a direct, mechanistic test of *why* the
 landscape looks flat (redundancy) rather than just re-confirming that it is.
+
+Reusable across any saved layout via --layout_path/--layout_tag (defaults to
+the L-BFGS-best layout, matching the original single-layout investigation).
+Pass --layout_tag to run this on a different optimizer's layout -- outputs
+then land in other_optimizers/<tag>/ instead of this directory directly.
 """
+import argparse
 import os, sys, json, time
 import numpy as np
 import torch
@@ -38,6 +44,21 @@ from modules_v6.opt_core import utility_of_xy, load_models
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+DEFAULT_LAYOUT_PATH = f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--layout_path", type=str, default=DEFAULT_LAYOUT_PATH,
+                help="Path to a layout_best.pt to analyze (default: L-BFGS-best).")
+ap.add_argument("--layout_tag", type=str, default=None,
+                help="Label for this layout. If given, outputs land in "
+                     "other_optimizers/<tag>/; if omitted, outputs use the original "
+                     "flat filenames (backward-compatible with L-BFGS-only results).")
+args = ap.parse_args()
+LAYOUT_LABEL = args.layout_tag or "L-BFGS-best"
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "other_optimizers", args.layout_tag) if args.layout_tag else HERE
+os.makedirs(OUT_DIR, exist_ok=True)
+
 BATCH_SEED_BASE = 1000     # avoid seed=42 (the training/scoring batch, a known outlier)
 BATCH_SIZE = 512
 N_BATCHES = 3
@@ -45,7 +66,7 @@ REMOVAL_FLOOR = 20          # stop greedy/random removal once this many detector
 SEED = 123
 
 print("=" * 70)
-print("Detector removal / redundancy analysis")
+print(f"Detector removal / redundancy analysis -- layout: {LAYOUT_LABEL}")
 print("=" * 70)
 
 fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
@@ -77,10 +98,9 @@ def load_layout(path):
     return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
 
 
-lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt")
+lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(args.layout_path)
 full_U = eval_U(lbfgs_x, lbfgs_y)
-print(f"L-BFGS best U (saved): {lbfgs_U_saved:.4f}  (re-evaluated, {N_BATCHES} fresh batches): {full_U:.4f}")
+print(f"[{LAYOUT_LABEL}] U (saved): {lbfgs_U_saved:.4f}  (re-evaluated, {N_BATCHES} fresh batches): {full_U:.4f}")
 print(f"n_detectors = {N_DETECTORS}")
 
 # ── Part 1: leave-one-out sweep over all 100 detectors ─────────────────────
@@ -169,7 +189,7 @@ results = dict(
     curve_lowest_dip_first=curve_lowest,
     curve_random=curve_random,
 )
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_removal_results.json")
+out_path = os.path.join(OUT_DIR, "detector_removal_results.json")
 with open(out_path, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_path}")
@@ -190,11 +210,11 @@ try:
     ax.axhline(full_U, color="gray", linestyle="--", linewidth=0.8, label="full 100-detector U")
     ax.set_xlabel("number of detectors remaining")
     ax.set_ylabel("U")
-    ax.set_title("Utility vs. number of detectors removed, by removal strategy")
+    ax.set_title(f"Utility vs. number of detectors removed, by removal strategy ({LAYOUT_LABEL})")
     ax.invert_xaxis()
     ax.legend(fontsize=8)
     fig.tight_layout()
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_removal_curves.png")
+    out_png = os.path.join(OUT_DIR, "detector_removal_curves.png")
     fig.savefig(out_png, dpi=150)
     print(f"[plot] wrote {out_png}")
 except Exception as exc:

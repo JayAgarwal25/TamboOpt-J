@@ -1,0 +1,63 @@
+======================================================================
+Cross-optimizer-family mode connectivity: L-BFGS vs. EvoGrad, DE, GES
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+
+L-BFGS (reference) layout: U saved=208.8643  re-evaluated=195.8421
+
+[evograd] layout: N range=[-2548,2027]  E range=[-1847,1182]  (mountain N=[-2497,2474]  E=[-2019,1182])
+[evograd] U saved=207.2679  re-evaluated (current FNN+recon, fresh batches)=195.1868
+[evograd] mean displacement: raw(unaligned)=361.7m  AFTER Hungarian alignment=201.3m
+[evograd] U after alignment (sanity check, should match re-evaluated): 195.1868
+[evograd] sweeping 41 points along the straight line from L-BFGS to (aligned) evograd ...
+[evograd] done in 10s
+[evograd] endpoints: U(t=0, L-BFGS)=195.842  U(t=1, evograd)=195.187
+[evograd] minimum along path: U=192.257 at t=0.625
+[evograd] dip below endpoints' average: 3.257 (1.67%)
+[evograd] mean mountain-projection correction along path: 0.0m
+
+[de] layout: N range=[-1857,2131]  E range=[-2013,972]  (mountain N=[-2497,2474]  E=[-2019,1182])
+[de] U saved=54.4281  re-evaluated (current FNN+recon, fresh batches)=187.1629
+[de] mean displacement: raw(unaligned)=1596.3m  AFTER Hungarian alignment=239.5m
+[de] U after alignment (sanity check, should match re-evaluated): 187.1629
+[de] sweeping 41 points along the straight line from L-BFGS to (aligned) de ...
+[de] done in 10s
+[de] endpoints: U(t=0, L-BFGS)=195.842  U(t=1, de)=187.163
+[de] minimum along path: U=187.163 at t=1.000
+[de] dip below endpoints' average: 4.340 (2.27%)
+[de] mean mountain-projection correction along path: 0.0m
+
+[ges] layout: N range=[-2263,2226]  E range=[-1993,1052]  (mountain N=[-2497,2474]  E=[-2019,1182])
+[ges] U saved=210.1760  re-evaluated (current FNN+recon, fresh batches)=197.5937
+[ges] mean displacement: raw(unaligned)=1523.5m  AFTER Hungarian alignment=259.6m
+[ges] U after alignment (sanity check, should match re-evaluated): 197.5937
+[ges] sweeping 41 points along the straight line from L-BFGS to (aligned) ges ...
+[ges] done in 10s
+[ges] endpoints: U(t=0, L-BFGS)=195.842  U(t=1, ges)=197.594
+[ges] minimum along path: U=194.159 at t=0.350
+[ges] dip below endpoints' average: 2.559 (1.30%)
+[ges] mean mountain-projection correction along path: 0.0m
+
+[mu_lambda_es] layout: N range=[-2362,2404]  E range=[-1925,1097]  (mountain N=[-2497,2474]  E=[-2019,1182])
+[mu_lambda_es] U saved=200.2404  re-evaluated (current FNN+recon, fresh batches)=196.5952
+[mu_lambda_es] mean displacement: raw(unaligned)=1610.4m  AFTER Hungarian alignment=394.4m
+[mu_lambda_es] U after alignment (sanity check, should match re-evaluated): 196.5952
+[mu_lambda_es] sweeping 41 points along the straight line from L-BFGS to (aligned) mu_lambda_es ...
+[mu_lambda_es] done in 10s
+[mu_lambda_es] endpoints: U(t=0, L-BFGS)=195.842  U(t=1, mu_lambda_es)=196.595
+[mu_lambda_es] minimum along path: U=194.132 at t=0.275
+[mu_lambda_es] dip below endpoints' average: 2.087 (1.06%)
+[mu_lambda_es] mean mountain-projection correction along path: 0.1m
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/cross_optimizer_mode_connectivity_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/cross_optimizer_mode_connectivity.png
+
+======================================================================
+CONCLUSION
+======================================================================
+  L-BFGS <-> evograd     : dip=1.67%  -> consistent with ONE connected plateau
+  L-BFGS <-> de          : dip=2.27%  -> consistent with ONE connected plateau
+  L-BFGS <-> ges         : dip=1.30%  -> consistent with ONE connected plateau
+  L-BFGS <-> mu_lambda_es: dip=1.06%  -> consistent with ONE connected plateau
