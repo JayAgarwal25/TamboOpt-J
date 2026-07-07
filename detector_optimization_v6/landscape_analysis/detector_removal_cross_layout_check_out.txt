@@ -1,0 +1,62 @@
+======================================================================
+Cross-layout check: does grid-scheme have the SAME critical detectors as center-scheme?
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+grid-scheme U (saved): 205.8684  (re-evaluated, 3 fresh batches): 194.1210
+
+[part 1] leave-one-out sweep on GRID-SCHEME layout (100 evals) ...
+[part 1] done in 12s
+  dip stats: min=-0.2003  max=7.2672  mean=0.6407  std=1.2117  (center-scheme was: mean=0.2980 std=0.5334)
+  grid-scheme most CRITICAL 5: [(15, 7.2672), (48, 5.3575), (3, 4.9002), (5, 3.8733), (43, 3.1025)]
+  grid-scheme most REDUNDANT 5: [(62, -0.2003), (25, -0.1865), (33, -0.1837), (28, -0.1655), (77, -0.1536)]
+
+[part 2a] greedy removal: highest-dip-first, GRID-SCHEME, down to 20 remaining ...
+  [highest_dip_first] 90 remaining, U=104.483  (110s elapsed)
+  [highest_dip_first] 80 remaining, U=69.561  (198s elapsed)
+  [highest_dip_first] 70 remaining, U=52.796  (267s elapsed)
+  [highest_dip_first] 60 remaining, U=41.387  (319s elapsed)
+  [highest_dip_first] 50 remaining, U=33.281  (357s elapsed)
+  [highest_dip_first] 40 remaining, U=26.979  (383s elapsed)
+  [highest_dip_first] 30 remaining, U=23.116  (399s elapsed)
+  [highest_dip_first] 20 remaining, U=13.309  (407s elapsed)
+
+[part 2b] greedy removal: lowest-dip-first, GRID-SCHEME, down to 20 remaining ...
+  [lowest_dip_first] 90 remaining, U=195.410  (110s elapsed)
+  [lowest_dip_first] 80 remaining, U=195.738  (198s elapsed)
+  [lowest_dip_first] 70 remaining, U=195.185  (267s elapsed)
+  [lowest_dip_first] 60 remaining, U=193.348  (320s elapsed)
+  [lowest_dip_first] 50 remaining, U=189.843  (357s elapsed)
+  [lowest_dip_first] 40 remaining, U=182.676  (383s elapsed)
+  [lowest_dip_first] 30 remaining, U=169.796  (403s elapsed)
+  [lowest_dip_first] 20 remaining, U=146.300  (412s elapsed)
+
+[part 2c] random removal order, GRID-SCHEME, down to 20 remaining ...
+
+[comparison] U at 20-detector floor:
+  GRID-SCHEME:   highest_dip_first=13.309  lowest_dip_first=146.300  random=60.354
+  CENTER-SCHEME (original run): highest_dip_first=13.756  lowest_dip_first=148.829  random=96.243
+
+======================================================================
+CROSS-LAYOUT SPATIAL COMPARISON (after Hungarian alignment)
+======================================================================
+  baseline: mean nearest-neighbor distance, ANY center-scheme detector -> nearest grid-scheme detector: 164.2m (std=79.2m)
+  center-scheme CRITICAL detectors -> nearest grid-scheme detector: mean=131.7m  [76.4000015258789, 184.8000030517578, 119.5, 197.5, 80.4000015258789]
+  center-scheme REDUNDANT detectors -> nearest grid-scheme detector: mean=203.7m  [212.39999389648438, 289.20001220703125, 179.39999389648438, 155.8000030517578, 181.5]
+  grid-scheme CRITICAL detectors -> nearest center-scheme detector: mean=268.4m  [269.3999938964844, 335.1000061035156, 398.3999938964844, 139.5, 199.5]
+  grid-scheme REDUNDANT detectors -> nearest center-scheme detector: mean=147.2m  [195.3000030517578, 169.1999969482422, 119.5, 182.8000030517578, 69.30000305175781]
+
+  If critical detectors' cross-layout distance is close to (or below) baseline, the OTHER layout still has something covering roughly that spot (criticality reflects a physical region, solved differently by each layout). If it's well ABOVE baseline, that region is uniquely covered by only one of the two layouts.
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_cross_layout_check_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_cross_layout_check.png
+
+======================================================================
+SUMMARY
+======================================================================
+  grid-scheme dip distribution: mean=0.6407 std=1.2117  (center-scheme: mean=0.2980 std=0.5334) -- different shape
+  grid-scheme critical detectors (own indices): [15, 48, 3, 5, 43]
+  center-scheme critical detectors (own indices): [97, 25, 72, 28, 58]
+  mean cross-layout distance, critical detectors: center->grid=131.7m  grid->center=268.4m
+  baseline (any detector) cross-layout distance: 164.2m
