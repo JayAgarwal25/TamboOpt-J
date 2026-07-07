@@ -76,7 +76,8 @@ def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
                   fnn,
-                  recon):
+                  recon,
+                  reconstruct_threshold: float = None):
     """Composite U for a (North, East) layout against a primary batch.
 
     `fnn` is the dual-species wrapper: both per-species surrogates are evaluated
@@ -85,9 +86,16 @@ def utility_of_xy(x_det: torch.Tensor,
     `_run_optimization` in 04_optimize.py (the U_PR term is computed but
     deliberately omitted from the composite, matching production).
 
+    `reconstruct_threshold` overrides the module-level RECONSTRUCT_THRESHOLD
+    (default None keeps production behavior unchanged) -- lets diagnostics
+    rescale the "minimum detectors firing" bar when evaluating layouts with a
+    detector count other than the production N_DETECTORS=100.
+
     NOT decorated with `@torch.no_grad()` so the L-BFGS optimizer can
     differentiate it; the gradient-free DE optimizers call it inside their own
     `no_grad` block."""
+    if reconstruct_threshold is None:
+        reconstruct_threshold = RECONSTRUCT_THRESHOLD
     B = primary_batch.shape[0]
     xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
     xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
@@ -109,7 +117,7 @@ def utility_of_xy(x_det: torch.Tensor,
     r = reconstructability(
         torch.expm1(E_pred_det),
         layout_threshold=LAYOUT_THRESHOLD,
-        reconstruct_threshold=RECONSTRUCT_THRESHOLD,
+        reconstruct_threshold=reconstruct_threshold,
     )
     u_theta = U_angle(theta_pred, theta_true, r)
     u_phi   = U_angle(phi_pred,   phi_true,   r)
