@@ -138,11 +138,25 @@ for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
         idx=idx, orig_N=orig_N, orig_E=orig_E, base_U=base_U,
         argmax_U=float(U_grid.max()), argmax_N=argmax_N, argmax_E=argmax_E,
         n_grid=n_grid.tolist(), e_grid=e_grid.tolist(),
-        U_grid=U_grid_2d.tolist(), time_s=dt,
+        U_grid=U_grid_2d.tolist(), U_min=float(U_grid.min()), U_max=float(U_grid.max()),
+        time_s=dt,
     )
 
+# Plot both panels with a SHARED color/z scale (see full_space_2d_slice.py for
+# rationale) -- otherwise each panel auto-scales to its own tiny range and a
+# 0.3-unit wobble can look just as "structured" as a 2-unit one.
+u_global_min = min(r["U_min"] for r in results.values())
+u_global_max = max(r["U_max"] for r in results.values())
+print(f"\n[shared scale] U range across both panels: [{u_global_min:.3f}, {u_global_max:.3f}]")
+
+for tag, r in results.items():
+    idx, orig_N, orig_E, base_U = r["idx"], r["orig_N"], r["orig_E"], r["base_U"]
+    argmax_N, argmax_E, argmax_U = r["argmax_N"], r["argmax_E"], r["argmax_U"]
+    U_grid_2d = np.array(r["U_grid"])
+
     fig, ax = plt.subplots(figsize=(7, 6))
-    im = ax.pcolormesh(e_grid, n_grid, U_grid_2d, shading="auto", cmap="viridis")
+    im = ax.pcolormesh(e_grid, n_grid, U_grid_2d, shading="auto", cmap="viridis",
+                        vmin=u_global_min, vmax=u_global_max)
     plt.colorbar(im, ax=ax, label="U (this detector swept, other 99 fixed)")
     other_mask = np.ones(N_DETECTORS, dtype=bool)
     other_mask[idx] = False
@@ -165,10 +179,11 @@ for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
     fig3d = plt.figure(figsize=(8, 6.5))
     ax3d = fig3d.add_subplot(projection="3d")
     ax3d.plot_surface(E_mesh, N_mesh, U_grid_2d, cmap="viridis", edgecolor="none",
-                       antialiased=True, alpha=0.95)
+                       antialiased=True, alpha=0.95, vmin=u_global_min, vmax=u_global_max)
+    ax3d.set_zlim(u_global_min, u_global_max)
     ax3d.scatter([orig_E], [orig_N], [base_U], marker="*", s=200, c="red", depthshade=False,
                  label="optimized position")
-    ax3d.scatter([argmax_E], [argmax_N], [float(U_grid.max())], marker="X", s=100, c="cyan",
+    ax3d.scatter([argmax_E], [argmax_N], [argmax_U], marker="X", s=100, c="cyan",
                  depthshade=False, label="grid argmax")
     ax3d.set_xlabel("East (m)")
     ax3d.set_ylabel("North (m)")

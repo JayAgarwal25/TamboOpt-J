@@ -132,38 +132,51 @@ for layout_tag, (base_x, base_y, base_U) in (
             disp_grid=disp_grid.tolist(),
         )
 
-        fig, ax = plt.subplots(figsize=(6.5, 5.5))
-        im = ax.pcolormesh(betas, alphas, U_grid, shading="auto", cmap="viridis")
-        plt.colorbar(im, ax=ax, label="U")
-        ax.scatter([0], [0], marker="*", s=250, c="red", edgecolor="black", label="base layout")
-        ax.set_xlabel("beta (m, direction 2)")
-        ax.set_ylabel("alpha (m, direction 1)")
-        ax.set_title(f"Full-space random 2D slice (fine step): {tag}")
-        ax.legend(loc="upper right", fontsize=8)
-        fig.tight_layout()
-        out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"full_space_2d_slice_fine_{tag}.png")
-        fig.savefig(out_png, dpi=150)
-        plt.close(fig)
-        print(f"[plot] wrote {out_png}")
+# ── Plot all panels with a SHARED color/z scale across all 4 (see
+# full_space_2d_slice.py for rationale). ──
+u_global_min = min(r["U_min"] for r in results.values())
+u_global_max = max(r["U_max"] for r in results.values())
+print(f"\n[shared scale] U range across all {len(results)} panels: "
+      f"[{u_global_min:.3f}, {u_global_max:.3f}]")
 
-        B_mesh, A_mesh = np.meshgrid(betas, alphas)
-        fig3d = plt.figure(figsize=(7.5, 6.5))
-        ax3d = fig3d.add_subplot(projection="3d")
-        ax3d.plot_surface(B_mesh, A_mesh, U_grid, cmap="viridis", edgecolor="none",
-                           antialiased=True, alpha=0.95)
-        ax3d.scatter([0], [0], [base_U], marker="*", s=200, c="red", depthshade=False,
-                     label="base layout")
-        ax3d.set_xlabel("beta (m, direction 2)")
-        ax3d.set_ylabel("alpha (m, direction 1)")
-        ax3d.set_zlabel("U")
-        ax3d.set_title(f"Full-space random 2D slice, fine step (3D): {tag}")
-        ax3d.view_init(elev=25, azim=-60)
-        fig3d.tight_layout()
-        out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   f"full_space_2d_slice_fine_{tag}_3d.png")
-        fig3d.savefig(out_png_3d, dpi=150)
-        plt.close(fig3d)
-        print(f"[plot] wrote {out_png_3d}")
+for tag, r in results.items():
+    U_grid = np.array(r["U_grid"])
+    base_U = r["base_U"]
+
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    im = ax.pcolormesh(betas, alphas, U_grid, shading="auto", cmap="viridis",
+                        vmin=u_global_min, vmax=u_global_max)
+    plt.colorbar(im, ax=ax, label="U")
+    ax.scatter([0], [0], marker="*", s=250, c="red", edgecolor="black", label="base layout")
+    ax.set_xlabel("beta (m, direction 2)")
+    ax.set_ylabel("alpha (m, direction 1)")
+    ax.set_title(f"Full-space random 2D slice (fine step): {tag}")
+    ax.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"full_space_2d_slice_fine_{tag}.png")
+    fig.savefig(out_png, dpi=150)
+    plt.close(fig)
+    print(f"[plot] wrote {out_png}")
+
+    B_mesh, A_mesh = np.meshgrid(betas, alphas)
+    fig3d = plt.figure(figsize=(7.5, 6.5))
+    ax3d = fig3d.add_subplot(projection="3d")
+    ax3d.plot_surface(B_mesh, A_mesh, U_grid, cmap="viridis", edgecolor="none",
+                       antialiased=True, alpha=0.95, vmin=u_global_min, vmax=u_global_max)
+    ax3d.set_zlim(u_global_min, u_global_max)
+    ax3d.scatter([0], [0], [base_U], marker="*", s=200, c="red", depthshade=False,
+                 label="base layout")
+    ax3d.set_xlabel("beta (m, direction 2)")
+    ax3d.set_ylabel("alpha (m, direction 1)")
+    ax3d.set_zlabel("U")
+    ax3d.set_title(f"Full-space random 2D slice, fine step (3D): {tag}")
+    ax3d.view_init(elev=25, azim=-60)
+    fig3d.tight_layout()
+    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               f"full_space_2d_slice_fine_{tag}_3d.png")
+    fig3d.savefig(out_png_3d, dpi=150)
+    plt.close(fig3d)
+    print(f"[plot] wrote {out_png_3d}")
 
 out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "full_space_2d_slice_fine_results.json")
 with open(out_json, "w") as f:
