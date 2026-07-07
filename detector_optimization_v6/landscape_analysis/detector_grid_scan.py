@@ -160,6 +160,26 @@ for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
     fig.tight_layout()
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
+
+    E_mesh, N_mesh = np.meshgrid(e_grid, n_grid)
+    fig3d = plt.figure(figsize=(8, 6.5))
+    ax3d = fig3d.add_subplot(projection="3d")
+    ax3d.plot_surface(E_mesh, N_mesh, U_grid_2d, cmap="viridis", edgecolor="none",
+                       antialiased=True, alpha=0.95)
+    ax3d.scatter([orig_E], [orig_N], [base_U], marker="*", s=200, c="red", depthshade=False,
+                 label="optimized position")
+    ax3d.scatter([argmax_E], [argmax_N], [float(U_grid.max())], marker="X", s=100, c="cyan",
+                 depthshade=False, label="grid argmax")
+    ax3d.set_xlabel("East (m)")
+    ax3d.set_ylabel("North (m)")
+    ax3d.set_zlabel("U")
+    ax3d.set_title(f"U vs. position of detector {idx} ({tag}), 3D")
+    ax3d.view_init(elev=25, azim=-60)
+    fig3d.tight_layout()
+    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_{tag}_3d.png")
+    fig3d.savefig(out_png_3d, dpi=150)
+    plt.close(fig3d)
+    print(f"[plot] wrote {out_png_3d}")
     print(f"[plot] wrote {out_png}")
 
 out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_results.json")

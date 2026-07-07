@@ -159,6 +159,25 @@ for layout_tag, (base_x, base_y, base_U) in (
         plt.close(fig)
         print(f"[plot] wrote {out_png}")
 
+        B_mesh, A_mesh = np.meshgrid(betas, alphas)
+        fig3d = plt.figure(figsize=(7.5, 6.5))
+        ax3d = fig3d.add_subplot(projection="3d")
+        ax3d.plot_surface(B_mesh, A_mesh, U_grid, cmap="viridis", edgecolor="none",
+                           antialiased=True, alpha=0.95)
+        ax3d.scatter([0], [0], [base_U], marker="*", s=200, c="red", depthshade=False,
+                     label="base layout")
+        ax3d.set_xlabel("beta (m, direction 2)")
+        ax3d.set_ylabel("alpha (m, direction 1)")
+        ax3d.set_zlabel("U")
+        ax3d.set_title(f"Full-space random 2D slice (3D): {tag}")
+        ax3d.view_init(elev=25, azim=-60)
+        fig3d.tight_layout()
+        out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   f"full_space_2d_slice_{tag}_3d.png")
+        fig3d.savefig(out_png_3d, dpi=150)
+        plt.close(fig3d)
+        print(f"[plot] wrote {out_png_3d}")
+
 out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "full_space_2d_slice_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)

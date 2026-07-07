@@ -1,0 +1,58 @@
+======================================================================
+Detector removal: batch-resampling robustness check
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+[resample 0] seed_base=2000  full_U=195.4231  dip mean=0.2664 std=0.5132  (12s)
+[resample 1] seed_base=3000  full_U=194.6735  dip mean=0.2912 std=0.5438  (12s)
+[resample 2] seed_base=4000  full_U=196.3713  dip mean=0.3340 std=0.5551  (12s)
+[resample 3] seed_base=5000  full_U=195.2021  dip mean=0.2817 std=0.4933  (12s)
+[resample 4] seed_base=6000  full_U=196.2735  dip mean=0.3179 std=0.5544  (12s)
+
+full_U across 6 independent samples: mean=195.642 std=0.603 (individual: [195.909, 195.423, 194.674, 196.371, 195.202, 196.274])
+
+[correlation] pairwise Pearson r between all 6 dip vectors (1.0 on diagonal):
+  original(seed_base=1000)    : +1.000  +0.925  +0.943  +0.944  +0.931  +0.930
+  resample0(seed_base=2000)   : +0.925  +1.000  +0.909  +0.925  +0.919  +0.936
+  resample1(seed_base=3000)   : +0.943  +0.909  +1.000  +0.953  +0.934  +0.917
+  resample2(seed_base=4000)   : +0.944  +0.925  +0.953  +1.000  +0.938  +0.942
+  resample3(seed_base=5000)   : +0.931  +0.919  +0.934  +0.938  +1.000  +0.955
+  resample4(seed_base=6000)   : +0.930  +0.936  +0.917  +0.942  +0.955  +1.000
+  mean off-diagonal r = 0.933  (min=0.909)
+
+[rank stability] original critical-5: [25, 28, 58, 72, 97]
+[rank stability] original redundant-5: [16, 37, 39, 57, 87]
+  resample0 own critical-5: [15, 25, 28, 72, 97]  (overlap with original: 4/5)
+  resample0 own redundant-5: [12, 24, 37, 79, 87]  (overlap with original: 2/5)
+  resample1 own critical-5: [15, 25, 35, 72, 97]  (overlap with original: 3/5)
+  resample1 own redundant-5: [24, 43, 63, 87, 94]  (overlap with original: 1/5)
+  resample2 own critical-5: [25, 27, 35, 72, 97]  (overlap with original: 3/5)
+  resample2 own redundant-5: [12, 16, 39, 54, 87]  (overlap with original: 3/5)
+  resample3 own critical-5: [25, 35, 58, 72, 97]  (overlap with original: 4/5)
+  resample3 own redundant-5: [0, 12, 37, 63, 79]  (overlap with original: 1/5)
+  resample4 own critical-5: [25, 35, 42, 72, 97]  (overlap with original: 3/5)
+  resample4 own redundant-5: [37, 39, 69, 73, 87]  (overlap with original: 3/5)
+
+[rank stability] how many of 5 resamples keep each ORIGINAL critical detector in their own top-5:
+    det  97  original_dip=+3.0755  resample_mean=+2.5928+/-0.3510  hit 5/5
+    det  25  original_dip=+2.9535  resample_mean=+2.8911+/-0.4043  hit 5/5
+    det  72  original_dip=+1.8557  resample_mean=+2.0475+/-0.1658  hit 5/5
+    det  28  original_dip=+1.3850  resample_mean=+1.2679+/-0.0838  hit 1/5
+    det  58  original_dip=+1.2815  resample_mean=+1.1904+/-0.1739  hit 1/5
+[rank stability] how many of 5 resamples keep each ORIGINAL redundant detector in their own bottom-5:
+    det  16  original_dip=-0.2172  resample_mean=+0.0024+/-0.0988  hit 1/5
+    det  37  original_dip=-0.1588  resample_mean=-0.1793+/-0.0841  hit 3/5
+    det  87  original_dip=-0.1402  resample_mean=-0.1748+/-0.1894  hit 4/5
+    det  57  original_dip=-0.1284  resample_mean=-0.0116+/-0.0760  hit 0/5
+    det  39  original_dip=-0.1280  resample_mean=-0.0337+/-0.1389  hit 2/5
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_batch_robustness_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_removal_batch_robustness.png
+
+======================================================================
+SUMMARY
+======================================================================
+  mean pairwise dip-vector correlation across 6 independent batch draws: 0.933
+  original critical-5 average hit rate in resamples' own critical-5: 68%
+  original redundant-5 average hit rate in resamples' own redundant-5: 40%
