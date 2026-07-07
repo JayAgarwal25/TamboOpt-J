@@ -475,9 +475,12 @@ def _run_one_scheme(scheme: str,
 
 
 def main():
-    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX
+    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX, SEED
     import argparse
     ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=SEED,
+                    help="Base seed for chain perturbations, per-scheme offsets, and the "
+                         "fixed L-BFGS polishing batch (default 42, the original run's value).")
     ap.add_argument("--chains", type=int, default=N_CHAINS)
     ap.add_argument("--adam-epochs", type=int, default=N_ADAM_EPOCHS)
     ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
@@ -504,11 +507,13 @@ def main():
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
     DENSITY_VMAX = float(args.density_vmax)
+    SEED = int(args.seed)
 
     print("=" * 72)
     print("v6/04_optimize_lbfgs_ensemble.py — Adam warm-start + L-BFGS ensemble")
     print("=" * 72)
     print(f"device       : {DEVICE}")
+    print(f"seed         : {SEED}")
     print(f"init schemes : {INIT_SCHEMES}")
     print(f"chains (K)   : {N_CHAINS}  (init σ={INIT_OVERDISP_SIGMA} m)")
     print(f"Adam epochs  : {N_ADAM_EPOCHS}  (primaries/step={PRIMARIES_PER_STEP})")
