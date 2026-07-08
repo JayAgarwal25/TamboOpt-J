@@ -11,18 +11,21 @@ Sweeping detectors at percentile positions [0, 50, 99]:
   idx= 16  dist_to_center=2656.5m
 
 [idx=48] dist_to_center=73.4m  sweeping 15x15 grid ...
-[idx=48] done in 868s.  U range=[160.489, 169.712]  span=9.223  base U=162.893  argmax gain=+6.819  argmax displacement=1270.5m
-[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_48.png
+[idx=48] done in 45s.  U range=[160.489, 169.712]  span=9.223  base U=162.893  argmax gain=+6.819  argmax displacement=1270.5m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_48.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_48_3d.png
 
 [idx=63] dist_to_center=1485.0m  sweeping 15x15 grid ...
-[idx=63] done in 869s.  U range=[162.635, 172.298]  span=9.663  base U=162.893  argmax gain=+9.405  argmax displacement=2547.0m
-[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_63.png
+[idx=63] done in 45s.  U range=[162.635, 172.298]  span=9.663  base U=162.893  argmax gain=+9.405  argmax displacement=2547.0m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_63.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_63_3d.png
 
 [idx=16] dist_to_center=2656.5m  sweeping 15x15 grid ...
-[idx=16] done in 868s.  U range=[162.151, 171.485]  span=9.334  base U=162.893  argmax gain=+8.592  argmax displacement=2185.5m
-[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_random_control_16.png
+[idx=16] done in 45s.  U range=[162.151, 171.485]  span=9.334  base U=162.893  argmax gain=+8.592  argmax displacement=2185.5m
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_16.png
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_random_control_16_3d.png
 
-Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/landscape_analysis/detector_grid_scan_random_control_results.json
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/detector_grid_scan_random_control_results.json
 
 ======================================================================
 SUMMARY (compare against detector_grid_scan_broad_results.json)

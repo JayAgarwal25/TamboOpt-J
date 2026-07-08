@@ -213,6 +213,7 @@ for tag, r in results.items():
     ax3d.set_ylabel("North (m)")
     ax3d.set_zlabel("U")
     ax3d.set_title(f"U vs. position of detector {idx} ({tag}), 3D")
+    ax3d.legend(loc="upper left", fontsize=8)
     ax3d.view_init(elev=25, azim=-60)
     fig3d.tight_layout()
     out_png_3d = os.path.join(OUT_DIR, f"detector_grid_{tag}_3d.png")

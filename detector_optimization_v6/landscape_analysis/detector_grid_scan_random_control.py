@@ -36,7 +36,7 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 5
@@ -116,15 +116,18 @@ for idx in sweep_indices:
     print(f"[idx={idx}] done in {dt:.0f}s.  U range=[{U_grid.min():.3f}, {U_grid.max():.3f}]  "
           f"span={rng_span:.3f}  base U={base_U:.3f}  argmax gain={U_grid.max()-base_U:+.3f}  "
           f"argmax displacement={disp:.1f}m")
+    U_grid_2d = U_grid.reshape(GRID_N, GRID_N)
     results[str(idx)] = dict(
         idx=idx, dist_to_center=float(dist[idx]), orig_N=orig_N, orig_E=orig_E,
         base_U=base_U, U_min=float(U_grid.min()), U_max=float(U_grid.max()),
         span=rng_span, argmax_gain=float(U_grid.max() - base_U), argmax_displacement=disp,
+        argmax_N=argmax_N, argmax_E=argmax_E,
+        n_grid=n_grid.tolist(), e_grid=e_grid.tolist(), U_grid=U_grid_2d.tolist(),
         time_s=dt,
     )
 
     fig, ax = plt.subplots(figsize=(7, 6))
-    im = ax.pcolormesh(e_grid, n_grid, U_grid.reshape(GRID_N, GRID_N), shading="auto", cmap="viridis")
+    im = ax.pcolormesh(e_grid, n_grid, U_grid_2d, shading="auto", cmap="viridis")
     plt.colorbar(im, ax=ax, label="U (this detector swept, other 99 fixed, RANDOM layout)")
     other_mask = np.ones(N_DETECTORS, dtype=bool)
     other_mask[idx] = False
@@ -141,6 +144,27 @@ for idx in sweep_indices:
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
     print(f"[plot] wrote {out_png}")
+
+    E_mesh, N_mesh = np.meshgrid(e_grid, n_grid)
+    fig3d = plt.figure(figsize=(8, 6.5))
+    ax3d = fig3d.add_subplot(projection="3d")
+    ax3d.plot_surface(E_mesh, N_mesh, U_grid_2d, cmap="viridis", edgecolor="none",
+                       antialiased=True, alpha=0.95)
+    ax3d.scatter([orig_E], [orig_N], [base_U], marker="*", s=200, c="red", depthshade=False,
+                 label="original random position")
+    ax3d.scatter([argmax_E], [argmax_N], [float(U_grid.max())], marker="X", s=100, c="cyan",
+                 depthshade=False, label="grid argmax")
+    ax3d.set_xlabel("East (m)")
+    ax3d.set_ylabel("North (m)")
+    ax3d.set_zlabel("U")
+    ax3d.set_title(f"CONTROL (random layout): U vs. position of detector {idx}, 3D")
+    ax3d.legend(loc="upper left", fontsize=8)
+    ax3d.view_init(elev=25, azim=-60)
+    fig3d.tight_layout()
+    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_random_control_{idx}_3d.png")
+    fig3d.savefig(out_png_3d, dpi=150)
+    plt.close(fig3d)
+    print(f"[plot] wrote {out_png_3d}")
 
 out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_scan_random_control_results.json")
 with open(out_json, "w") as f:
