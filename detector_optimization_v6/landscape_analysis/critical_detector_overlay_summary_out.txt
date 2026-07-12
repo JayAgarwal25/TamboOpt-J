@@ -1,0 +1,7 @@
+======================================================================
+Critical detector overlay summary (true mountain footprint)
+======================================================================
+Cross-layout validated hotspots (hit-rate >= 3/12): 6 detectors -> native indices [14, 26, 39, 52, 76, 97]
+Full U=195.91; at 20-detector floor: redundant-first=148.8 (76%), critical-first=13.8 (7%), random=96.2 (49%)
+
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/critical_detector_overlay_summary.png
