@@ -84,8 +84,10 @@ import matplotlib.pyplot as plt
 
 
 def build_grid(mode, out_name, title):
-    fig, axes = plt.subplots(3, 4, figsize=(22, 15))
-    for ax, info in zip(axes.flat, per_layout):
+    n_rows, n_cols = 3, 4
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(24, 15), constrained_layout=True)
+    for i, (ax, info) in enumerate(zip(axes.flat, per_layout)):
+        row, col = divmod(i, n_cols)
         xy, dips = info["xy"], info["dips"]
         sc = ax.scatter(xy[:, 0], xy[:, 1], c=dips, cmap="RdYlGn_r", s=55,
                          edgecolor="k", linewidth=0.4, zorder=2)
@@ -99,14 +101,13 @@ def build_grid(mode, out_name, title):
             ax.scatter(xy[idx, 0], xy[idx, 1], facecolor="none", edgecolor="black",
                        s=140, linewidth=1.6, marker="s", zorder=3, label="most redundant")
         ax.set_title(info["tag"], fontsize=10)
-        ax.set_xlabel("North (m)", fontsize=8)
-        ax.set_ylabel("East (m)", fontsize=8)
+        ax.set_xlabel("North (m)", fontsize=9)
+        ax.set_ylabel("East (m)", fontsize=9, labelpad=2)
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
     axes.flat[0].legend(fontsize=8, loc="best")
     fig.suptitle(title, fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
     out_path = os.path.join(HERE, out_name)
     fig.savefig(out_path, dpi=150)
     print(f"[plot] wrote {out_path}")
