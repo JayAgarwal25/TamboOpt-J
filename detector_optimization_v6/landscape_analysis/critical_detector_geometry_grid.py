@@ -91,7 +91,9 @@ def build_grid(mode, out_name, title):
         xy, dips = info["xy"], info["dips"]
         sc = ax.scatter(xy[:, 0], xy[:, 1], c=dips, cmap="RdYlGn_r", s=55,
                          edgecolor="k", linewidth=0.4, zorder=2)
-        fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04).ax.tick_params(labelsize=6)
+        cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("leave-one-out dip", fontsize=7)
+        cbar.ax.tick_params(labelsize=6)
         if mode == "critical":
             idx = info["critical_idx"]
             ax.scatter(xy[idx, 0], xy[idx, 1], facecolor="none", edgecolor="blue",
