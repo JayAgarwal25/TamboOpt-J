@@ -1,0 +1,18 @@
+======================================================================
+Detector segregation grid (removable vs. keep, tolerance=0.99)
+======================================================================
+  ds_center        full_U= 195.91  removable= 42  keep= 58  (within 99% of full U)
+  ds_grid          full_U= 194.12  removable= 45  keep= 55  (within 99% of full U)
+  ds_seed101_grid  full_U= 194.51  removable= 38  keep= 62  (within 99% of full U)
+  ds_seed101_center full_U= 196.01  removable= 43  keep= 57  (within 99% of full U)
+  ds_seed202_grid  full_U= 193.75  removable= 42  keep= 58  (within 99% of full U)
+  ds_seed202_center full_U= 194.68  removable= 42  keep= 58  (within 99% of full U)
+  ds_seed303_grid  full_U= 194.12  removable= 40  keep= 60  (within 99% of full U)
+  ds_seed303_center full_U= 195.16  removable= 41  keep= 59  (within 99% of full U)
+  ds_seed404_grid  full_U= 192.61  removable= 41  keep= 59  (within 99% of full U)
+  ds_seed404_center full_U= 197.82  removable= 39  keep= 61  (within 99% of full U)
+  ds_seed505_grid  full_U= 195.17  removable= 40  keep= 60  (within 99% of full U)
+  ds_seed505_center full_U= 196.15  removable= 39  keep= 61  (within 99% of full U)
+
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/critical_detector_segregation_grid.png
+[data] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/critical_detector_segregation_grid_results.json
