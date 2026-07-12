@@ -1,0 +1,60 @@
+======================================================================
+Detector removal / redundancy analysis -- layout: seed101_center
+======================================================================
+[load] fnn_electron.pt  model=deepsets  epoch=101  val=0.408399257503237
+[load] fnn_muon.pt  model=deepsets  epoch=101  val=0.4277376566205706
+[load] recon.pt  model=deepsets  epoch=301  val=0.0011184794994869402  <- /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs/test_v6_run_03_recentered_deepsets
+[seed101_center] U (saved): 207.6644  (re-evaluated, 3 fresh batches): 196.0087
+n_detectors = 100
+
+[part 1] leave-one-out sweep (100 evals) ...
+  20/100  (2s elapsed)
+  40/100  (5s elapsed)
+  60/100  (7s elapsed)
+  80/100  (10s elapsed)
+  100/100  (12s elapsed)
+[part 1] done in 12s
+  dip stats: min=-0.2631  max=3.0736  mean=0.3207  std=0.5959
+  most REDUNDANT 5 detectors (smallest dip): [(6, -0.2631), (34, -0.1979), (51, -0.1731), (48, -0.1567), (52, -0.1547)]
+  most CRITICAL 5 detectors (largest dip):   [(87, 1.8058), (58, 1.9573), (16, 1.9745), (18, 2.457), (36, 3.0736)]
+
+[part 2a] greedy removal: highest-dip-first (most critical removed first) down to 20 remaining ...
+  [highest_dip_first] 90 remaining, U=159.867  (109s elapsed)
+  [highest_dip_first] 80 remaining, U=106.323  (197s elapsed)
+  [highest_dip_first] 70 remaining, U=71.466  (266s elapsed)
+  [highest_dip_first] 60 remaining, U=47.474  (318s elapsed)
+  [highest_dip_first] 50 remaining, U=35.097  (355s elapsed)
+  [highest_dip_first] 40 remaining, U=24.122  (380s elapsed)
+  [highest_dip_first] 30 remaining, U=17.904  (396s elapsed)
+  [highest_dip_first] 20 remaining, U=12.550  (404s elapsed)
+
+[part 2b] greedy removal: lowest-dip-first (most redundant removed first) down to 20 remaining ...
+  [lowest_dip_first] 90 remaining, U=197.314  (109s elapsed)
+  [lowest_dip_first] 80 remaining, U=197.302  (197s elapsed)
+  [lowest_dip_first] 70 remaining, U=196.617  (265s elapsed)
+  [lowest_dip_first] 60 remaining, U=195.020  (317s elapsed)
+  [lowest_dip_first] 50 remaining, U=190.753  (355s elapsed)
+  [lowest_dip_first] 40 remaining, U=183.124  (380s elapsed)
+  [lowest_dip_first] 30 remaining, U=170.151  (396s elapsed)
+  [lowest_dip_first] 20 remaining, U=146.163  (404s elapsed)
+
+[part 2c] random removal order down to 20 remaining ...
+  [random] 90 remaining, U=193.340  (1s elapsed)
+  [random] 80 remaining, U=188.622  (2s elapsed)
+  [random] 70 remaining, U=184.181  (3s elapsed)
+  [random] 60 remaining, U=166.137  (4s elapsed)
+  [random] 50 remaining, U=155.702  (5s elapsed)
+  [random] 40 remaining, U=134.564  (5s elapsed)
+  [random] 30 remaining, U=118.934  (6s elapsed)
+  [random] 20 remaining, U=72.495  (6s elapsed)
+
+Saved to /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/seed101_center/detector_removal_results.json
+[plot] wrote /n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6/landscape_analysis/other_optimizers/seed101_center/detector_removal_curves.png
+
+======================================================================
+SUMMARY
+======================================================================
+Full 100-detector U: 196.009
+  highest_dip_first   : U at 20 remaining = 12.550  (drop from full = +183.459)
+  lowest_dip_first    : U at 20 remaining = 146.163  (drop from full = +49.845)
+  random              : U at 20 remaining = 72.495  (drop from full = +123.514)

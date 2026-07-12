@@ -1,0 +1,56 @@
+Found 10 seed layout directories
+
+=== detector removal: U at 20-detector floor ===
+layout              fullU  redund@20  redund%   crit@20   crit%  rand@20   rand%
+seed101_center     196.01     146.16    74.6%     12.55    6.4%    72.50   37.0%
+seed101_grid       194.51     140.53    72.3%     11.21    5.8%    68.07   35.0%
+seed202_center     194.68     146.88    75.4%     14.45    7.4%    88.77   45.6%
+seed202_grid       193.75     149.06    76.9%     21.84   11.3%    78.31   40.4%
+seed303_center     195.16     153.21    78.5%     30.24   15.5%   104.86   53.7%
+seed303_grid       194.12     147.87    76.2%     10.40    5.4%    96.78   49.9%
+seed404_center     197.82     146.26    73.9%     12.47    6.3%    89.17   45.1%
+seed404_grid       192.61     144.16    74.8%     10.79    5.6%    48.37   25.1%
+seed505_center     196.15     149.62    76.3%     13.53    6.9%    89.96   45.9%
+seed505_grid       195.17     147.48    75.6%     12.55    6.4%    50.17   25.7%
+
+=== leave-one-out dip stats ===
+layout                min      max     mean      std
+seed101_center     -0.263    3.074    0.321    0.596
+seed101_grid       -0.173    4.686    0.599    1.035
+seed202_center     -0.243    2.703    0.282    0.521
+seed202_grid       -0.295    4.765    0.533    0.857
+seed303_center     -0.173    1.465    0.250    0.317
+seed303_grid       -0.348    4.781    0.574    0.908
+seed404_center     -0.263    3.684    0.466    0.756
+seed404_grid       -0.109    5.863    0.638    1.188
+seed505_center     -0.345    3.880    0.370    0.682
+seed505_grid       -0.294    3.983    0.589    0.964
+
+=== full-space 2D slice spans (% of optimized base U) ===
+layout             pair0%   pair1%  argmax_gain_pair0  argmax_gain_pair1
+seed101_center     18.10%   10.71%              0.000              0.000
+seed101_grid       25.14%   18.78%              0.000              0.000
+seed202_center     18.94%   16.20%              0.000              0.000
+seed202_grid       19.52%   20.69%              0.000              0.000
+seed303_center     13.08%   11.26%              0.000              0.000
+seed303_grid       19.90%   25.01%              0.000              0.000
+seed404_center     14.10%   14.85%              0.000              0.000
+seed404_grid       30.29%   18.41%              0.000              0.000
+seed505_center     13.53%   13.02%              0.000              0.000
+seed505_grid       19.74%   21.16%              0.000              0.000
+
+=== detector grid scan: center/edge gains ===
+layout            center_gain  edge_gain
+seed101_center          0.292      0.234
+seed101_grid           -0.885      0.578
+seed202_center          0.009      0.500
+seed202_grid           -0.833      0.399
+seed303_center          0.157      0.052
+seed303_grid           -1.521      0.592
+seed404_center         -0.086      0.237
+seed404_grid            0.063      1.004
+seed505_center          0.183      0.585
+seed505_grid           -0.714      0.796
+
+=== error log check ===
+0 non-empty error logs out of 30 jobs (3 scripts x 10 layouts)
