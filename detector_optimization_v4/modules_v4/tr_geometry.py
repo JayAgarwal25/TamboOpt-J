@@ -276,6 +276,8 @@ def load_tr_mountain(
     east_entry:     float = ALLSHOWERS_EAST_ENTRY,
     layer_east_dx:  float = ALLSHOWERS_LAYER_DX,
     n_planes:       int   = DEFAULT_N_PLANES,
+    site_lon_deg:   float = None,
+    site_lat_deg:   float = None,
     # Legacy aliases (ignored if the above are set)
     east_min:       float = None,
     east_max:       float = None,
@@ -290,6 +292,16 @@ def load_tr_mountain(
         east_entry    : East at AllShowers layer 0 (default -212 m, empirically calibrated).
         layer_east_dx : East depth per layer in metres (default 307 m, positive).
         n_planes      : number of AllShowers planes (default 24).
+        site_lon_deg / site_lat_deg : ENU origin (site) longitude/latitude in
+                        degrees. If None, taken from the mesh's own `location`
+                        dataset ([lon, lat]) so the centroids land in the
+                        site-local ENU frame anchored at THAT mesh (e.g. the
+                        `malata` mesh sits ~33 km east of the colca site — using
+                        the wrong origin offsets it by that much). Falls back to
+                        the module SITE_LON_DEG/SITE_LAT_DEG constants only when
+                        the mesh has no `location`. For the colca mesh the
+                        `location` dataset equals those constants, so existing
+                        callers are unaffected.
         east_min / east_max : legacy parameters, ignored.  Remove from call sites.
     """
     with h5py.File(h5_path, "r") as f:
@@ -297,13 +309,20 @@ def load_tr_mountain(
         verts    = g["vertices"][...]          # (3, 90000) ECEF float64
         faces    = g["faces"][...] - 1         # (3, 179996) 0-indexed
         det_idx  = g[det_key][...] - 1         # (2161,)     0-indexed
+        h5_loc   = g["location"][...] if "location" in g else None   # [lon_deg, lat_deg]
+
+    # ENU origin: explicit arg > mesh `location` dataset > module default.
+    if site_lon_deg is None:
+        site_lon_deg = float(h5_loc[0]) if h5_loc is not None else SITE_LON_DEG
+    if site_lat_deg is None:
+        site_lat_deg = float(h5_loc[1]) if h5_loc is not None else SITE_LAT_DEG
 
     # Triangle centroids in ECEF
     tri_verts      = verts[:, faces[:, det_idx]]    # (3, 3, 2161)
     centroids_ecef = tri_verts.mean(axis=1)          # (3, 2161)
 
-    # Rotate to local ENU
-    enu = _ecef_to_enu(centroids_ecef, SITE_LON_DEG, SITE_LAT_DEG)  # [East, North, Up]
+    # Rotate to local ENU about the site origin
+    enu = _ecef_to_enu(centroids_ecef, site_lon_deg, site_lat_deg)  # [East, North, Up]
     East, North, Up = enu[0], enu[1], enu[2]
 
     centroids_NUE = np.stack([North, Up, East], axis=1)   # (2161, 3)

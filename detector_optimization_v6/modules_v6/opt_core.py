@@ -23,7 +23,7 @@ from scipy.optimize import linear_sum_assignment
 
 from .constants import (
     N_DETECTORS, FNN_FOLDER, RECON_FOLDER,
-    GEOMETRY_PATH, LOG_E_MIN, LOG_E_MAX,
+    GEOMETRY_PATH, GEOMETRY_PATH_RESOLVED, LOG_E_MIN, LOG_E_MAX,
 )
 from .dual_surrogate import load_dual_surrogate
 from .reconstruction import build_recon_from_ckpt
@@ -45,15 +45,9 @@ W_DIV   = 1e3
 LAYOUT_THRESHOLD      = 5e-2
 RECONSTRUCT_THRESHOLD = 10.0
 
-# constants.GEOMETRY_PATH may be stale; prefer a local copy, then the TAMBOSim path.
-GEOMETRY_PATH_RESOLVED = next(
-    (p for p in (
-        os.path.join(_REPO, "colca_valley.h5"),
-        "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
-        GEOMETRY_PATH,
-    ) if os.path.exists(p)),
-    GEOMETRY_PATH,
-)
+# GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
+# the configured mesh, else the absolute path) and re-exported here for callers
+# (04 DE / DE-pop) that import it from opt_core.
 
 
 # ── Objective helpers ─────────────────────────────────────────────────────────

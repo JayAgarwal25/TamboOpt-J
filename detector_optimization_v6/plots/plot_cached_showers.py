@@ -44,7 +44,7 @@ _DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_1000000.pt")
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_V6, "colca_valley.h5"),
+        os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),

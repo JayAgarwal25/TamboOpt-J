@@ -84,7 +84,7 @@ E_MIN, E_MAX = 10**LOG_E_MIN, 10**LOG_E_MAX
 
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_V6, "colca_valley.h5"),
+        os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),

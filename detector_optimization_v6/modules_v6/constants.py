@@ -3,12 +3,35 @@
 import os
 
 
-GEOMETRY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/colca_valley.h5"
-GEOMETRY_GROUP = "colca_valley_30000"
+# Mountain mesh. `load_tr_mountain` rotates the ECEF vertices into the
+# site-local ENU frame anchored at the mesh's own `location` dataset, so the
+# detector centroids share the (East, North, Up) origin used by the tau shower
+# corpus (tau_wholesky.h5). The `malata` group holds a 266-face detector region
+# at location [lon -71.97, lat -15.58]; its ENU bbox is
+# North ∈ [-956, 716], East ∈ [-499, 777], Up ∈ [2748, 3712] m.
+GEOMETRY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/malata.h5"
+GEOMETRY_GROUP = "malata"
 DET_KEY        = "detector1"
+
+# Resolved mesh path used by the optimizers/plots: prefer a copy of the configured
+# mesh sitting next to the repo, else the absolute GEOMETRY_PATH. Callers used to
+# recompute this with a hardcoded `colca_valley.h5` fallback — which now mismatches
+# GEOMETRY_GROUP='malata' and would crash — so it is centralized here and tracks
+# whatever mesh GEOMETRY_PATH points at.
+_GEOM_LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           os.path.basename(GEOMETRY_PATH))
+GEOMETRY_PATH_RESOLVED = _GEOM_LOCAL if os.path.exists(_GEOM_LOCAL) else GEOMETRY_PATH
 N_PLANES       = 24
 EAST_ENTRY     = 1500.0
 LAYER_EAST_DX  = 150.0
+
+# Detector spatial-response Gaussian kernel width [m] in the plane-aware kernel
+# (compute_labels_batch → GetCounts_planeaware). Reduced 200 → 50 for the malata
+# array: its ~1.4 km surface packs 100 detectors at ~120 m spacing, so a 200 m
+# kernel over-smoothed neighbouring detectors together. Used at dataset-build time
+# (Step 1 labels) and by the aleatoric-floor script; the trained surrogate then
+# inherits this resolution.
+SIGMA_SPATIAL  = 50.0
 
 # Fixed architecture constants
 N_DETECTORS = 100
@@ -71,8 +94,24 @@ BATCH_SIZE_TRAIN  = 20
 # row i and row N+i are two components of ONE physical event. The corpus pdg
 # column = the EM/hadronic primary class (0/1), randomly sampled by
 # sample_primary_particles and fed to the generator as its conditioning label.
-DUAL_SHOWER_CACHE_PATH = os.path.join(
-    SHOWER_CACHE, f"cashed_showers_dual_{2 * NUM_SHOWERS}.pt")
+# ── Real tau primaries (tau_wholesky.h5) ─────────────────────────────────────
+# When USE_TAU_PRIMARIES, Step 0 draws its primaries (energy, direction, and a
+# physical ENU decay POSITION) from tau_wholesky.h5 instead of the synthetic
+# `sample_primary_particles`, and Step 1 places each shower at its real position
+# (via the `<corpus>_positions.pt` sidecar) instead of re-centering it onto the
+# mountain. tau_wholesky.h5 is in the SAME site-local ENU frame the mountain mesh
+# defines (origin = the mesh `location`), so mountain and showers share (E,N,U)=0.
+# Energies are filtered to the generator's trained band [10**LOG_E_MIN,
+# 10**LOG_E_MAX] GeV inside the loader.
+USE_TAU_PRIMARIES = True
+TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/tau_wholesky.h5"
+TAU_CORPUS_PATH   = os.path.join(SHOWER_CACHE, "cashed_showers_tau_dual.pt")
+
+# Corpus the Step-1 builder reads. Tau runs use a fixed-name file (the pair count
+# is only known after energy filtering); synthetic runs keep the count-based name.
+DUAL_SHOWER_CACHE_PATH = (
+    TAU_CORPUS_PATH if USE_TAU_PRIMARIES
+    else os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{2 * NUM_SHOWERS}.pt"))
 # Per-row e/µ species id (0=electron block, 1=muon block) — which secondary
 # COMPONENT a row is. Written by Step 0 alongside the corpus (showerdata.Showers
 # has no species field; its pdg now carries the EM/hadronic class). Row-aligned
@@ -80,6 +119,12 @@ DUAL_SHOWER_CACHE_PATH = os.path.join(
 # corpus; derived from the corpus path by the same `<corpus>_species.pt` rule the
 # Step-1 builders use, so it tracks DUAL_SHOWER_CACHE_PATH automatically.
 DUAL_SPECIES_IDS_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_species.pt"
+# Per-row ENU decay position (M, 3) columns (East, North, Up), row-aligned with
+# the corpus (electron block then muon block, both sharing the primary → same
+# position). Written by Step 0 when USE_TAU_PRIMARIES; Step 1 places each cloud at
+# this real position instead of re-centering to the mountain. Same `<corpus>_*`
+# sidecar rule so it tracks DUAL_SHOWER_CACHE_PATH automatically.
+DUAL_POSITIONS_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_positions.pt"
 
 # 02_train_fnn_deepsets.py log-compresses the T targets as log1p(T*T_LOG_SCALE);
 # the dual-surrogate combination (modules_v6/dual_surrogate.py) must invert the

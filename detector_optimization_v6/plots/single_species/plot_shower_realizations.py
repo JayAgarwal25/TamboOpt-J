@@ -40,7 +40,7 @@ from modules_v4.tr_geometry import load_tr_mountain
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_HERE, "colca_valley.h5"),
+        os.path.join(_HERE, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),

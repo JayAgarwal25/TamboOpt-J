@@ -13,6 +13,7 @@ see the convention change. The signatures and bodies are kept identical except:
 `fnn_surrogate` (re-exported for convenience).
 """
 
+import os
 from typing import Tuple
 
 import numpy as np
@@ -20,10 +21,29 @@ import torch
 
 from modules_v4.tr_plane_kernel import GetCounts_planeaware
 
-from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM
+from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM, SIGMA_SPATIAL
 from .detector_strategies_ne import (_STRATEGIES, _STRATEGY_FNS)
 from .fnn_surrogate import (encode_primary, compute_normalization,  # noqa: F401  (re-export)
                             _load_species_sidecar)
+
+
+def _positions_sidecar_path(shower_cache_path: str) -> str:
+    """Path of the Step-0 ENU decay-position sidecar paired with a dual corpus
+    .pt (`…_dual.pt` -> `…_dual_positions.pt`). Written by
+    00_generate_data_dual_species.py for real-primary (tau) runs; row-aligned
+    with the corpus, columns (East, North, Up) in metres."""
+    base, ext = os.path.splitext(shower_cache_path)
+    return base + "_positions" + ext
+
+
+def _load_positions_sidecar(shower_cache_path: str, keep_idx):
+    """Load the Step-0 ENU decay-position sidecar and index it by `keep_idx`, or
+    return None if absent (synthetic corpus → Step 1 re-centers to the mountain
+    instead of placing at a real position)."""
+    path = _positions_sidecar_path(shower_cache_path)
+    if not os.path.exists(path):
+        return None
+    return torch.load(path)[torch.as_tensor(keep_idx)].float()          # (N, 3) East,North,Up
 
 
 # ── Label computation (batched over showers, one shared layout per batch) ────
@@ -35,7 +55,7 @@ def compute_labels_batch(clouds:   torch.Tensor,
                          surface,                    # SurfaceUpMap: (North, East) → Up
                          east_entry:    float = EAST_ENTRY,
                          layer_east_dx: float = LAYER_EAST_DX,
-                         sigma_spatial: float = 200.0) -> Tuple[torch.Tensor, torch.Tensor]:
+                         sigma_spatial: float = SIGMA_SPATIAL) -> Tuple[torch.Tensor, torch.Tensor]:
     """Run v4's plane-aware kernel on a batch of showers sharing one layout.
 
     (North, East) convention: `y_det` is the *defined* East, `surface` returns
@@ -73,13 +93,28 @@ def build_training_pairs(mountain, surface,
                          device:            torch.device = torch.device("cpu"),
                          verbose:           bool = True,
                          recenter_to_mountain: bool = False,
+                         east_entry:        float = EAST_ENTRY,
+                         layer_east_dx:     float = LAYER_EAST_DX,
                          load_chunk:        int = 4096):
     """Build (primary, xy, E, T) training tensors from the cached shower corpus.
 
     Identical to fnn_surrogate.build_training_pairs except layouts/labels use the
     (North, East) convention (detector_strategies_ne + the NE compute_labels_batch
-    above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`. The shower
-    recentering is unchanged — the shower transverse plane is still (North, Up).
+    above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`.
+
+    **Shower placement.** If a Step-0 ENU decay-position sidecar
+    (`<corpus>_positions.pt`, real tau primaries) is present, each cloud is placed
+    at its REAL position: the transverse (North, Up) plane is shifted so the
+    shower axis passes through the decay (North, Up), and the longitudinal
+    layer_index is shifted by (east_entry - East_decay) / layer_east_dx so the
+    real East sets which detector plane (z_cont) the shower aligns with — the
+    absolute east_entry cancels against the detector z_cont, leaving the physical
+    relative depth (East_decay - East_det) / dx. If no position sidecar exists,
+    behaviour falls back to `recenter_to_mountain` (synthetic corpus): the shower
+    transverse centroid is shifted to the mountain (North, Up) center and the
+    depth is left untouched. NOTE: like the synthetic path, real placement
+    translates only — it does not rotate the cloud to the true tau direction (a
+    pre-existing pipeline simplification; the shower stays East-longitudinal).
 
     **Bounded-memory streaming.** Point clouds are never loaded whole — only the
     tiny metadata (dir/energy/pdg) is read up front; clouds are streamed in
@@ -111,7 +146,12 @@ def build_training_pairs(mountain, surface,
     pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)
     primaries_all = encode_primary(dirs, energs, pdg)    # (n_showers, 5)
 
-    if recenter_to_mountain:
+    # Real ENU decay positions (tau primaries) if the Step-0 sidecar exists;
+    # else None → fall back to the synthetic recenter-to-mountain behaviour.
+    positions_all = _load_positions_sidecar(shower_cache_path, keep_idx)  # (N,3) E,N,U or None
+    place_real = positions_all is not None
+
+    if recenter_to_mountain and not place_real:
         mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
         mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
 
@@ -155,7 +195,25 @@ def build_training_pairs(mountain, surface,
                 clouds_chunk[bad] = 0.0
                 n_sanitized += nb
 
-            if recenter_to_mountain:
+            if place_real:
+                # Place each cloud at its REAL ENU decay position (tau primaries).
+                pos_chunk = positions_all[ds_start + c_lo: ds_start + c_hi]    # (csz,3) E,N,U
+                pe = pos_chunk[:, 0].view(-1, 1)                               # East  (decay)
+                pn = pos_chunk[:, 1].view(-1, 1)                               # North (decay)
+                pu = pos_chunk[:, 2].view(-1, 1)                               # Up    (decay)
+                mask  = (clouds_chunk[:, :, 3] > 0).float()
+                w_sum = mask.sum(dim=1).clamp(min=1.0)
+                # transverse: shift energy-weighted (North, Up) centroid -> decay (North, Up)
+                cx = (clouds_chunk[:, :, 0] * mask).sum(dim=1) / w_sum
+                cy = (clouds_chunk[:, :, 1] * mask).sum(dim=1) / w_sum
+                clouds_chunk[..., 0] = clouds_chunk[..., 0] + (pn - cx.view(-1, 1)) * mask
+                clouds_chunk[..., 1] = clouds_chunk[..., 1] + (pu - cy.view(-1, 1)) * mask
+                # longitudinal: shift layer_index so real East sets the depth (z_cont)
+                # alignment; east_entry cancels vs the detector z_cont, leaving the
+                # physical relative depth (East_decay - East_det) / dx.
+                dl = (east_entry - pe) / layer_east_dx                         # (csz,1)
+                clouds_chunk[..., 2] = clouds_chunk[..., 2] + dl * mask
+            elif recenter_to_mountain:
                 mask  = (clouds_chunk[:, :, 3] > 0).float()
                 w_sum = mask.sum(dim=1).clamp(min=1.0)
                 cx = (clouds_chunk[:, :, 0] * mask).sum(dim=1) / w_sum
@@ -196,8 +254,13 @@ def build_training_pairs(mountain, surface,
                 print(f"[build] {tag} rows {c_lo}-{c_hi}/{k_sp} done "
                       f"(×{n_strat} strategies)")
 
-    if recenter_to_mountain and verbose:
-        print(f"[recenter] shifted clouds to mountain center ({mtn_cx:.1f}, {mtn_cy:.1f})")
+    if verbose:
+        if place_real:
+            print(f"[place] real ENU decay positions "
+                  f"(N={positions_all.shape[0]}; transverse North/Up + East→layer "
+                  f"shift, east_entry={east_entry:g}, dx={layer_east_dx:g})")
+        elif recenter_to_mountain:
+            print(f"[recenter] shifted clouds to mountain center ({mtn_cx:.1f}, {mtn_cy:.1f})")
     if verbose and n_sanitized:
         print(f"[sanitize] zeroed {n_sanitized} non-finite points (float32 energy overflow)")
 

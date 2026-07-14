@@ -90,7 +90,12 @@ def main():
         seed=SEED,
         device=DEVICE,
         verbose=True,
+        # Real ENU decay positions (tau corpus) are used automatically when the
+        # `<corpus>_positions.pt` sidecar is present; recenter is the synthetic
+        # fallback. East→layer injection uses the same calibration as the kernel.
         recenter_to_mountain=RECENTER_TO_MOUNTAIN,
+        east_entry=EAST_ENTRY,
+        layer_east_dx=LAYER_EAST_DX,
     )
     print(f"[build] training pairs in {time.time() - t0:.1f}s")
     print(f"  primary : {tuple(primary.shape)}  dtype={primary.dtype}")

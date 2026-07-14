@@ -25,7 +25,7 @@ import torch.nn as nn
 from modules_v4.tr_plane_kernel import GetCounts_planeaware
 
 from .constants import (EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, SHOWER_CACHE, PRIMARY_DIM,
-                        LOG_E_MIN, LOG_E_MAX)
+                        LOG_E_MIN, LOG_E_MAX, SIGMA_SPATIAL)
 from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
 
 # ── Primary encoding ─────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ def compute_labels_batch(clouds:   torch.Tensor,
                          surface,
                          east_entry:    float = EAST_ENTRY,
                          layer_east_dx: float = LAYER_EAST_DX,
-                         sigma_spatial: float = 200.0) -> Tuple[torch.Tensor, torch.Tensor]:
+                         sigma_spatial: float = SIGMA_SPATIAL) -> Tuple[torch.Tensor, torch.Tensor]:
     """Run v4's plane-aware kernel on a batch of showers sharing one layout.
 
     Args:

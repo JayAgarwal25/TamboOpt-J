@@ -52,7 +52,7 @@ from modules_v6.fnn_surrogate_ne import compute_labels_batch
 from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
 )
 from modules_v4.tr_geometry       import load_tr_mountain
@@ -81,7 +81,7 @@ DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # folder, then the new TAMBOSim path, then the (stale) constant.
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_HERE, "colca_valley.h5"),
+        os.path.join(_HERE, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),
@@ -89,9 +89,10 @@ GEOMETRY_PATH_RESOLVED = next(
 )
 
 # Must match the NE dataset builder: fnn_surrogate_ne.build_training_pairs calls
-# compute_labels_batch with its DEFAULT sigma (200 m), so use 200 to reproduce the
-# exact training labels (the kernel's transverse smoothing length).
-sigma_spatial = 200
+# compute_labels_batch with its DEFAULT sigma (SIGMA_SPATIAL), so use the same
+# constant to reproduce the exact training labels (the kernel's transverse
+# smoothing length).
+sigma_spatial = SIGMA_SPATIAL
 
 
 def _describe(x: torch.Tensor) -> dict:
