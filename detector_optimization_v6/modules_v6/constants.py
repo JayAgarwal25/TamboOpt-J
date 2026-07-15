@@ -21,9 +21,22 @@ DET_KEY        = "detector1"
 _GEOM_LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            os.path.basename(GEOMETRY_PATH))
 GEOMETRY_PATH_RESOLVED = _GEOM_LOCAL if os.path.exists(_GEOM_LOCAL) else GEOMETRY_PATH
+# AllShowers longitudinal geometry — derived from the CORSIKA 8 sampling setup in
+# decay_locations/c8_air_shower.cpp (the sim the AllShowers model was trained on):
+#   - 24 ObservationPlanes  ->  N_PLANES = 24  (native cloud col2 = integer layer 0..23).
+#   - planes sit at  point_k = injection + k * 500 m * propDir  (k = 1..24; showerCore
+#     at 12000 m = 24 * 500 m), i.e. 500 m apart ALONG the shower axis  ->  the physical
+#     depth per layer index is 500 m, so LAYER_EAST_DX = 500.0.
+# Why 500 (not the old, undocumented 150): the kernel maps a native integer layer L to
+# depth via z_cont = (EAST_ENTRY - East)/LAYER_EAST_DX. For L to land at its true depth
+# the per-layer scale MUST equal the real plane spacing (500 m); 150 compressed the
+# shower to ~30% of its longitudinal extent. See c8_air_shower.cpp lines 434-643.
+# EAST_ENTRY is the East gauge of layer 0 (the shower start = tau decay, C8 injectionPos);
+# it cancels between the cloud shift and the detector z_cont (relative depth only), so its
+# absolute value is a free gauge and does not affect labels.
 N_PLANES       = 24
 EAST_ENTRY     = 1500.0
-LAYER_EAST_DX  = 150.0
+LAYER_EAST_DX  = 500.0
 
 # Detector spatial-response Gaussian kernel width [m] in the plane-aware kernel
 # (compute_labels_batch → GetCounts_planeaware). Reduced 200 → 50 for the malata
@@ -67,7 +80,7 @@ OPT_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_04_optimize")
 # weighted centroid lands at the mountain bbox center. Without this only
 # ~23% of cache showers overlap the mountain. Set to False to keep raw
 # cache positions (the production default before this knob existed).
-RECENTER_TO_MOUNTAIN = True
+RECENTER_TO_MOUNTAIN = False # TODO remove this functionality
 
 # 02_train_fnn.py: fraction of training-set indices to keep (val set always
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.

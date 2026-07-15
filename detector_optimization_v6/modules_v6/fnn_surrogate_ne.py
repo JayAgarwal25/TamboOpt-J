@@ -107,18 +107,25 @@ def build_training_pairs(mountain, surface,
     above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`.
 
     **Shower placement.** If a Step-0 ENU decay-position sidecar
-    (`<corpus>_positions.pt`, real tau primaries) is present, each cloud is placed
-    at its REAL position: the transverse (North, Up) plane is shifted so the
-    shower axis passes through the decay (North, Up), and the longitudinal
-    layer_index is shifted by (east_entry - East_decay) / layer_east_dx so the
-    real East sets which detector plane (z_cont) the shower aligns with — the
-    absolute east_entry cancels against the detector z_cont, leaving the physical
-    relative depth (East_decay - East_det) / dx. If no position sidecar exists,
-    behaviour falls back to `recenter_to_mountain` (synthetic corpus): the shower
-    transverse centroid is shifted to the mountain (North, Up) center and the
-    depth is left untouched. NOTE: like the synthetic path, real placement
-    translates only — it does not rotate the cloud to the true tau direction (a
-    pre-existing pipeline simplification; the shower stays East-longitudinal).
+    (`<corpus>_positions.pt`, real tau primaries) is present, each cloud is
+    reconstructed in ENU from the C8 shower geometry (decay_locations/
+    c8_air_shower.cpp): the native cloud origin (transverse x=y=0, layer 0) is the
+    shower start = the tau decay, and the shower develops ALONG the true tau
+    direction. For a point with native transverse (x, y) and integer layer L:
+
+        s         = L * layer_east_dx                 # depth along axis (500 m/plane, C8)
+        ENU_point = decay + s * d + x * e1 + y * e2
+
+    where d is the tau ENU direction and {e1, e2} span the plane perpendicular to
+    it (e1 = (cosθcosφ, cosθsinφ, -sinθ), e2 = (-sinφ, cosφ, 0), matching the C8
+    ObservationPlane x/y axes). Each point is then written in kernel coords
+    (col0=North, col1=Up, col2 = (east_entry - East)/layer_east_dx); east_entry
+    cancels against the detector z_cont, leaving physical relative depth. This
+    replaces the earlier translate-only, East-longitudinal simplification — the
+    shower is now oriented along the real tau direction. If no position sidecar
+    exists, behaviour falls back to `recenter_to_mountain` (synthetic corpus): the
+    shower transverse centroid is shifted to the mountain (North, Up) center and
+    the depth is left untouched.
 
     **Bounded-memory streaming.** Point clouds are never loaded whole — only the
     tiny metadata (dir/energy/pdg) is read up front; clouds are streamed in
@@ -200,23 +207,40 @@ def build_training_pairs(mountain, surface,
                 n_sanitized += nb
 
             if place_real:
-                # Place each cloud at its REAL ENU decay position (tau primaries).
-                pos_chunk = positions_all[ds_start + c_lo: ds_start + c_hi]    # (csz,3) E,N,U
-                pe = pos_chunk[:, 0].view(-1, 1)                               # East  (decay)
-                pn = pos_chunk[:, 1].view(-1, 1)                               # North (decay)
-                pu = pos_chunk[:, 2].view(-1, 1)                               # Up    (decay)
-                mask  = (clouds_chunk[:, :, 3] > 0).float()
-                w_sum = mask.sum(dim=1).clamp(min=1.0)
-                # transverse: shift energy-weighted (North, Up) centroid -> decay (North, Up)
-                cx = (clouds_chunk[:, :, 0] * mask).sum(dim=1) / w_sum
-                cy = (clouds_chunk[:, :, 1] * mask).sum(dim=1) / w_sum
-                clouds_chunk[..., 0] = clouds_chunk[..., 0] + (pn - cx.view(-1, 1)) * mask
-                clouds_chunk[..., 1] = clouds_chunk[..., 1] + (pu - cy.view(-1, 1)) * mask
-                # longitudinal: shift layer_index so real East sets the depth (z_cont)
-                # alignment; east_entry cancels vs the detector z_cont, leaving the
-                # physical relative depth (East_decay - East_det) / dx.
-                dl = (east_entry - pe) / layer_east_dx                         # (csz,1)
-                clouds_chunk[..., 2] = clouds_chunk[..., 2] + dl * mask
+                # Reconstruct each cloud in ENU from the C8 shower geometry
+                # (decay_locations/c8_air_shower.cpp): origin at the decay, shower
+                # developed ALONG the true tau direction, sampled at planes
+                # layer_east_dx (=500 m) apart. See the build_training_pairs docstring.
+                pos_chunk = positions_all[ds_start + c_lo: ds_start + c_hi]    # (csz,3) E,N,U decay
+                dir_chunk = dirs[ds_start + c_lo: ds_start + c_hi]             # (csz,3) E,N,U unit
+                pe = pos_chunk[:, 0].view(-1, 1)                              # decay East
+                pn = pos_chunk[:, 1].view(-1, 1)                              # decay North
+                pu = pos_chunk[:, 2].view(-1, 1)                              # decay Up
+                dE = dir_chunk[:, 0].view(-1, 1)
+                dN = dir_chunk[:, 1].view(-1, 1)
+                dU = dir_chunk[:, 2].view(-1, 1)
+                # Transverse basis in the plane perpendicular to d (the C8
+                # ObservationPlane x/y axes from the tau zenith/azimuth):
+                #   e1 = (cosθcosφ, cosθsinφ, -sinθ),  e2 = (-sinφ, cosφ, 0).
+                theta = torch.arccos(dU.clamp(-1.0, 1.0))
+                phi   = torch.atan2(dN, dE)
+                st, ct = torch.sin(theta), torch.cos(theta)
+                sp, cp = torch.sin(phi),   torch.cos(phi)
+                e1E, e1N, e1U = ct * cp, ct * sp, -st                         # (csz,1) each
+                e2E, e2N      = -sp, cp                                       # e2U = 0
+                mask = clouds_chunk[:, :, 3] > 0                              # (csz,P) bool
+                xt = clouds_chunk[:, :, 0]                                    # native transverse x [m]
+                yt = clouds_chunk[:, :, 1]                                    # native transverse y [m]
+                s  = clouds_chunk[:, :, 2] * layer_east_dx                    # depth along axis [m]
+                # ENU position of every point: decay + s*d + xt*e1 + yt*e2.
+                E = pe + s * dE + xt * e1E + yt * e2E
+                N = pn + s * dN + xt * e1N + yt * e2N
+                U = pu + s * dU + xt * e1U                                    # e2 has no Up component
+                # Write kernel coords: col0=North, col1=Up, col2 = layer via East depth.
+                clouds_chunk[..., 0] = torch.where(mask, N, clouds_chunk[..., 0])
+                clouds_chunk[..., 1] = torch.where(mask, U, clouds_chunk[..., 1])
+                clouds_chunk[..., 2] = torch.where(mask, (east_entry - E) / layer_east_dx,
+                                                   clouds_chunk[..., 2])
             elif recenter_to_mountain:
                 mask  = (clouds_chunk[:, :, 3] > 0).float()
                 w_sum = mask.sum(dim=1).clamp(min=1.0)
