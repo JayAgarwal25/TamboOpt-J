@@ -325,7 +325,14 @@ def load_tr_mountain(
         g        = f[group]
         verts    = g["vertices"][...]          # (3, 90000) ECEF float64
         faces    = g["faces"][...] - 1         # (3, 179996) 0-indexed
-        det_idx  = g[det_key][...] - 1         # (2161,)     0-indexed
+        # `det_key` (e.g. "detector1") is NOT geometry — it is a 1-D array of
+        # 1-based (Julia) FACE INDICES into `faces` that select the observation /
+        # detector region (the deployable footprint) out of the full mesh. This is
+        # what picks the slope the optimiser moves detectors over. For malata it is
+        # 266 faces -> 162 unique vertices, a ~1.4 km patch at Up 2748-3712 m (a
+        # ~32 deg ramp); the rest of `faces` is the wider terrain + the whole-globe
+        # sphere and is deliberately excluded here. Subtract 1 for 0-based indexing.
+        det_idx  = g[det_key][...] - 1         # (266,) obs-region face indices, 0-indexed
         h5_loc   = g["location"][...]          # [lon_deg, lat_deg]
 
     # ENU origin: explicit arg > mesh `location` dataset > module default.
