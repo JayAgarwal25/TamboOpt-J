@@ -71,7 +71,12 @@ def utility_of_xy(x_det: torch.Tensor,
                   primary_batch: torch.Tensor,
                   fnn,
                   recon):
-    """Composite U for a (North, East) layout against a primary batch.
+    """Composite U for an (East, North) layout against a primary batch.
+
+    Detector coords are (East, North) to match the ENU h5 convention — but this
+    function is order-agnostic: it feeds the pair straight to the FNN + recon,
+    both trained on the same `xy` column order, so consistency (not the physical
+    axis meaning) is all that matters here.
 
     `fnn` is the dual-species wrapper: both per-species surrogates are evaluated
     with the same primary + layout and physically combined, so the backprop into

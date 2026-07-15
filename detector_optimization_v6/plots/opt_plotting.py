@@ -74,6 +74,13 @@ def plot_ensemble(aligned_xy: np.ndarray,
         from matplotlib.patches import Ellipse
         from matplotlib.collections import PatchCollection
 
+        # Layouts arrive as (East, North) to match the ENU h5 convention; the body
+        # below is written for (North, East), so reorder once here.
+        aligned_xy = np.stack([aligned_xy[..., 1], aligned_xy[..., 0]], axis=-1)
+        mean_xy    = np.stack([mean_xy[..., 1],    mean_xy[..., 0]],    axis=-1)
+        std_xy     = np.stack([std_xy[..., 1],     std_xy[..., 0]],     axis=-1)
+        best_x, best_y = best_y, best_x
+
         if surface is not None:
             up = project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])
             aligned_xy = np.stack([aligned_xy[..., 0], up], axis=-1)   # (K, n_det, 2)=(N,Up)
@@ -137,6 +144,10 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+
+        # Layouts arrive as (East, North); reorder to (North, East) for this body.
+        aligned_xy = np.stack([aligned_xy[..., 1], aligned_xy[..., 0]], axis=-1)
+        best_x, best_y = best_y, best_x
 
         if surface is not None:
             up = project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])

@@ -86,7 +86,10 @@ def _ecef_to_enu(centroids_ecef: np.ndarray, lon_deg: float, lat_deg: float) -> 
 class MountainData:
     """All geometry info needed by v4.
 
-    centroids_NUE : (n_tri, 3) float64 numpy array, columns = [North, Up, East] in metres.
+    centroids_ENU : (n_tri, 3) float64 numpy array, columns = [East, North, Up] in
+                    metres — the site-local ENU convention that matches the h5 data
+                    files. `centroids_NUE` is a backward-compat property returning
+                    the old [North, Up, East] column order for legacy callers.
     n_min / n_max : North bounding box of detector centroids.
     u_min / u_max : Up (elevation) bounding box.
     east_lo / east_hi : actual East span of the centroids (≈ [-2019, +1182]).
@@ -103,7 +106,7 @@ class MountainData:
         z_cont_max = (east_entry - east_lo) / layer_east_dx  ≈ 5.9
     corresponding to AllShowers layers 0–6.
     """
-    centroids_NUE: np.ndarray    # (n_tri, 3) columns [North, Up, East]
+    centroids_ENU: np.ndarray    # (n_tri, 3) columns [East, North, Up]
 
     n_min:   float
     n_max:   float
@@ -115,6 +118,20 @@ class MountainData:
     east_entry:    float         # East at AllShowers layer 0 (default -212 m)
     layer_east_dx: float         # East depth per layer (default 307 m, positive)
     n_planes:      int           # number of AllShowers planes (24)
+
+    # (n_v, 3) [East, North, Up] — the unique triangle vertices of the detector
+    # region (real surface corner points). Denser and truer than the face
+    # centroids; used by the differentiable surface map. Optional / None for
+    # legacy MountainData built without it.
+    vertices_ENU:  np.ndarray = None
+
+    # @property
+    # def centroids_NUE(self) -> np.ndarray:
+    #     """Backward-compat view: the old [North, Up, East] column order, derived
+    #     from the canonical ENU field. Legacy callers (v4 scripts, the base
+    #     North-Up module family) keep working unchanged; new code should use
+    #     `centroids_ENU` ([East, North, Up])."""
+    #     return self.centroids_ENU[:, [1, 2, 0]]
 
     @property
     def plane_dx(self) -> float:
@@ -309,13 +326,13 @@ def load_tr_mountain(
         verts    = g["vertices"][...]          # (3, 90000) ECEF float64
         faces    = g["faces"][...] - 1         # (3, 179996) 0-indexed
         det_idx  = g[det_key][...] - 1         # (2161,)     0-indexed
-        h5_loc   = g["location"][...] if "location" in g else None   # [lon_deg, lat_deg]
+        h5_loc   = g["location"][...]          # [lon_deg, lat_deg]
 
     # ENU origin: explicit arg > mesh `location` dataset > module default.
     if site_lon_deg is None:
-        site_lon_deg = float(h5_loc[0]) if h5_loc is not None else SITE_LON_DEG
+        site_lon_deg = float(h5_loc[0])
     if site_lat_deg is None:
-        site_lat_deg = float(h5_loc[1]) if h5_loc is not None else SITE_LAT_DEG
+        site_lat_deg = float(h5_loc[1])
 
     # Triangle centroids in ECEF
     tri_verts      = verts[:, faces[:, det_idx]]    # (3, 3, 2161)
@@ -325,10 +342,18 @@ def load_tr_mountain(
     enu = _ecef_to_enu(centroids_ecef, site_lon_deg, site_lat_deg)  # [East, North, Up]
     East, North, Up = enu[0], enu[1], enu[2]
 
-    centroids_NUE = np.stack([North, Up, East], axis=1)   # (2161, 3)
+    centroids_ENU = np.stack([East, North, Up], axis=1)   # (2161, 3) [East, North, Up]
+
+    # Unique triangle vertices of the detector region — the real surface corner
+    # points (denser + truer than face centroids for the differentiable surface
+    # map). Rotated to ENU about the same site origin.
+    uniq_v        = np.unique(faces[:, det_idx].reshape(-1))
+    verts_enu     = _ecef_to_enu(verts[:, uniq_v], site_lon_deg, site_lat_deg)   # (3, n_v)
+    vertices_ENU  = np.stack([verts_enu[0], verts_enu[1], verts_enu[2]], axis=1)  # (n_v, 3) [E,N,U]
 
     return MountainData(
-        centroids_NUE = centroids_NUE,
+        centroids_ENU = centroids_ENU,
+        vertices_ENU  = vertices_ENU,
         n_min         = float(North.min()),
         n_max         = float(North.max()),
         u_min         = float(Up.min()),

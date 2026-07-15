@@ -58,9 +58,13 @@ class SurfaceUpMap(nn.Module):
     def from_mountain(cls, mountain, grid_h: int = 256, grid_w: int = 256, pad: float = 0.0):
         """Build the surface map from a MountainData object.
 
-        Fits LinearNDInterpolator on the (North, East) → Up centroid scatter,
-        evaluates it on a regular (grid_h × grid_w) grid, and fills any NaN
-        cells (outside the convex hull) with nearest-neighbour values.
+        Fits LinearNDInterpolator on the (North, East) → Up scatter of the real
+        mountain surface — the detector-region triangle *vertices* together with
+        the face centroids — evaluates it on a regular (grid_h × grid_w) grid,
+        and fills any NaN cells (outside the convex hull) with nearest-neighbour
+        values. The grid domain spans all those points (the vertices reach past
+        the centroid min/max), so the surface follows the full terrain footprint
+        rather than only the rectangle between the detector centroids.
 
         Args:
             mountain : MountainData from load_tr_mountain().
@@ -68,14 +72,24 @@ class SurfaceUpMap(nn.Module):
             grid_w   : number of columns (North axis).
             pad      : extra margin (m) added to each bbox edge (default 0).
         """
-        North = mountain.centroids_NUE[:, 0]
-        Up    = mountain.centroids_NUE[:, 1]
-        East  = mountain.centroids_NUE[:, 2]
+        East  = mountain.centroids_ENU[:, 0]
+        North = mountain.centroids_ENU[:, 1]
+        Up    = mountain.centroids_ENU[:, 2]
 
-        n_min = mountain.n_min - pad
-        n_max = mountain.n_max + pad
-        e_min = mountain.east_lo - pad
-        e_max = mountain.east_hi + pad
+        # Include the actual mountain triangle vertices (real surface corner
+        # points) so the fit reflects the whole terrain, not just the centroid
+        # convex hull. Vertices extend slightly past the centroid bbox.
+        verts = getattr(mountain, "vertices_ENU", None)
+        if verts is not None and len(verts):
+            East  = np.concatenate([East,  verts[:, 0]])
+            North = np.concatenate([North, verts[:, 1]])
+            Up    = np.concatenate([Up,    verts[:, 2]])
+
+        # Grid domain spans all fit points (not just the centroid min/max).
+        n_min = float(North.min()) - pad
+        n_max = float(North.max()) + pad
+        e_min = float(East.min())  - pad
+        e_max = float(East.max())  + pad
 
         # Scattered linear interpolant  (North, East) → Up
         points = np.stack([North, East], axis=1)

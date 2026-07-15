@@ -20,9 +20,9 @@ def _bbox_anchor(mountain) -> Tuple[float, float]:
     """Centroid nearest the mountain (North, East) bbox center."""
     cn = 0.5 * (mountain.n_min + mountain.n_max)
     ce = 0.5 * (mountain.east_lo + mountain.east_hi)
-    d2 = (mountain.centroids_NUE[:, 0] - cn) ** 2 + (mountain.centroids_NUE[:, 2] - ce) ** 2
+    d2 = (mountain.centroids_ENU[:, 1] - cn) ** 2 + (mountain.centroids_ENU[:, 0] - ce) ** 2
     k  = int(np.argmin(d2))
-    return float(mountain.centroids_NUE[k, 0]), float(mountain.centroids_NUE[k, 2])
+    return float(mountain.centroids_ENU[k, 1]), float(mountain.centroids_ENU[k, 0])
 
 
 def layout_grid(mountain, n_det: int = N_DETECTORS,
@@ -30,12 +30,12 @@ def layout_grid(mountain, n_det: int = N_DETECTORS,
     """NE grid + small Gaussian jitter + mountain projection."""
     if rng is None:
         rng = np.random.default_rng()
-    N, E = sample_initial_layout_ne(mountain, n_units=n_det, scheme="grid")
+    E, N = sample_initial_layout_ne(mountain, n_units=n_det, scheme="grid")
     N = N + rng.normal(0.0, jitter_sigma, N.shape).astype(np.float32)
     E = E + rng.normal(0.0, jitter_sigma, E.shape).astype(np.float32)
     N_t = torch.as_tensor(N, dtype=torch.float32)
     E_t = torch.as_tensor(E, dtype=torch.float32)
-    return project_to_mountain_ne(mountain, N_t, E_t)
+    return project_to_mountain_ne(mountain, E_t, N_t)
 
 
 def layout_center_gaussian(mountain, n_det: int = N_DETECTORS,
@@ -48,7 +48,7 @@ def layout_center_gaussian(mountain, n_det: int = N_DETECTORS,
     E = anchor_e + rng.normal(0.0, sigma, n_det).astype(np.float32)
     N_t = torch.as_tensor(N, dtype=torch.float32)
     E_t = torch.as_tensor(E, dtype=torch.float32)
-    return project_to_mountain_ne(mountain, N_t, E_t)
+    return project_to_mountain_ne(mountain, E_t, N_t)
 
 
 def layout_rings(mountain, n_det: int = N_DETECTORS,
@@ -74,7 +74,7 @@ def layout_rings(mountain, n_det: int = N_DETECTORS,
 
     N_t = x_rot + anchor_n + rng.normal(0.0, jitter_sigma, n_det).astype(np.float32)
     E_t = y_rot + anchor_e + rng.normal(0.0, jitter_sigma, n_det).astype(np.float32)
-    return project_to_mountain_ne(mountain, N_t, E_t)
+    return project_to_mountain_ne(mountain, E_t, N_t)
 
 
 def layout_uniform_random(mountain, n_det: int = N_DETECTORS, rng=None):
@@ -86,8 +86,8 @@ def layout_uniform_random(mountain, n_det: int = N_DETECTORS, rng=None):
     N = rng.uniform(mountain.n_min,   mountain.n_max,   n_det).astype(np.float32)
     E = rng.uniform(mountain.east_lo, mountain.east_hi, n_det).astype(np.float32)
     return project_to_mountain_ne(mountain,
-                                  torch.as_tensor(N, dtype=torch.float32),
-                                  torch.as_tensor(E, dtype=torch.float32))
+                                  torch.as_tensor(E, dtype=torch.float32),
+                                  torch.as_tensor(N, dtype=torch.float32))
 
 
 def layout_latin_hypercube(mountain, n_det: int = N_DETECTORS, rng=None):
@@ -106,8 +106,8 @@ def layout_latin_hypercube(mountain, n_det: int = N_DETECTORS, rng=None):
     N = (mountain.n_min   + u_n * (mountain.n_max   - mountain.n_min)).astype(np.float32)
     E = (mountain.east_lo + u_e * (mountain.east_hi - mountain.east_lo)).astype(np.float32)
     return project_to_mountain_ne(mountain,
-                                  torch.as_tensor(N, dtype=torch.float32),
-                                  torch.as_tensor(E, dtype=torch.float32))
+                                  torch.as_tensor(E, dtype=torch.float32),
+                                  torch.as_tensor(N, dtype=torch.float32))
 
 
 # ── Dataset builder ──────────────────────────────────────────────────────────

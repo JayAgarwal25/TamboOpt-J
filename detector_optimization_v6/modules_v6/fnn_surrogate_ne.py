@@ -7,7 +7,8 @@ see the convention change. The signatures and bodies are kept identical except:
   - `surface` is a `SurfaceUpMap` (North, East)→Up instead of SurfaceEastMap;
   - the kernel's y-coordinate is the *extrapolated* Up = surface(x_det, y_det),
     while `z_cont` comes directly from the **defined** East (= y_det);
-  - layouts come from `detector_strategies_ne` (so `xy = (North, East)`).
+  - layouts come from `detector_strategies_ne` (so `xy = (East, North)`, matching
+    the ENU convention of the h5 data files).
 
 `encode_primary` / `compute_normalization` are reused unchanged from
 `fnn_surrogate` (re-exported for convenience).
@@ -50,33 +51,36 @@ def _load_positions_sidecar(shower_cache_path: str, keep_idx):
 
 @torch.no_grad()
 def compute_labels_batch(clouds:   torch.Tensor,
-                         x_det:    torch.Tensor,    # North
-                         y_det:    torch.Tensor,    # East (defined)
+                         e_det:    torch.Tensor,    # East  (defined; detector col 0)
+                         n_det:    torch.Tensor,    # North (detector col 1)
                          surface,                    # SurfaceUpMap: (North, East) → Up
                          east_entry:    float = EAST_ENTRY,
                          layer_east_dx: float = LAYER_EAST_DX,
                          sigma_spatial: float = SIGMA_SPATIAL) -> Tuple[torch.Tensor, torch.Tensor]:
     """Run v4's plane-aware kernel on a batch of showers sharing one layout.
 
-    (North, East) convention: `y_det` is the *defined* East, `surface` returns
-    the extrapolated height Up, and `z_cont` comes straight from the East.
+    Detectors are (East, North) — matching the ENU h5 convention. The KERNEL is
+    unchanged: it still sees North as the transverse coordinate and East as the
+    depth (z_cont). This wrapper just maps the (East, North) pair onto those
+    physical roles: `surface` extrapolates Up = g(North, East), and z_cont comes
+    from the defined East.
 
     Args:
         clouds : (B, max_points, 5) AllShowers point clouds.
-        x_det  : (n_det,) North coordinates.
-        y_det  : (n_det,) East coordinates (defined).
+        e_det  : (n_det,) East coordinates (defined; sets depth / z_cont).
+        n_det  : (n_det,) North coordinates (kernel transverse axis).
         surface: `SurfaceUpMap` — differentiable Up = g(North, East).
 
     Returns:
         E : (B, n_det) local intensities (v4 kernel `local_intensity`).
         T : (B, n_det) weighted-average times (v4 kernel `et`).
     """
-    up     = surface(x_det, y_det)                       # extrapolated height (was: east)
-    z_cont = (east_entry - y_det) / layer_east_dx        # depth from defined East (was: from east)
+    up     = surface(n_det, e_det)                       # Up = g(North, East)
+    z_cont = (east_entry - e_det) / layer_east_dx        # depth from defined East
 
     dummy_flux = torch.tensor([0.0], device=clouds.device)
     E, T = GetCounts_planeaware(
-        clouds, x_det, up, z_cont,                       # transverse plane (North, Up); was (x_det, y_det)
+        clouds, n_det, up, z_cont,                       # transverse plane (North, Up) — kernel unchanged
         SmearN_fn=None,
         fluxB_e=dummy_flux,
         TimeAverage_vectorized_fn=None,
@@ -123,7 +127,7 @@ def build_training_pairs(mountain, surface,
 
     Returns:
         primaries : (N_pairs, 5)   float32
-        xy        : (N_pairs, 100, 2) float32   columns = (North, East)
+        xy        : (N_pairs, 100, 2) float32   columns = (East, North)
         E         : (N_pairs, 100) float32
         T         : (N_pairs, 100) float32
         strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
@@ -229,12 +233,12 @@ def build_training_pairs(mountain, surface,
                     sb_hi = min(sb_lo + batch_size, csz)
                     B = sb_hi - sb_lo
 
-                    x_det, y_det = fn(mountain, n_det=n_det, rng=rng, **kwargs)
-                    x_det = x_det.float().to(device)
-                    y_det = y_det.float().to(device)
+                    e_det, n_det_xy = fn(mountain, n_det=n_det, rng=rng, **kwargs)  # (East, North)
+                    e_det     = e_det.float().to(device)
+                    n_det_xy  = n_det_xy.float().to(device)
 
                     clouds = clouds_chunk[sb_lo:sb_hi].to(device)
-                    E, T = compute_labels_batch(clouds, x_det, y_det, surface)
+                    E, T = compute_labels_batch(clouds, e_det, n_det_xy, surface)
                     E = torch.nan_to_num(E, nan=0.0, posinf=0.0, neginf=0.0)
                     T = torch.nan_to_num(T, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -242,8 +246,8 @@ def build_training_pairs(mountain, surface,
                     ds_hi = ds_start + c_lo + sb_hi
                     dst = slice(s_idx * n_showers + ds_lo, s_idx * n_showers + ds_hi)
                     out_primary[dst]  = primaries_all[ds_lo:ds_hi]
-                    out_xy[dst, :, 0] = x_det.cpu().unsqueeze(0).expand(B, -1)
-                    out_xy[dst, :, 1] = y_det.cpu().unsqueeze(0).expand(B, -1)
+                    out_xy[dst, :, 0] = e_det.cpu().unsqueeze(0).expand(B, -1)     # East  (col 0)
+                    out_xy[dst, :, 1] = n_det_xy.cpu().unsqueeze(0).expand(B, -1)  # North (col 1)
                     out_E[dst] = E.cpu()
                     out_T[dst] = T.cpu()
                     out_strat[dst] = s_idx

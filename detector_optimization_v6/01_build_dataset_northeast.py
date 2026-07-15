@@ -30,7 +30,7 @@ from modules_v6.fnn_surrogate_ne import (
     build_training_pairs, compute_normalization,
 )
 from modules_v6.constants import (
-    SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    SHOWER_CACHE, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     BATCH_SIZE, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
@@ -60,7 +60,7 @@ def main():
     print(f"v6/01_build_dataset_northeast.py")
     print("=" * 72)
     print(f"shower cache : {DUAL_SHOWER_CACHE_PATH}")
-    print(f"geometry     : {GEOMETRY_PATH}")
+    print(f"geometry     : {GEOMETRY_PATH_RESOLVED}")
     print(f"output dir   : {TRAINING_DATASET_FOLDER}")
     print(f"batch size   : {BATCH_SIZE}")
     print(f"max showers  : {MAX_SHOWERS}")
@@ -70,7 +70,7 @@ def main():
     # Mountain + surface map (Up = g(N, East))
     t0 = time.time()
     mountain = load_tr_mountain(
-        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+        GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
     surface = SurfaceUpMap.from_mountain(mountain, grid_h=256, grid_w=256).to(DEVICE)
@@ -99,7 +99,7 @@ def main():
     )
     print(f"[build] training pairs in {time.time() - t0:.1f}s")
     print(f"  primary : {tuple(primary.shape)}  dtype={primary.dtype}")
-    print(f"  xy      : {tuple(xy.shape)}       dtype={xy.dtype}   (North, East)")
+    print(f"  xy      : {tuple(xy.shape)}       dtype={xy.dtype}   (East, North)")
     print(f"  E       : {tuple(E.shape)}        dtype={E.dtype}")
     print(f"  T       : {tuple(T.shape)}        dtype={T.dtype}")
     print(f"  strat   : {tuple(strat.shape)}    unique={sorted(strat.unique().tolist())}")

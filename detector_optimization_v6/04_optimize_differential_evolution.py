@@ -139,7 +139,7 @@ def _perturbed_de_runs(scheme: str, K: int, generator: torch.Generator,
         start_logs.append([])
         _unused.append(None)
         print(f"\n[perturb→de] scheme={scheme}  chain {k+1}/{K}  "
-              f"N in [{xk.min():.1f}, {xk.max():.1f}]  E in [{yk.min():.1f}, {yk.max():.1f}]")
+              f"E in [{xk.min():.1f}, {xk.max():.1f}]  N in [{yk.min():.1f}, {yk.max():.1f}]")
     return starts, start_logs, perturbed_inits, _unused
 
 
@@ -242,16 +242,18 @@ def _run_one_scheme(scheme: str,
     idx_fixed = torch.randint(0, n_total_primaries, (DE_BATCH_PRIMARIES,), generator=g)
     primary_fixed = primary_all[idx_fixed].to(DEVICE)
 
-    # DE bounds: 100 North in [n_min, n_max], then 100 East in [east_lo, east_hi],
-    # each widened by the NE projection tolerance: project_to_mountain_ne keeps
+    # DE bounds: the flat vector packs 100 East then 100 North (detectors are
+    # (East, North); sample_initial_layout_ne + _build_chain_inits cat East first),
+    # so bounds are 100 East in [east_lo, east_hi] then 100 North in [n_min, n_max].
+    # Each is widened by the NE projection tolerance: project_to_mountain_ne keeps
     # any point within max_gap of a centroid, so valid starts can sit up to
     # ~max_gap OUTSIDE the tight centroid bbox — and scipy requires x0 inside
     # the bounds. Candidates are mountain-projected before scoring, so the
     # widened box never lets the optimum leave the mountain.
     margin = _ne_max_gap(mountain)
     print(f"[bounds] bbox widened by max_gap={margin:.1f} m")
-    bounds = ([(mountain.n_min - margin, mountain.n_max + margin)] * N_DETECTORS +
-              [(mountain.east_lo - margin, mountain.east_hi + margin)] * N_DETECTORS)
+    bounds = ([(mountain.east_lo - margin, mountain.east_hi + margin)] * N_DETECTORS +
+              [(mountain.n_min - margin, mountain.n_max + margin)] * N_DETECTORS)
 
     # Stage 2: differential evolution from every start.
     refined, de_logs, refined_U, all_de_hists = [], [], [], []
@@ -281,7 +283,7 @@ def _run_one_scheme(scheme: str,
     best_src = source_per_run[ref_idx]
     print(f"[ensemble] K={len(refined)}  best U={refined_U[ref_idx]:+.3f} "
           f"(run {ref_idx}, src={best_src})  "
-          f"mean σN={std_xy[:,0].mean():.1f}m σE={std_xy[:,1].mean():.1f}m")
+          f"mean σE={std_xy[:,0].mean():.1f}m σN={std_xy[:,1].mean():.1f}m")
 
     # ── Persist artifacts (same set as the L-BFGS ensemble) ──────────────────
     torch.save({"x": best_x, "y": best_y, "U": refined_U[ref_idx],

@@ -210,15 +210,17 @@ def main():
     idx_fixed = torch.randperm(n_total_primaries, generator=g)[:n_batch]
     primary_fixed = primary_all[idx_fixed].to(DEVICE)
 
-    # DE bounds: 100 North in [n_min, n_max], 100 East in [east_lo, east_hi], each
-    # widened by the NE projection tolerance — project_to_mountain_ne keeps points
-    # within max_gap of a centroid, and scipy clips the init population / requires
-    # candidates inside the bounds. Candidates are mountain-projected before
-    # scoring, so the widened box never lets the optimum leave the mountain.
+    # DE bounds: the flat vector packs 100 East then 100 North (detectors are
+    # (East, North); the base/perturbations cat East first), so bounds are 100 East
+    # in [east_lo, east_hi] then 100 North in [n_min, n_max], each widened by the NE
+    # projection tolerance — project_to_mountain_ne keeps points within max_gap of a
+    # centroid, and scipy clips the init population / requires candidates inside the
+    # bounds. Candidates are mountain-projected before scoring, so the widened box
+    # never lets the optimum leave the mountain.
     margin = _ne_max_gap(mountain)
     print(f"[bounds] bbox widened by max_gap={margin:.1f} m")
-    bounds = ([(mountain.n_min - margin, mountain.n_max + margin)] * N_DETECTORS +
-              [(mountain.east_lo - margin, mountain.east_hi + margin)] * N_DETECTORS)
+    bounds = ([(mountain.east_lo - margin, mountain.east_hi + margin)] * N_DETECTORS +
+              [(mountain.n_min - margin, mountain.n_max + margin)] * N_DETECTORS)
 
     # Build the POP_SIZE-member init population (deterministic).
     torch.manual_seed(SEED); np.random.seed(SEED)
@@ -258,7 +260,7 @@ def main():
     best_y = torch.as_tensor(aligned[ref_idx, :, 1]).float()
     best_U = float(utilities[ref_idx])
     print(f"[ensemble] pop={POP_SIZE}  best U={best_U:+.3f} (member {ref_idx}, "
-          f"src={sources[ref_idx]})  mean σN={std_xy[:,0].mean():.1f}m σE={std_xy[:,1].mean():.1f}m")
+          f"src={sources[ref_idx]})  mean σE={std_xy[:,0].mean():.1f}m σN={std_xy[:,1].mean():.1f}m")
 
     # ── Persist artifacts (same set/keys as the L-BFGS ensemble) ─────────────
     torch.save({"x": best_x, "y": best_y, "U": best_U,

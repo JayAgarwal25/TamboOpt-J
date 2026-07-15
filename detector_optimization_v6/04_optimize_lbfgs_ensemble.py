@@ -58,7 +58,7 @@ import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import DualSpeciesSurrogate
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
@@ -137,20 +137,20 @@ def adam_warm_start(scheme: str,
        is the (already mountain-projected) starting layout; `scheme` is a log
        label. `grad_hist` is a (N_ADAM_EPOCHS, 2*n_det) CPU tensor of the flat
        parameter gradient at each step (for cross-run gradient diagnostics)."""
-    N_init, E_init = init_override
-    N_init = N_init.float()
-    E_init = E_init.float()
-    print(f"[adam] init {scheme}  N in [{N_init.min():.1f}, {N_init.max():.1f}]  "
-          f"E in [{E_init.min():.1f}, {E_init.max():.1f}]")
+    e_init, n_init = init_override          # (East, North): first coord is East
+    e_init = e_init.float()
+    n_init = n_init.float()
+    print(f"[adam] init {scheme}  E in [{e_init.min():.1f}, {e_init.max():.1f}]  "
+          f"N in [{n_init.min():.1f}, {n_init.max():.1f}]")
 
-    xy_module = LearnableXY(N_init, E_init, device=str(DEVICE)).to(DEVICE)
+    xy_module = LearnableXY(e_init, n_init, device=str(DEVICE)).to(DEVICE)
     optimizer = torch.optim.Adam(xy_module.parameters(), lr=ADAM_LR)
 
     log = []
     grad_hist = []
     best_u = -float("inf")
-    best_x = N_init.clone()
-    best_y = E_init.clone()
+    best_x = e_init.clone()
+    best_y = n_init.clone()
 
     for epoch in range(N_ADAM_EPOCHS):
         idx = torch.randint(0, n_total_primaries, (PRIMARIES_PER_STEP,))
@@ -173,11 +173,11 @@ def adam_warm_start(scheme: str,
 
         # Project to mountain surface.
         with torch.no_grad():
-            N_cpu = xy_module.x.detach().cpu()
-            E_cpu = xy_module.y.detach().cpu()
-            N_new, E_new = project_to_mountain_ne(mountain, N_cpu, E_cpu)
-            xy_module.x.data.copy_(N_new.to(DEVICE).to(xy_module.x.dtype))
-            xy_module.y.data.copy_(E_new.to(DEVICE).to(xy_module.y.dtype))
+            e_cpu = xy_module.x.detach().cpu()
+            n_cpu = xy_module.y.detach().cpu()
+            e_new, n_new = project_to_mountain_ne(mountain, e_cpu, n_cpu)
+            xy_module.x.data.copy_(e_new.to(DEVICE).to(xy_module.x.dtype))
+            xy_module.y.data.copy_(n_new.to(DEVICE).to(xy_module.y.dtype))
 
         u_val = float(U.item())
         if u_val > best_u:
@@ -197,7 +197,7 @@ def adam_warm_start(scheme: str,
 
     print(f"[adam] best U={best_u:+.3f}")
     grad_hist = torch.stack(grad_hist, dim=0) if grad_hist else torch.zeros(0)
-    return best_x, best_y, N_init, E_init, log, grad_hist
+    return best_x, best_y, e_init, n_init, log, grad_hist
 
 
 def _build_chain_inits(init_x: torch.Tensor, init_y: torch.Tensor,
@@ -218,23 +218,23 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
     Returns (adam_bests, adam_logs, perturbed_inits, adam_grads), each length K.
     adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step gradient history.
 
-    If init_center is a (N_DETECTORS, 2) tensor with (North, East) per detector,
+    If init_center is a (N_DETECTORS, 2) tensor with (East, North) per detector,
     all K chains are warm-started from that layout with small N(0, 10m) per-chain
     diversity perturbations instead of using the normal scheme initialization.
     """
     if init_center is not None:
-        N_t = init_center[:, 0].float()
-        E_t = init_center[:, 1].float()
+        e_t = init_center[:, 0].float()
+        n_t = init_center[:, 1].float()
         # Small N(0, 10m) per-chain perturbations for diversity around the warm-start.
-        base = torch.cat([N_t.to(DEVICE), E_t.to(DEVICE)], dim=0).detach()
+        base = torch.cat([e_t.to(DEVICE), n_t.to(DEVICE)], dim=0).detach()
         small_noise = torch.randn(K, base.numel(), generator=generator,
                                   device="cpu").to(DEVICE) * 10.0
         chains_init = base.unsqueeze(0) + small_noise
     else:
-        N_np, E_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
-        N_t = torch.as_tensor(N_np, dtype=torch.float32)
-        E_t = torch.as_tensor(E_np, dtype=torch.float32)
-        chains_init = _build_chain_inits(N_t, E_t, K, generator)              # (K, D)
+        e_np, n_np = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme=scheme)
+        e_t = torch.as_tensor(e_np, dtype=torch.float32)
+        n_t = torch.as_tensor(n_np, dtype=torch.float32)
+        chains_init = _build_chain_inits(e_t, n_t, K, generator)              # (K, D)
 
     adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
     for k in range(K):
@@ -449,7 +449,7 @@ def _run_one_scheme(scheme: str,
     _plt.plot_components_lbfgs(all_adam_logs, lbfgs_logs,
                               os.path.join(opt_dir, "utility_components.png"))
     # Render the ensemble + density in the (North, Up) cross section. The
-    # optimiser works in (North, East); SurfaceUpMap projects East -> Up =
+    # optimiser works in (East, North); SurfaceUpMap projects East -> Up =
     # g(North, East) so detectors sit ON the mountain profile (CPU is fine —
     # plotting is the last, read-only step). DENSITY_VMAX clamps the heatmap
     # colorbar to [0, DENSITY_VMAX]; <=0 auto-scales.
@@ -486,7 +486,7 @@ def main():
                          "pass <=0 to auto-scale (default from config)")
     ap.add_argument("--save_best_layout", type=str, default=None,
                     help="Path to save the globally best layout as a "
-                         "(N_DETECTORS, 2) tensor with (North, East) per detector.")
+                         "(N_DETECTORS, 2) tensor with (East, North) per detector.")
     ap.add_argument("--init_from", type=str, default=None,
                     help="Path to a (N_DETECTORS, 2) layout tensor (or dict with "
                          "'x'/'y' keys). Warm-starts all chains from this layout "
@@ -537,18 +537,18 @@ def main():
     fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_DIR)
 
     mountain = load_tr_mountain(
-        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+        GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
-    # Optional warm-start center layout (N_DETECTORS, 2) = (North, East).
+    # Optional warm-start center layout (N_DETECTORS, 2) = (East, North).
     init_center = None
     if args.init_from:
         raw = torch.load(args.init_from, map_location="cpu", weights_only=False)
         if isinstance(raw, dict):
-            N_c = raw["x"].float().reshape(-1)
-            E_c = raw["y"].float().reshape(-1)
-            init_center = torch.stack([N_c, E_c], dim=-1)
+            e_c = raw["x"].float().reshape(-1)   # saved "x" is the first coord = East
+            n_c = raw["y"].float().reshape(-1)
+            init_center = torch.stack([e_c, n_c], dim=-1)
         else:
             init_center = raw.float()
         print(f"[init_from] loaded layout from {args.init_from}  "
