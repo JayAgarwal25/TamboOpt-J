@@ -47,6 +47,82 @@ def _load_positions_sidecar(shower_cache_path: str, keep_idx):
     return torch.load(path)[torch.as_tensor(keep_idx)].float()          # (N, 3) East,North,Up
 
 
+# ── Real-position shower placement (the C8 geometry) ─────────────────────────
+
+def c8_transverse_basis(dirs: torch.Tensor):
+    """Orthonormal (e1, e2) spanning the plane perpendicular to each direction.
+
+    The CORSIKA 8 ObservationPlane axes, built from the tau zenith/azimuth exactly
+    as decay_locations/c8_air_shower.cpp does:
+
+        theta = acos(d_Up),  phi = atan2(d_North, d_East)
+        e1 = ( cosθcosφ,  cosθsinφ, -sinθ)      "x" axis (has an Up component)
+        e2 = (-sinφ,      cosφ,      0    )      "y" axis (horizontal)
+
+    `dirs` is (M, 3) unit vectors in [East, North, Up]. Returns two (M, 3) tensors.
+    e1, e2 and d form a right-handed orthonormal triad.
+    """
+    dE, dN, dU = dirs[:, 0], dirs[:, 1], dirs[:, 2]
+    theta = torch.arccos(dU.clamp(-1.0, 1.0))
+    phi   = torch.atan2(dN, dE)
+    st, ct = torch.sin(theta), torch.cos(theta)
+    sp, cp = torch.sin(phi),   torch.cos(phi)
+    e1 = torch.stack([ct * cp, ct * sp, -st], dim=1)
+    e2 = torch.stack([-sp,     cp,      torch.zeros_like(sp)], dim=1)
+    return e1, e2
+
+
+def place_clouds_enu(clouds:   torch.Tensor,
+                     positions: torch.Tensor,
+                     dirs:      torch.Tensor,
+                     east_entry:    float = EAST_ENTRY,
+                     layer_east_dx: float = LAYER_EAST_DX) -> torch.Tensor:
+    """Place native AllShowers clouds into site-local ENU at their real decay vertex.
+
+    This is THE placement the pipeline uses (Step 1, `build_training_pairs`); it is
+    factored out here so the notebooks and the aleatoric-floor script reproduce it
+    exactly instead of re-deriving the algebra.
+
+    Each cloud arrives in the generator's native frame with columns
+    ``[x_transverse, y_transverse, layer_index, energy, time]``. The shower is
+    rebuilt as: origin at the decay vertex, developed ALONG the true tau direction,
+    with layer k sitting ``k * layer_east_dx`` metres down the axis (the C8 plane
+    spacing) and the transverse offsets carried on the C8 basis:
+
+        p_ENU = decay + (layer * layer_east_dx) * d + x * e1 + y * e2
+
+    then written back into the coordinates the plane-aware kernel expects
+    (col0 = North, col1 = Up, col2 = layer index recovered from East depth).
+
+    Args:
+        clouds    : (M, P, 5) native clouds — MODIFIED IN PLACE and returned.
+        positions : (M, 3) decay vertices [East, North, Up] in metres.
+        dirs      : (M, 3) unit tau travel directions [East, North, Up].
+    Returns:
+        The same tensor, with cols 0/1/2 replaced by (North, Up, z_cont).
+    """
+    pe, pn, pu = (positions[:, i].view(-1, 1) for i in range(3))
+    dE, dN, dU = (dirs[:, i].view(-1, 1)      for i in range(3))
+    e1, e2 = c8_transverse_basis(dirs)
+    e1E, e1N, e1U = (e1[:, i].view(-1, 1) for i in range(3))
+    e2E, e2N      =  e2[:, 0].view(-1, 1), e2[:, 1].view(-1, 1)   # e2U == 0
+
+    mask = clouds[:, :, 3] > 0                    # energy-carrying points only
+    xt   = clouds[:, :, 0]
+    yt   = clouds[:, :, 1]
+    s    = clouds[:, :, 2] * layer_east_dx        # depth along the axis [m]
+
+    E = pe + s * dE + xt * e1E + yt * e2E
+    N = pn + s * dN + xt * e1N + yt * e2N
+    U = pu + s * dU + xt * e1U                    # e2 has no Up component
+
+    clouds[..., 0] = torch.where(mask, N, clouds[..., 0])
+    clouds[..., 1] = torch.where(mask, U, clouds[..., 1])
+    clouds[..., 2] = torch.where(mask, (east_entry - E) / layer_east_dx,
+                                 clouds[..., 2])
+    return clouds
+
+
 # ── Label computation (batched over showers, one shared layout per batch) ────
 
 @torch.no_grad()
@@ -210,37 +286,14 @@ def build_training_pairs(mountain, surface,
                 # Reconstruct each cloud in ENU from the C8 shower geometry
                 # (decay_locations/c8_air_shower.cpp): origin at the decay, shower
                 # developed ALONG the true tau direction, sampled at planes
-                # layer_east_dx (=500 m) apart. See the build_training_pairs docstring.
-                pos_chunk = positions_all[ds_start + c_lo: ds_start + c_hi]    # (csz,3) E,N,U decay
-                dir_chunk = dirs[ds_start + c_lo: ds_start + c_hi]             # (csz,3) E,N,U unit
-                pe = pos_chunk[:, 0].view(-1, 1)                              # decay East
-                pn = pos_chunk[:, 1].view(-1, 1)                              # decay North
-                pu = pos_chunk[:, 2].view(-1, 1)                              # decay Up
-                dE = dir_chunk[:, 0].view(-1, 1)
-                dN = dir_chunk[:, 1].view(-1, 1)
-                dU = dir_chunk[:, 2].view(-1, 1)
-                # Transverse basis in the plane perpendicular to d (the C8
-                # ObservationPlane x/y axes from the tau zenith/azimuth):
-                #   e1 = (cosθcosφ, cosθsinφ, -sinθ),  e2 = (-sinφ, cosφ, 0).
-                theta = torch.arccos(dU.clamp(-1.0, 1.0))
-                phi   = torch.atan2(dN, dE)
-                st, ct = torch.sin(theta), torch.cos(theta)
-                sp, cp = torch.sin(phi),   torch.cos(phi)
-                e1E, e1N, e1U = ct * cp, ct * sp, -st                         # (csz,1) each
-                e2E, e2N      = -sp, cp                                       # e2U = 0
-                mask = clouds_chunk[:, :, 3] > 0                              # (csz,P) bool
-                xt = clouds_chunk[:, :, 0]                                    # native transverse x [m]
-                yt = clouds_chunk[:, :, 1]                                    # native transverse y [m]
-                s  = clouds_chunk[:, :, 2] * layer_east_dx                    # depth along axis [m]
-                # ENU position of every point: decay + s*d + xt*e1 + yt*e2.
-                E = pe + s * dE + xt * e1E + yt * e2E
-                N = pn + s * dN + xt * e1N + yt * e2N
-                U = pu + s * dU + xt * e1U                                    # e2 has no Up component
-                # Write kernel coords: col0=North, col1=Up, col2 = layer via East depth.
-                clouds_chunk[..., 0] = torch.where(mask, N, clouds_chunk[..., 0])
-                clouds_chunk[..., 1] = torch.where(mask, U, clouds_chunk[..., 1])
-                clouds_chunk[..., 2] = torch.where(mask, (east_entry - E) / layer_east_dx,
-                                                   clouds_chunk[..., 2])
+                # layer_east_dx (=500 m) apart. Shared with the notebooks and the
+                # aleatoric-floor script via `place_clouds_enu` so there is exactly
+                # one implementation of this transform.
+                clouds_chunk = place_clouds_enu(
+                    clouds_chunk,
+                    positions_all[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
+                    dirs[ds_start + c_lo: ds_start + c_hi],            # (csz,3) unit dir
+                    east_entry=east_entry, layer_east_dx=layer_east_dx)
             elif recenter_to_mountain:
                 mask  = (clouds_chunk[:, :, 3] > 0).float()
                 w_sum = mask.sum(dim=1).clamp(min=1.0)

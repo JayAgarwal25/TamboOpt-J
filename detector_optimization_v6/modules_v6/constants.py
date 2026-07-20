@@ -44,7 +44,7 @@ LAYER_EAST_DX  = 500.0
 # kernel over-smoothed neighbouring detectors together. Used at dataset-build time
 # (Step 1 labels) and by the aleatoric-floor script; the trained surrogate then
 # inherits this resolution.
-SIGMA_SPATIAL  = 50.0
+SIGMA_SPATIAL  = 250.0
 
 # Fixed architecture constants
 N_DETECTORS = 100
@@ -64,12 +64,6 @@ AZIMUTH_MAX  = 360.0 # degrees
 RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 
-# Output folders. Edit these in-place to point a fresh run at a new tree
-# (e.g. swap "test_v6_run_01_recentered" -> "v6_run_01" to write to the
-# production location instead). 01_build_dataset.py writes to
-# TRAINING_DATASET_FOLDER; 02 + 03 read from it; 02 writes fnn.pt to
-# FNN_FOLDER; 03 writes recon.pt to RECON_FOLDER; 04 reads both.
-# TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_recentered")
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 FNN_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_02_recentered")
 RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered")
@@ -117,7 +111,6 @@ BATCH_SIZE_TRAIN  = 20
 # Energies are filtered to the generator's trained band [10**LOG_E_MIN,
 # 10**LOG_E_MAX] GeV inside the loader.
 USE_TAU_PRIMARIES = True
-# TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/tau_wholesky.h5"
 TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky.h5"
 TAU_CORPUS_PATH   = os.path.join(SHOWER_CACHE, "cashed_showers_tau_dual.pt")
 
