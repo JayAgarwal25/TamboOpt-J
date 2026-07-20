@@ -35,46 +35,29 @@ def encode_primary(directions:   torch.Tensor,
                    pdg:          torch.Tensor,
                    positions:    torch.Tensor,
                    array_center: torch.Tensor) -> torch.Tensor:
-    """Raw primary encoding: kinematics + decay geometry.
+    """Raw primary encoding: kinematics + decay vertex.
 
-    **Why the decay geometry is here.** `tau_wholesky.jl` cuts the corpus so every
-    surviving tau's forward ray crosses the observation mesh, which means direction
-    alone carries little information — every shower is aimed at the array. What
-    actually varies is WHERE the decay happened: how far the shower has developed by
-    the time it reaches the array, and how close its axis passes to the detectors.
-    With `[dir, log_e, pdg]` only, two taus with the same direction and energy but
-    different decay vertices give different labels from identical network input.
+    Returns (N, PRIMARY_DIM):
+    ``[dir_x, dir_y, dir_z, log_e_norm, pdg, rel_E, rel_N, rel_U]``, with
+    log_e_norm = (log10(E) - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN) ∈ [0, 1] and
+    rel_* the decay vertex relative to `array_center` in metres (left unscaled —
+    `compute_normalization` z-scores every primary column).
 
-    Features 5-7 are the decay vertex expressed relative to the array centre
-    (``rel_E, rel_N, rel_U``, metres) — the raw geometry, nothing derived.
+    The vertex is included because tau_wholesky.jl aims every surviving tau at the
+    array, so direction alone barely discriminates; without it two taus with equal
+    direction and energy give different labels from identical input. Measured
+    aleatoric floor: R² >= 0.49 without, >= 0.56 with. Derived summaries (along-axis
+    distance, impact parameter) were tested and did not beat the raw triple.
 
-    Measured on 1200 showers: a nearest-neighbour aleatoric floor on the
-    per-shower label gives R² >= 0.49 from ``[dir, log_e]`` alone and R² >= 0.56
-    once this triple is added. Derived summaries (along-axis distance to the array,
-    impact parameter) were tested and did not beat the raw triple, so they are
-    deliberately NOT included.
+    Cols 0-3 keep their meaning, so Step 3's ``primary[:, :4]`` target is unaffected.
 
     Args:
         directions   : (N, 3) unit vectors (sin θ cos φ, sin θ sin φ, cos θ).
         energies     : (N,) or (N, 1) primary energies [GeV], range ~[1e5, 1e8].
-        pdg          : (N,) EM/hadronic primary class ids (0 or 1) — a real
-                       conditioning feature, NOT the e/µ species.
-        positions    : (N, 3) ENU decay vertices [East, North, Up] in metres, from
-                       the Step-0 `<corpus>_positions.pt` sidecar (tau_wholesky.jl).
-        array_center : (3,) ENU centre of the detector region — `mountain.centroids_ENU`
-                       column means. Passed in rather than read from a global so the
-                       encoding never silently goes stale when the mesh changes.
-
-    Returns:
-        (N, PRIMARY_DIM) tensor
-        ``[dir_x, dir_y, dir_z, log_e_norm, pdg, rel_E, rel_N, rel_U]``
-        where log_e_norm = (log10(E) - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN) ∈ [0, 1].
-        The position triple stays in metres — `compute_normalization` z-scores every
-        primary column, so no hand-tuned scale constant is needed.
-
-    Note:
-        The first four columns keep their meaning and order, so Step 3's
-        ``target = primary[:, :4]`` (direction + energy) is unaffected.
+        pdg          : (N,) EM/hadronic primary class ids (0 or 1) — NOT the e/µ species.
+        positions    : (N, 3) ENU decay vertices, from the Step-0 `_positions.pt` sidecar.
+        array_center : (3,) ENU centre of the detector region. Passed in, not global,
+                       so the encoding cannot go stale when the mesh changes.
     """
     dirs = torch.as_tensor(directions, dtype=torch.float32)
     eng  = torch.as_tensor(energies,   dtype=torch.float32).reshape(-1, 1)

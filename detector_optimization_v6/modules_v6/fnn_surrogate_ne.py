@@ -38,12 +38,10 @@ def _positions_sidecar_path(shower_cache_path: str) -> str:
 
 
 def _load_positions_sidecar(shower_cache_path: str, keep_idx):
-    """Load the Step-0 ENU decay-position sidecar and index it by `keep_idx`.
+    """Load the Step-0 ENU decay-position sidecar, indexed by `keep_idx`.
 
-    Every shower is placed at the real decay vertex the Julia thrower
-    (decay_locations/tau_wholesky.jl) produced — there is no synthetic fallback,
-    so a missing sidecar is an error rather than a silent change of geometry.
-    """
+    No synthetic fallback: a missing sidecar is an error, not a silent change of
+    geometry."""
     path = _positions_sidecar_path(shower_cache_path)
     if not os.path.exists(path):
         raise FileNotFoundError(
@@ -62,48 +60,27 @@ def place_clouds_enu(clouds:   torch.Tensor,
                      layer_east_dx: float = LAYER_EAST_DX) -> torch.Tensor:
     """Place native AllShowers clouds into site-local ENU at their real decay vertex.
 
-    This is THE placement the pipeline uses (Step 1, `build_training_pairs`); it is
-    factored out here so the notebooks and the aleatoric-floor script reproduce it
-    exactly instead of re-deriving the algebra.
+    THE placement the pipeline uses (Step 1, `build_training_pairs`); shared with the
+    notebooks and the aleatoric-floor script so nobody re-derives the algebra.
 
-    Each cloud arrives in the generator's native frame with columns
-    ``[x, y, layer_index, energy, time]``. **Cols 0/1 are HORIZONTAL (East, North)
-    offsets from the shower start, not plane-local transverse coordinates**, so the
-    longitudinal development is already in them and must NOT be added again:
+        East = decay_E + x        North = decay_N + y
+        Up   = decay_U + layer * layer_east_dx * d_Up
 
-        East = decay_E + x
-        North = decay_N + y
-        Up   = decay_U + (layer * layer_east_dx) * d_Up
+    Native columns are ``[x, y, layer_index, energy, time]``, written back as the
+    kernel's (North, Up, z_cont).
 
-    then written back into the coordinates the plane-aware kernel expects
-    (col0 = North, col1 = Up, col2 = layer index recovered from East depth).
+    **Cols 0/1 are HORIZONTAL (East, North) offsets, not plane-local transverse
+    coordinates** — the longitudinal development is already in them and must not be
+    added twice. c8_air_shower.cpp does build planes ⟂ the axis on an (e1, e2) basis,
+    but its writer is flagged ``false // do not print z-coordinate`` and emits root-CS
+    x/y. Confirmed on the generator's training corpus (combined_electrons.h5): cols
+    0/1 drift by ``layer_east_dx * (d_East, d_North)`` per layer, which a transverse
+    coordinate cannot do. Reading them as transverse swung every shower kilometres
+    off-axis and dropped the trigger rate to 2% (now 91%).
 
-    **Why not the C8 (e1, e2) transverse basis.** c8_air_shower.cpp does put the
-    ObservationPlanes perpendicular to the axis with exactly those axes, but the
-    writer is flagged ``false // do not print z-coordinate`` and emits root-CS x/y.
-    Measured on the generator's own training corpus
-    (hhanif/tambo_simulations_for_training/combined_electrons.h5): fitting cols 0/1
-    against col2 gives a drift of ``layer_east_dx * (d_East, d_North)`` per layer —
-    the longitudinal development — and a "transverse" radius with median 7.5 km. A
-    true transverse coordinate cannot correlate with the layer index at all.
-    Subtracting ``layer*layer_east_dx*d`` leaves a lateral residual that is FLAT in
-    layer (476 m at L1 → 609 m at L23), i.e. a genuine bounded lateral spread.
-
-    Treating cols 0/1 as C8 transverse coordinates double-developed every shower and
-    swung it kilometres off its own axis: 92% of clouds had an axis passing within
-    31 m (median) of a detector, yet only 2% cleared LAYOUT_THRESHOLD. With the
-    placement below that is 91%.
-
-    **Known limitation — the vertical lateral component is missing.** Because C8
-    dropped the z-coordinate, only the horizontal part of each point's lateral
-    offset survives. Recovering the vertical from the plane condition ``p·d = s``
-    costs a factor ``1/d_Up``, which is unusable for the near-horizontal taus this
-    pipeline is built around (|d_Up| p5 = 0.027). Up therefore carries the
-    longitudinal term only; the shower is flattened in the near-vertical transverse
-    direction. Reconstructing it under an azimuthal-symmetry assumption was tested
-    and changes the mean trigger count by ~1% (80.3 → 79.5), so the deterministic
-    no-synthetic-data form is kept. A real fix belongs upstream: re-run C8 writing
-    the z-coordinate.
+    Known limitation: C8 dropped z, so the vertical lateral component is lost and Up
+    carries only the longitudinal term. Recovering it from ``p·d = s`` costs 1/d_Up,
+    unusable at |d_Up| p5 = 0.027. Fix belongs upstream — re-run C8 writing z.
 
     Args:
         clouds    : (M, P, 5) native clouds — MODIFIED IN PLACE and returned.
@@ -218,29 +195,18 @@ def build_training_pairs(mountain, surface,
     (North, East) convention (detector_strategies_ne + the NE compute_labels_batch
     above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`.
 
-    **Shower placement.** Every cloud is placed at the real ENU decay vertex the
-    Julia thrower (decay_locations/tau_wholesky.jl) produced, read from the Step-0
-    `<corpus>_positions.pt` sidecar, by `place_clouds_enu` — see that function for
-    the frame and for why the C8 (e1, e2) transverse basis is NOT used. In short,
-    the native cols 0/1 are horizontal (East, North) offsets that already carry the
-    longitudinal development, so for a point with native (x, y) and integer layer L:
-
-        East  = decay_E + x
-        North = decay_N + y
-        Up    = decay_U + L * layer_east_dx * d_Up
-
-    Each point is then written in kernel coords (col0=North, col1=Up,
-    col2 = (east_entry - East)/layer_east_dx); east_entry cancels against the
-    detector z_cont, leaving physical relative depth. There is no synthetic
-    fallback — a missing sidecar raises rather than silently changing the geometry.
+    **Shower placement.** `place_clouds_enu` puts every cloud at the real ENU decay
+    vertex from the Step-0 `<corpus>_positions.pt` sidecar (tau_wholesky.jl); see
+    that function for the frame. No synthetic fallback — a missing sidecar raises
+    rather than silently changing the geometry. The same vertices also feed the
+    primary encoding (`rel_E/N/U`), so input and geometry cannot disagree.
 
     **Bounded-memory streaming.** Point clouds are never loaded whole — only the
     tiny metadata (dir/energy/pdg) is read up front; clouds are streamed in
     chunks of `load_chunk` showers (loaded → used for all strategies → freed).
-    See fnn_surrogate.build_training_pairs for full documentation.
 
     Returns:
-        primaries : (N_pairs, 5)   float32
+        primaries : (N_pairs, PRIMARY_DIM) float32
         xy        : (N_pairs, 100, 2) float32   columns = (East, North)
         E         : (N_pairs, 100) float32
         T         : (N_pairs, 100) float32
@@ -262,12 +228,9 @@ def build_training_pairs(mountain, surface,
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)
     energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)
     pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)
-    # Real ENU decay positions from the Julia thrower — the only placement there is,
-    # and (since PRIMARY_DIM grew to 10) also part of the surrogate's input.
+    # Real decay vertices: drive both the placement and the primary's rel_E/N/U.
     positions_all = _load_positions_sidecar(shower_cache_path, keep_idx)  # (N,3) E,N,U
-
-    # Array centre in ENU — the origin the decay-geometry features are measured
-    # against. Taken from the mesh rather than a constant so it tracks the geometry.
+    # Array centre from the mesh, not a constant, so it tracks the geometry.
     array_center = torch.as_tensor(mountain.centroids_ENU,
                                    dtype=torch.float32).mean(dim=0)       # (3,) E,N,U
     primaries_all = encode_primary(dirs, energs, pdg,
@@ -313,9 +276,7 @@ def build_training_pairs(mountain, surface,
                 clouds_chunk[bad] = 0.0
                 n_sanitized += nb
 
-            # Place at the real decay vertex from the Julia thrower. Shared with the
-            # notebooks and the aleatoric-floor script via `place_clouds_enu` so
-            # there is exactly one implementation of this transform.
+            # One shared implementation, also used by the notebooks and the floor script.
             clouds_chunk = place_clouds_enu(
                 clouds_chunk,
                 positions_all[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
