@@ -48,12 +48,14 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
-from modules_v6.fnn_surrogate_ne import compute_labels_batch
+from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
 from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
+from modules_v6.tau_showers import load_tau_primaries
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
+    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
 )
 from modules_v4.tr_geometry       import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -75,18 +77,10 @@ T_LOG_SCALE = 1.0e8          # must match 02_train_fnn*.py
 FIRE_EPS    = 1.0e-3         # log1p(E) above this ⇒ detector "fired" this shower
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# constants.GEOMETRY_PATH went stale after the TAMBOSim v1 reorg
-# (resources/basic_geometry.h5 → resources/geometry/colca_valley.h5; confirmed in
-# TAMBOSim git). GEOMETRY_GROUP/DET_KEY still match. Prefer a local copy in this
-# folder, then the new TAMBOSim path, then the (stale) constant.
-GEOMETRY_PATH_RESOLVED = next(
-    (p for p in (
-        os.path.join(_HERE, os.path.basename(GEOMETRY_PATH)),
-        "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
-        GEOMETRY_PATH,
-    ) if os.path.exists(p)),
-    GEOMETRY_PATH,
-)
+# Mesh path resolution lives in constants.GEOMETRY_PATH_RESOLVED. This script used
+# to re-derive it here with a colca_valley.h5 fallback, which is now actively wrong:
+# GEOMETRY_GROUP is "malata", so falling back to colca_valley.h5 would raise a
+# missing-group KeyError rather than degrade gracefully.
 
 # Must match the NE dataset builder: fnn_surrogate_ne.build_training_pairs calls
 # compute_labels_batch with its DEFAULT sigma (SIGMA_SPATIAL), so use the same
@@ -139,12 +133,26 @@ def _generate_repeated_showers(n_prim, m_real, seed, gen_batch):
     species is padded to the common target_P (the muon cap)."""
     if gen_batch:
         gen00.BATCH_SIZE = int(gen_batch)                  # GPU generate batch size
-    prim = sample_primary_particles(                       # corpus ranges (match 00)
-        e_min=10 ** gen00.LOG_E_MIN, e_max=10 ** gen00.LOG_E_MAX,
-        zenith_min=gen00.ZENITH_MIN, zenith_max=gen00.ZENITH_MAX,
-        azimuth_min=gen00.AZIMUTH_MIN, azimuth_max=gen00.AZIMUTH_MAX,
-        n=n_prim, seed=seed,
-    )
+    if USE_TAU_PRIMARIES:
+        # Draw the SAME kind of primaries Step 0 does — real taus carrying a
+        # physical ENU decay position, not synthetic direction/energy draws. The
+        # position matters here: it is what Step 1 places the cloud at, so the
+        # floor's labels only match the corpus if the primaries carry one.
+        prim = load_tau_primaries(
+            TAU_WHOLESKY_PATH, e_min=10 ** LOG_E_MIN, e_max=10 ** LOG_E_MAX,
+            n=n_prim, seed=seed,
+        )
+        print(f"[gen] real tau primaries from {os.path.basename(TAU_WHOLESKY_PATH)}"
+              f"  ({int(prim['energies'].shape[0])} drawn)")
+    else:
+        prim = sample_primary_particles(                   # corpus ranges (match 00)
+            e_min=10 ** gen00.LOG_E_MIN, e_max=10 ** gen00.LOG_E_MAX,
+            zenith_min=gen00.ZENITH_MIN, zenith_max=gen00.ZENITH_MAX,
+            azimuth_min=gen00.AZIMUTH_MIN, azimuth_max=gen00.AZIMUTH_MAX,
+            n=n_prim, seed=seed,
+        )
+    # load_tau_primaries caps at the number of in-band events, which can be < n_prim.
+    n_prim = int(prim["energies"].shape[0])
     energies   = torch.repeat_interleave(prim["energies"],   m_real, dim=0)  # (n*m,1)
     directions = torch.repeat_interleave(prim["directions"], m_real, dim=0)  # (n*m,3)
     labels     = torch.repeat_interleave(prim["labels"],     m_real, dim=0)  # (n*m,)
@@ -204,8 +212,9 @@ def main():
     print("=" * 72)
     print("aleatoric floor — within-primary label variance / corpus variance")
     print("=" * 72)
-    print(f"device={DEVICE}  recenter={RECENTER_TO_MOUNTAIN}  "
-          f"n_prim={args.n_prim}  m_real={args.m_real}  strategies={len(_STRATEGIES)}")
+    print(f"device={DEVICE}  tau_primaries={USE_TAU_PRIMARIES}  "
+          f"recenter={RECENTER_TO_MOUNTAIN}  n_prim={args.n_prim}  "
+          f"m_real={args.m_real}  strategies={len(_STRATEGIES)}")
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     torch.set_float32_matmul_precision('high') # TODO maybe deactivate if perforamne is too bad
 
@@ -236,13 +245,41 @@ def main():
     t0 = time.time()
     clouds, _prim = _generate_repeated_showers(
         args.n_prim, args.m_real, args.seed, args.gen_batch)
-    n_prim, m_real = args.n_prim, args.m_real
+    # NOT args.n_prim: with real tau primaries the in-band count can be smaller.
+    n_prim, m_real = int(_prim["energies"].shape[0]), args.m_real
     P = next(iter(clouds.values())).shape[2]
-    if RECENTER_TO_MOUNTAIN:
+
+    # Place each realization exactly as Step 1 does, so the generated labels live
+    # in the same frame as the corpus labels that form the z-score denominator.
+    #   - real tau primaries  -> C8 direction-aware placement at the decay vertex
+    #   - synthetic primaries -> the legacy recenter-to-mountain shift
+    # Skipping placement entirely (what this script did once RECENTER_TO_MOUNTAIN
+    # was turned off for the tau pipeline) leaves the clouds in the generator's
+    # native transverse frame near the origin, so the numerator and the corpus
+    # denominator would describe different geometries.
+    if _prim.get("positions") is not None:
+        pos = torch.as_tensor(_prim["positions"], dtype=torch.float32)      # (n_prim,3)
+        dirs = torch.as_tensor(_prim["directions"], dtype=torch.float32)    # (n_prim,3)
+        dirs = dirs / dirs.norm(dim=1, keepdim=True).clamp(min=1e-12)
+        # Every realization of primary p shares that primary's vertex + direction.
+        pos_flat  = torch.repeat_interleave(pos,  m_real, dim=0)            # (n_prim*m,3)
+        dirs_flat = torch.repeat_interleave(dirs, m_real, dim=0)
+        for name in clouds:
+            clouds[name] = place_clouds_enu(
+                clouds[name].reshape(n_prim * m_real, P, 5), pos_flat, dirs_flat,
+                east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
+            ).reshape(n_prim, m_real, P, 5)
+        print(f"[place] C8 direction-aware placement at {n_prim} real decay vertices "
+              f"(east_entry={EAST_ENTRY:g}, dx={LAYER_EAST_DX:g})")
+    elif RECENTER_TO_MOUNTAIN:
         for name in clouds:
             clouds[name] = _recenter(
                 clouds[name].reshape(n_prim * m_real, P, 5), mountain
             ).reshape(n_prim, m_real, P, 5)
+        print("[place] recentered to the mountain bbox centre (synthetic primaries)")
+    else:
+        print("[place] WARNING: no real positions and RECENTER_TO_MOUNTAIN=False — "
+              "clouds stay in the native frame and will not overlap the mountain")
     print(f"[gen] done in {time.time()-t0:.1f}s  P(max_points)={P}  species={list(clouds)}")
 
     # For each (species component, strategy, primary): one fixed layout, M
@@ -304,7 +341,8 @@ def main():
     res = dict(
         n_prim=n_prim, m_real=m_real, n_strategies=len(_STRATEGIES),
         species=list(gen00.SPECIES),
-        recenter=RECENTER_TO_MOUNTAIN, fire_eps=FIRE_EPS,
+        recenter=RECENTER_TO_MOUNTAIN, tau_primaries=USE_TAU_PRIMARIES,
+        n_prim_used=n_prim, fire_eps=FIRE_EPS,
         corpus_std=dict(E=e_std, T=t_std),
         corpus_std_fired=dict(E=e_std_fired, T=t_std_fired),
         # Full label ranges (min/max/mean/std + z-span) to read the stds against.
