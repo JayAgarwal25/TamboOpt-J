@@ -44,7 +44,7 @@ LAYER_EAST_DX  = 500.0
 # kernel over-smoothed neighbouring detectors together. Used at dataset-build time
 # (Step 1 labels) and by the aleatoric-floor script; the trained surrogate then
 # inherits this resolution.
-SIGMA_SPATIAL  = 250.0
+SIGMA_SPATIAL  = 50.0
 
 # Fixed architecture constants
 N_DETECTORS = 100
@@ -107,8 +107,8 @@ BATCH_SIZE_TRAIN  = 20
 # Energies are filtered to the generator's trained band [10**LOG_E_MIN,
 # 10**LOG_E_MAX] GeV inside the loader.
 USE_TAU_PRIMARIES = True
-# TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky.h5"
-TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky_n2M_83k.h5"
+TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky_n750k.h5"
+# TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky_n2M_83k.h5"
 TAU_CORPUS_PATH   = os.path.join(SHOWER_CACHE, "cashed_showers_tau_dual.pt")
 
 # Corpus the Step-1 builder reads. Tau runs use a fixed-name file (the pair count
