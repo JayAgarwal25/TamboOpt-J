@@ -48,7 +48,16 @@ SIGMA_SPATIAL  = 50.0
 
 # Fixed architecture constants
 N_DETECTORS = 100
-PRIMARY_DIM = 5   # [dir_x, dir_y, dir_z, log_e_norm, pdg]  (pdg = EM/hadronic primary class, 0/1)
+# [dir_x, dir_y, dir_z, log_e_norm, pdg, rel_E, rel_N, rel_U]
+#   pdg              = EM/hadronic primary class, 0/1 (NOT the e/µ species)
+#   rel_E/N/U        = decay vertex relative to the array centre [m]
+# The decay vertex (cols 5-7) is required because tau_wholesky.jl cuts the corpus so
+# every tau is aimed at the array — direction alone barely discriminates, and without
+# the vertex two identical inputs map to different labels. Measured aleatoric floor on
+# the per-shower label: R^2 >= 0.49 without it, >= 0.56 with it. Cols 0-3 keep their
+# meaning so Step 3's `primary[:, :4]` reconstruction target is unchanged.
+# Bumping this invalidates every trained surrogate/recon checkpoint: rebuild Step 1.
+PRIMARY_DIM = 8
 
 # Primary energy bounds (log10 GeV) for min-max normalization
 LOG_E_MIN = 5.0   # log10(1e5 GeV)

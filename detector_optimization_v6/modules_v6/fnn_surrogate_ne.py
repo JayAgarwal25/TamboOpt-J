@@ -262,10 +262,16 @@ def build_training_pairs(mountain, surface,
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)
     energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)
     pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)
-    primaries_all = encode_primary(dirs, energs, pdg)    # (n_showers, 5)
-
-    # Real ENU decay positions from the Julia thrower — the only placement there is.
+    # Real ENU decay positions from the Julia thrower — the only placement there is,
+    # and (since PRIMARY_DIM grew to 10) also part of the surrogate's input.
     positions_all = _load_positions_sidecar(shower_cache_path, keep_idx)  # (N,3) E,N,U
+
+    # Array centre in ENU — the origin the decay-geometry features are measured
+    # against. Taken from the mesh rather than a constant so it tracks the geometry.
+    array_center = torch.as_tensor(mountain.centroids_ENU,
+                                   dtype=torch.float32).mean(dim=0)       # (3,) E,N,U
+    primaries_all = encode_primary(dirs, energs, pdg,
+                                   positions_all, array_center)  # (n_showers, PRIMARY_DIM)
 
     # e/µ species per kept shower from the Step-0 sidecar (same keep_idx as the
     # metadata). Corpus `pdg` is the EM/hadronic class, so the Step-2 split keys

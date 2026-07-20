@@ -30,27 +30,62 @@ from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
 
 # ── Primary encoding ─────────────────────────────────────────────────────────
 
-def encode_primary(directions: torch.Tensor,
-                   energies:   torch.Tensor,
-                   pdg:        torch.Tensor) -> torch.Tensor:
-    """Raw 5-feature primary encoding.
+def encode_primary(directions:   torch.Tensor,
+                   energies:     torch.Tensor,
+                   pdg:          torch.Tensor,
+                   positions:    torch.Tensor,
+                   array_center: torch.Tensor) -> torch.Tensor:
+    """Raw primary encoding: kinematics + decay geometry.
+
+    **Why the decay geometry is here.** `tau_wholesky.jl` cuts the corpus so every
+    surviving tau's forward ray crosses the observation mesh, which means direction
+    alone carries little information — every shower is aimed at the array. What
+    actually varies is WHERE the decay happened: how far the shower has developed by
+    the time it reaches the array, and how close its axis passes to the detectors.
+    With `[dir, log_e, pdg]` only, two taus with the same direction and energy but
+    different decay vertices give different labels from identical network input.
+
+    Features 5-7 are the decay vertex expressed relative to the array centre
+    (``rel_E, rel_N, rel_U``, metres) — the raw geometry, nothing derived.
+
+    Measured on 1200 showers: a nearest-neighbour aleatoric floor on the
+    per-shower label gives R² >= 0.49 from ``[dir, log_e]`` alone and R² >= 0.56
+    once this triple is added. Derived summaries (along-axis distance to the array,
+    impact parameter) were tested and did not beat the raw triple, so they are
+    deliberately NOT included.
 
     Args:
-        directions : (N, 3) unit vectors (sin θ cos φ, sin θ sin φ, cos θ).
-        energies   : (N,) or (N, 1) primary energies [GeV], range ~[1e5, 1e8].
-        pdg        : (N,) EM/hadronic primary class ids (0 or 1) — a real
-                     conditioning feature, NOT the e/µ species.
+        directions   : (N, 3) unit vectors (sin θ cos φ, sin θ sin φ, cos θ).
+        energies     : (N,) or (N, 1) primary energies [GeV], range ~[1e5, 1e8].
+        pdg          : (N,) EM/hadronic primary class ids (0 or 1) — a real
+                       conditioning feature, NOT the e/µ species.
+        positions    : (N, 3) ENU decay vertices [East, North, Up] in metres, from
+                       the Step-0 `<corpus>_positions.pt` sidecar (tau_wholesky.jl).
+        array_center : (3,) ENU centre of the detector region — `mountain.centroids_ENU`
+                       column means. Passed in rather than read from a global so the
+                       encoding never silently goes stale when the mesh changes.
 
     Returns:
-        (N, 5) tensor `[dir_x, dir_y, dir_z, log_e_norm, pdg]`
+        (N, PRIMARY_DIM) tensor
+        ``[dir_x, dir_y, dir_z, log_e_norm, pdg, rel_E, rel_N, rel_U]``
         where log_e_norm = (log10(E) - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN) ∈ [0, 1].
+        The position triple stays in metres — `compute_normalization` z-scores every
+        primary column, so no hand-tuned scale constant is needed.
+
+    Note:
+        The first four columns keep their meaning and order, so Step 3's
+        ``target = primary[:, :4]`` (direction + energy) is unaffected.
     """
     dirs = torch.as_tensor(directions, dtype=torch.float32)
     eng  = torch.as_tensor(energies,   dtype=torch.float32).reshape(-1, 1)
     pdg  = torch.as_tensor(pdg,        dtype=torch.float32).reshape(-1, 1)
+    pos  = torch.as_tensor(positions,  dtype=torch.float32)
+    ctr  = torch.as_tensor(array_center, dtype=torch.float32).reshape(1, 3)
     log_e = torch.log10(eng)
     log_e_norm = (log_e - LOG_E_MIN) / (LOG_E_MAX - LOG_E_MIN)
-    return torch.cat([dirs, log_e_norm, pdg], dim=1)
+
+    rel = pos - ctr                                       # decay → array-centre frame
+    return torch.cat([dirs, log_e_norm, pdg, rel], dim=1)
 
 
 
@@ -175,7 +210,15 @@ def build_training_pairs(mountain, surface,
     dirs   = torch.as_tensor(meta.directions[keep_idx], dtype=torch.float32)  # (n_showers, 3)
     energs = torch.as_tensor(meta.energies[keep_idx],   dtype=torch.float32)  # (n_showers, 1)
     pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)     # (n_showers,) EM/hadronic
-    primaries_all = encode_primary(dirs, energs, pdg)                         # (n_showers, 5)
+    # This legacy (North, Up) builder predates the tau pipeline and has no decay-
+    # position sidecar, so it cannot produce the decay-geometry block that
+    # `encode_primary` now requires. Step 1 uses
+    # fnn_surrogate_ne.build_training_pairs; nothing in the pipeline reaches here.
+    raise NotImplementedError(
+        "fnn_surrogate.build_training_pairs is superseded by "
+        "fnn_surrogate_ne.build_training_pairs, which places showers at the real "
+        "tau_wholesky.jl decay vertices and encodes them into the primary. This "
+        "legacy (North, Up) builder has no decay positions to encode.")
 
     # e/µ species per kept shower from the Step-0 sidecar (row-aligned with the
     # corpus; indexed by the same keep_idx as the metadata). The corpus `pdg`
@@ -285,10 +328,10 @@ def compute_normalization(primary:   torch.Tensor,
                           T:         torch.Tensor) -> dict:
     """Per-feature z-score statistics for inputs and outputs.
 
-    Input vector layout (for the FNN) is `[primary (5), xy_flat (200)]` = 205.
+    Input vector layout (for the FNN) is `[primary (PRIMARY_DIM), xy_flat (2*n_det)]`.
     Output vector layout is `[E (100), T (100)]` = 200 (first E then T).
 
-    For the input, primary features (5) keep per-feature stats, but all xy
+    For the input, primary features keep per-feature stats, but all xy
     slots share one (mean_x, std_x, mean_y, std_y) pair — otherwise
     permutation augmentation creates a train/val z-score mismatch.
     Likewise the output uses one shared (mean, std) for all E slots and
@@ -297,8 +340,8 @@ def compute_normalization(primary:   torch.Tensor,
     n_det = E.shape[1]
 
     # ── Input: primary per-feature, xy shared across detectors ──────────
-    p_mean = primary.mean(dim=0)                                    # (5,)
-    p_std  = primary.std(dim=0).clamp(min=1e-10)                     # (5,)
+    p_mean = primary.mean(dim=0)                                    # (PRIMARY_DIM,)
+    p_std  = primary.std(dim=0).clamp(min=1e-10)                     # (PRIMARY_DIM,)
 
     # One scalar mean/std for x coords, one for y coords
     xy_x = xy[..., 0]                                               # (B, n_det)
