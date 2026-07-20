@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
-from modules_v6.opt_core import consecutive_cos_distance
+from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
 
 
 # ── Layout figures ────────────────────────────────────────────────────────────
@@ -146,6 +146,103 @@ def project_en_to_face(surface, east, north, frame):
     pts = np.stack([e.reshape(-1), n.reshape(-1), np.asarray(up).reshape(-1)], axis=-1)
     s, u = enu_to_face(pts, frame)
     return s.reshape(e.shape), u.reshape(e.shape)
+
+
+def cloud_to_face(cloud, frame, east_entry=None, layer_east_dx=None):
+    """A PLACED shower cloud → cliff-face (strike, updip).
+
+    Thin composition of `fnn_surrogate_ne.cloud_to_enu` (undo the kernel's
+    North/Up/z_cont packing) with `enu_to_face`, so a cloud can be overlaid on the
+    same axes as the mountain and the detectors."""
+    from modules_v6.fnn_surrogate_ne import cloud_to_enu
+    from modules_v6.constants import EAST_ENTRY, LAYER_EAST_DX
+    pts = cloud_to_enu(cloud,
+                       east_entry=EAST_ENTRY if east_entry is None else east_entry,
+                       layer_east_dx=LAYER_EAST_DX if layer_east_dx is None else layer_east_dx)
+    return enu_to_face(pts, frame)
+
+
+def det_counts(E, log1p_space: bool = False):
+    """Detector labels → RAW counts, the space LAYOUT_THRESHOLD lives in.
+
+    Two different things are called "E" in this codebase and they are NOT in the
+    same space — mixing them up double-transforms the values:
+
+    * ``fnn_surrogate_ne.compute_labels_batch`` returns **raw counts**. The log1p
+      is applied afterwards, by 01_build_dataset_northeast.py, when writing E.pt.
+      Pass these through unchanged (``log1p_space=False``, the default).
+    * the trained **surrogate** predicts in log1p space, because it was fitted to
+      E.pt. That is why ``opt_core.utility_of_xy`` calls
+      ``reconstructability(torch.expm1(E_pred_det), ...)``. Pass those with
+      ``log1p_space=True``.
+
+    Non-finite entries are zeroed, mirroring the ``torch.nan_to_num`` the builder
+    applies to the kernel output (fnn_surrogate_ne), so a single bad detector
+    cannot poison a colour scale."""
+    c = np.asarray(E, dtype=float)
+    if log1p_space:
+        c = np.expm1(c)
+    return np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def face_limits(ax, mtn_s, mtn_u, pad: float = 400.0):
+    """Frame an axis on the mountain face (+pad), equal aspect.
+
+    A shower rod is ~11.5 km long while the array is ~1.4 km, so autoscaling to
+    the cloud shrinks the detectors to a dot."""
+    ax.set_xlim(float(np.min(mtn_s)) - pad, float(np.max(mtn_s)) + pad)
+    ax.set_ylim(float(np.min(mtn_u)) - pad, float(np.max(mtn_u)) + pad)
+    ax.set_aspect("equal")
+
+
+def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
+                           layout_threshold=None, legend=True,
+                           log1p_space: bool = False, dyn_range: float = 1e6,
+                           cmap: str = "plasma"):
+    """Scatter detectors on the cliff face, coloured by RAW counts (log scale).
+
+    Colouring by magnitude rather than drawing a boolean "triggered" mask matters:
+    the kernel's Gaussian (SIGMA_SPATIAL) leaves a numerically nonzero tail on
+    essentially ALL detectors, so an ``E > 0`` cut lights the whole array up and
+    hides the spatial falloff. Detectors clearing `layout_threshold` (the
+    optimiser's own cut, in counts) get a ring.
+
+    `log1p_space` says which space `E` is in — see `det_counts`. `dyn_range` caps
+    how many decades the colour scale spans below the peak: real layouts mix a few
+    strong detectors with a far tail, and an unbounded LogNorm over ~60 decades
+    fails outright with "Invalid vmin or vmax".
+
+    Returns (mappable_or_None, n_with_signal, n_over_threshold)."""
+    from matplotlib.colors import LogNorm
+    if layout_threshold is None:
+        layout_threshold = LAYOUT_THRESHOLD
+    ds, du = project_en_to_face(surface, np.asarray(e_det), np.asarray(n_det), frame)
+    c = det_counts(E, log1p_space=log1p_space)
+    live, over = c > 0, c > layout_threshold
+
+    ax.scatter(ds[~live], du[~live], s=14, c="0.55", marker="x", lw=0.9, zorder=2,
+               label="no signal" if legend else None)
+    sc = None
+    if live.any():
+        hi = float(c[live].max())
+        lo = max(float(c[live].min()), hi / dyn_range)
+        if not (np.isfinite(lo) and np.isfinite(hi)) or lo <= 0:
+            lo, hi = 1e-12, 1.0
+        if hi <= lo:                      # single value / all-equal → give LogNorm room
+            hi = lo * 10.0
+        # `cmap` defaults to plasma rather than inferno on purpose: inferno's low
+        # end is pure BLACK, so the weakest detectors render as bold black dots
+        # indistinguishable from the strongest — and from a black shower cloud.
+        # plasma bottoms out at dark blue-violet, keeping the ramp readable. The
+        # thin white edge separates markers from the cloud behind them.
+        sc = ax.scatter(ds[live], du[live], c=np.clip(c[live], lo, hi), s=42,
+                        cmap=cmap, edgecolor="white", linewidths=0.5,
+                        norm=LogNorm(vmin=lo, vmax=hi), zorder=3,
+                        label="signal" if legend else None)
+    if over.any():
+        ax.scatter(ds[over], du[over], s=150, facecolors="none", edgecolors="cyan",
+                   lw=1.4, label=f"> {layout_threshold:g} counts" if legend else None)
+    return sc, int(live.sum()), int(over.sum())
 
 
 def plot_ensemble(aligned_xy: np.ndarray,

@@ -123,6 +123,34 @@ def place_clouds_enu(clouds:   torch.Tensor,
     return clouds
 
 
+def cloud_to_enu(clouds:        torch.Tensor,
+                 east_entry:    float = EAST_ENTRY,
+                 layer_east_dx: float = LAYER_EAST_DX):
+    """Inverse of `place_clouds_enu`: kernel coords → ENU points.
+
+    After placement a cloud carries ``col0 = North``, ``col1 = Up`` and
+    ``col2 = z_cont`` (the East depth expressed in layer-index units). Recover the
+    physical East by inverting the same gauge the kernel uses,
+    ``East = east_entry - z_cont * layer_east_dx``, so placed clouds can be drawn
+    in the same ENU/cliff-face frame as the mountain and the detectors.
+
+    Only energy-carrying points were ever placed (`place_clouds_enu` masks on
+    col3 > 0), so points with zero energy are excluded rather than returned at a
+    meaningless position.
+
+    Args:
+        clouds : (..., P, 5) placed cloud(s).
+    Returns:
+        (M, 3) float array of [East, North, Up] for the energy-carrying points.
+    """
+    c = clouds.detach().cpu().numpy() if isinstance(clouds, torch.Tensor) else np.asarray(clouds)
+    c = c.reshape(-1, c.shape[-1])
+    m = c[:, 3] > 0
+    north, up = c[m, 0], c[m, 1]
+    east = east_entry - c[m, 2] * layer_east_dx
+    return np.stack([east, north, up], axis=1)
+
+
 # ── Label computation (batched over showers, one shared layout per batch) ────
 
 @torch.no_grad()
