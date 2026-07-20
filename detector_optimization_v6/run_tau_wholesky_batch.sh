@@ -45,7 +45,7 @@ BASE_DIR="${SLURM_SUBMIT_DIR:-$(dirname "$(readlink -f "$0")")}"
 SCRIPT="${SCRIPT:-$BASE_DIR/decay_locations/tau_wholesky.jl}"
 
 # --- run parameters -----------------------------------------------------------
-NEVENT=200000       # default to the smoke test, not the 200k run
+NEVENT=10000000       
 SEED=1
 MINDIST=1000          # integer m, decay vertex -> observation mesh
 
