@@ -71,10 +71,6 @@ RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered"
 OPT_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_04_optimize")
 
 # 01_build_dataset.py: per-shower xy translation so every shower's energy-
-# weighted centroid lands at the mountain bbox center. Without this only
-# ~23% of cache showers overlap the mountain. Set to False to keep raw
-# cache positions (the production default before this knob existed).
-RECENTER_TO_MOUNTAIN = False # TODO remove this functionality
 
 # 02_train_fnn.py: fraction of training-set indices to keep (val set always
 # full). 1.0 = use all 90% train split. Drop to e.g. 0.05 for smoke tests.
@@ -111,7 +107,8 @@ BATCH_SIZE_TRAIN  = 20
 # Energies are filtered to the generator's trained band [10**LOG_E_MIN,
 # 10**LOG_E_MAX] GeV inside the loader.
 USE_TAU_PRIMARIES = True
-TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky.h5"
+# TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky.h5"
+TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky_n2M_83k.h5"
 TAU_CORPUS_PATH   = os.path.join(SHOWER_CACHE, "cashed_showers_tau_dual.pt")
 
 # Corpus the Step-1 builder reads. Tau runs use a fixed-name file (the pair count

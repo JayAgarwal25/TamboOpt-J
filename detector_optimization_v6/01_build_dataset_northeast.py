@@ -32,7 +32,7 @@ from modules_v6.fnn_surrogate_ne import (
 from modules_v6.constants import (
     SHOWER_CACHE, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
-    BATCH_SIZE, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
+    BATCH_SIZE, RUN_LOCATION,
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
 from modules_v4.tr_geometry    import load_tr_mountain
@@ -50,7 +50,6 @@ TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 MAX_SHOWERS = int(DATASET_FRACTION * 2 * NUM_SHOWERS)
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# RECENTER_TO_MOUNTAIN is imported from modules_v6.constants — edit it there.
 
 
 def main():
@@ -65,7 +64,6 @@ def main():
     print(f"batch size   : {BATCH_SIZE}")
     print(f"max showers  : {MAX_SHOWERS}")
     print(f"device       : {DEVICE}")
-    print(f"recenter     : {RECENTER_TO_MOUNTAIN}")
 
     # Mountain + surface map (Up = g(N, East))
     t0 = time.time()
@@ -90,10 +88,9 @@ def main():
         seed=SEED,
         device=DEVICE,
         verbose=True,
-        # Real ENU decay positions (tau corpus) are used automatically when the
-        # `<corpus>_positions.pt` sidecar is present; recenter is the synthetic
-        # fallback. East→layer injection uses the same calibration as the kernel.
-        recenter_to_mountain=RECENTER_TO_MOUNTAIN,
+        # Placement is always the real ENU decay vertices from tau_wholesky.jl
+        # (`<corpus>_positions.pt`); a missing sidecar raises. East→layer injection
+        # uses the same calibration as the kernel.
         east_entry=EAST_ENTRY,
         layer_east_dx=LAYER_EAST_DX,
     )

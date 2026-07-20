@@ -38,39 +38,22 @@ def _positions_sidecar_path(shower_cache_path: str) -> str:
 
 
 def _load_positions_sidecar(shower_cache_path: str, keep_idx):
-    """Load the Step-0 ENU decay-position sidecar and index it by `keep_idx`, or
-    return None if absent (synthetic corpus → Step 1 re-centers to the mountain
-    instead of placing at a real position)."""
+    """Load the Step-0 ENU decay-position sidecar and index it by `keep_idx`.
+
+    Every shower is placed at the real decay vertex the Julia thrower
+    (decay_locations/tau_wholesky.jl) produced — there is no synthetic fallback,
+    so a missing sidecar is an error rather than a silent change of geometry.
+    """
     path = _positions_sidecar_path(shower_cache_path)
     if not os.path.exists(path):
-        return None
+        raise FileNotFoundError(
+            f"decay-position sidecar not found: {path}\n"
+            "Placement requires the real ENU decay vertices from tau_wholesky.jl. "
+            "Re-run 00_generate_data_dual_species.py to write the sidecar.")
     return torch.load(path)[torch.as_tensor(keep_idx)].float()          # (N, 3) East,North,Up
 
 
 # ── Real-position shower placement (the C8 geometry) ─────────────────────────
-
-def c8_transverse_basis(dirs: torch.Tensor):
-    """Orthonormal (e1, e2) spanning the plane perpendicular to each direction.
-
-    The CORSIKA 8 ObservationPlane axes, built from the tau zenith/azimuth exactly
-    as decay_locations/c8_air_shower.cpp does:
-
-        theta = acos(d_Up),  phi = atan2(d_North, d_East)
-        e1 = ( cosθcosφ,  cosθsinφ, -sinθ)      "x" axis (has an Up component)
-        e2 = (-sinφ,      cosφ,      0    )      "y" axis (horizontal)
-
-    `dirs` is (M, 3) unit vectors in [East, North, Up]. Returns two (M, 3) tensors.
-    e1, e2 and d form a right-handed orthonormal triad.
-    """
-    dE, dN, dU = dirs[:, 0], dirs[:, 1], dirs[:, 2]
-    theta = torch.arccos(dU.clamp(-1.0, 1.0))
-    phi   = torch.atan2(dN, dE)
-    st, ct = torch.sin(theta), torch.cos(theta)
-    sp, cp = torch.sin(phi),   torch.cos(phi)
-    e1 = torch.stack([ct * cp, ct * sp, -st], dim=1)
-    e2 = torch.stack([-sp,     cp,      torch.zeros_like(sp)], dim=1)
-    return e1, e2
-
 
 def place_clouds_enu(clouds:   torch.Tensor,
                      positions: torch.Tensor,
@@ -84,15 +67,43 @@ def place_clouds_enu(clouds:   torch.Tensor,
     exactly instead of re-deriving the algebra.
 
     Each cloud arrives in the generator's native frame with columns
-    ``[x_transverse, y_transverse, layer_index, energy, time]``. The shower is
-    rebuilt as: origin at the decay vertex, developed ALONG the true tau direction,
-    with layer k sitting ``k * layer_east_dx`` metres down the axis (the C8 plane
-    spacing) and the transverse offsets carried on the C8 basis:
+    ``[x, y, layer_index, energy, time]``. **Cols 0/1 are HORIZONTAL (East, North)
+    offsets from the shower start, not plane-local transverse coordinates**, so the
+    longitudinal development is already in them and must NOT be added again:
 
-        p_ENU = decay + (layer * layer_east_dx) * d + x * e1 + y * e2
+        East = decay_E + x
+        North = decay_N + y
+        Up   = decay_U + (layer * layer_east_dx) * d_Up
 
     then written back into the coordinates the plane-aware kernel expects
     (col0 = North, col1 = Up, col2 = layer index recovered from East depth).
+
+    **Why not the C8 (e1, e2) transverse basis.** c8_air_shower.cpp does put the
+    ObservationPlanes perpendicular to the axis with exactly those axes, but the
+    writer is flagged ``false // do not print z-coordinate`` and emits root-CS x/y.
+    Measured on the generator's own training corpus
+    (hhanif/tambo_simulations_for_training/combined_electrons.h5): fitting cols 0/1
+    against col2 gives a drift of ``layer_east_dx * (d_East, d_North)`` per layer —
+    the longitudinal development — and a "transverse" radius with median 7.5 km. A
+    true transverse coordinate cannot correlate with the layer index at all.
+    Subtracting ``layer*layer_east_dx*d`` leaves a lateral residual that is FLAT in
+    layer (476 m at L1 → 609 m at L23), i.e. a genuine bounded lateral spread.
+
+    Treating cols 0/1 as C8 transverse coordinates double-developed every shower and
+    swung it kilometres off its own axis: 92% of clouds had an axis passing within
+    31 m (median) of a detector, yet only 2% cleared LAYOUT_THRESHOLD. With the
+    placement below that is 91%.
+
+    **Known limitation — the vertical lateral component is missing.** Because C8
+    dropped the z-coordinate, only the horizontal part of each point's lateral
+    offset survives. Recovering the vertical from the plane condition ``p·d = s``
+    costs a factor ``1/d_Up``, which is unusable for the near-horizontal taus this
+    pipeline is built around (|d_Up| p5 = 0.027). Up therefore carries the
+    longitudinal term only; the shower is flattened in the near-vertical transverse
+    direction. Reconstructing it under an azimuthal-symmetry assumption was tested
+    and changes the mean trigger count by ~1% (80.3 → 79.5), so the deterministic
+    no-synthetic-data form is kept. A real fix belongs upstream: re-run C8 writing
+    the z-coordinate.
 
     Args:
         clouds    : (M, P, 5) native clouds — MODIFIED IN PLACE and returned.
@@ -102,19 +113,17 @@ def place_clouds_enu(clouds:   torch.Tensor,
         The same tensor, with cols 0/1/2 replaced by (North, Up, z_cont).
     """
     pe, pn, pu = (positions[:, i].view(-1, 1) for i in range(3))
-    dE, dN, dU = (dirs[:, i].view(-1, 1)      for i in range(3))
-    e1, e2 = c8_transverse_basis(dirs)
-    e1E, e1N, e1U = (e1[:, i].view(-1, 1) for i in range(3))
-    e2E, e2N      =  e2[:, 0].view(-1, 1), e2[:, 1].view(-1, 1)   # e2U == 0
+    dU = dirs[:, 2].view(-1, 1)
 
     mask = clouds[:, :, 3] > 0                    # energy-carrying points only
-    xt   = clouds[:, :, 0]
-    yt   = clouds[:, :, 1]
+    xh   = clouds[:, :, 0]                        # East  offset from the decay [m]
+    yh   = clouds[:, :, 1]                        # North offset from the decay [m]
     s    = clouds[:, :, 2] * layer_east_dx        # depth along the axis [m]
 
-    E = pe + s * dE + xt * e1E + yt * e2E
-    N = pn + s * dN + xt * e1N + yt * e2N
-    U = pu + s * dU + xt * e1U                    # e2 has no Up component
+    # Cols 0/1 already contain the longitudinal development — add the vertex only.
+    E = pe + xh
+    N = pn + yh
+    U = pu + s * dU                               # lateral Up absent from the C8 output
 
     clouds[..., 0] = torch.where(mask, N, clouds[..., 0])
     clouds[..., 1] = torch.where(mask, U, clouds[..., 1])
@@ -200,7 +209,6 @@ def build_training_pairs(mountain, surface,
                          seed:              int = 0,
                          device:            torch.device = torch.device("cpu"),
                          verbose:           bool = True,
-                         recenter_to_mountain: bool = False,
                          east_entry:        float = EAST_ENTRY,
                          layer_east_dx:     float = LAYER_EAST_DX,
                          load_chunk:        int = 4096):
@@ -210,26 +218,21 @@ def build_training_pairs(mountain, surface,
     (North, East) convention (detector_strategies_ne + the NE compute_labels_batch
     above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`.
 
-    **Shower placement.** If a Step-0 ENU decay-position sidecar
-    (`<corpus>_positions.pt`, real tau primaries) is present, each cloud is
-    reconstructed in ENU from the C8 shower geometry (decay_locations/
-    c8_air_shower.cpp): the native cloud origin (transverse x=y=0, layer 0) is the
-    shower start = the tau decay, and the shower develops ALONG the true tau
-    direction. For a point with native transverse (x, y) and integer layer L:
+    **Shower placement.** Every cloud is placed at the real ENU decay vertex the
+    Julia thrower (decay_locations/tau_wholesky.jl) produced, read from the Step-0
+    `<corpus>_positions.pt` sidecar, by `place_clouds_enu` — see that function for
+    the frame and for why the C8 (e1, e2) transverse basis is NOT used. In short,
+    the native cols 0/1 are horizontal (East, North) offsets that already carry the
+    longitudinal development, so for a point with native (x, y) and integer layer L:
 
-        s         = L * layer_east_dx                 # depth along axis (500 m/plane, C8)
-        ENU_point = decay + s * d + x * e1 + y * e2
+        East  = decay_E + x
+        North = decay_N + y
+        Up    = decay_U + L * layer_east_dx * d_Up
 
-    where d is the tau ENU direction and {e1, e2} span the plane perpendicular to
-    it (e1 = (cosθcosφ, cosθsinφ, -sinθ), e2 = (-sinφ, cosφ, 0), matching the C8
-    ObservationPlane x/y axes). Each point is then written in kernel coords
-    (col0=North, col1=Up, col2 = (east_entry - East)/layer_east_dx); east_entry
-    cancels against the detector z_cont, leaving physical relative depth. This
-    replaces the earlier translate-only, East-longitudinal simplification — the
-    shower is now oriented along the real tau direction. If no position sidecar
-    exists, behaviour falls back to `recenter_to_mountain` (synthetic corpus): the
-    shower transverse centroid is shifted to the mountain (North, Up) center and
-    the depth is left untouched.
+    Each point is then written in kernel coords (col0=North, col1=Up,
+    col2 = (east_entry - East)/layer_east_dx); east_entry cancels against the
+    detector z_cont, leaving physical relative depth. There is no synthetic
+    fallback — a missing sidecar raises rather than silently changing the geometry.
 
     **Bounded-memory streaming.** Point clouds are never loaded whole — only the
     tiny metadata (dir/energy/pdg) is read up front; clouds are streamed in
@@ -261,14 +264,8 @@ def build_training_pairs(mountain, surface,
     pdg    = torch.as_tensor(meta.pdg[keep_idx],        dtype=torch.long)
     primaries_all = encode_primary(dirs, energs, pdg)    # (n_showers, 5)
 
-    # Real ENU decay positions (tau primaries) if the Step-0 sidecar exists;
-    # else None → fall back to the synthetic recenter-to-mountain behaviour.
-    positions_all = _load_positions_sidecar(shower_cache_path, keep_idx)  # (N,3) E,N,U or None
-    place_real = positions_all is not None
-
-    if recenter_to_mountain and not place_real:
-        mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
-        mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
+    # Real ENU decay positions from the Julia thrower — the only placement there is.
+    positions_all = _load_positions_sidecar(shower_cache_path, keep_idx)  # (N,3) E,N,U
 
     # e/µ species per kept shower from the Step-0 sidecar (same keep_idx as the
     # metadata). Corpus `pdg` is the EM/hadronic class, so the Step-2 split keys
@@ -310,27 +307,14 @@ def build_training_pairs(mountain, surface,
                 clouds_chunk[bad] = 0.0
                 n_sanitized += nb
 
-            if place_real:
-                # Reconstruct each cloud in ENU from the C8 shower geometry
-                # (decay_locations/c8_air_shower.cpp): origin at the decay, shower
-                # developed ALONG the true tau direction, sampled at planes
-                # layer_east_dx (=500 m) apart. Shared with the notebooks and the
-                # aleatoric-floor script via `place_clouds_enu` so there is exactly
-                # one implementation of this transform.
-                clouds_chunk = place_clouds_enu(
-                    clouds_chunk,
-                    positions_all[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
-                    dirs[ds_start + c_lo: ds_start + c_hi],            # (csz,3) unit dir
-                    east_entry=east_entry, layer_east_dx=layer_east_dx)
-            elif recenter_to_mountain:
-                mask  = (clouds_chunk[:, :, 3] > 0).float()
-                w_sum = mask.sum(dim=1).clamp(min=1.0)
-                cx = (clouds_chunk[:, :, 0] * mask).sum(dim=1) / w_sum
-                cy = (clouds_chunk[:, :, 1] * mask).sum(dim=1) / w_sum
-                dx = (mtn_cx - cx).view(-1, 1)
-                dy = (mtn_cy - cy).view(-1, 1)
-                clouds_chunk[..., 0] = clouds_chunk[..., 0] + dx * mask
-                clouds_chunk[..., 1] = clouds_chunk[..., 1] + dy * mask
+            # Place at the real decay vertex from the Julia thrower. Shared with the
+            # notebooks and the aleatoric-floor script via `place_clouds_enu` so
+            # there is exactly one implementation of this transform.
+            clouds_chunk = place_clouds_enu(
+                clouds_chunk,
+                positions_all[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
+                dirs[ds_start + c_lo: ds_start + c_hi],            # (csz,3) unit dir
+                east_entry=east_entry, layer_east_dx=layer_east_dx)
 
             for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
                 fn = _STRATEGY_FNS[fn_name]
@@ -364,12 +348,9 @@ def build_training_pairs(mountain, surface,
                       f"(×{n_strat} strategies)")
 
     if verbose:
-        if place_real:
-            print(f"[place] real ENU decay positions "
-                  f"(N={positions_all.shape[0]}; transverse North/Up + East→layer "
-                  f"shift, east_entry={east_entry:g}, dx={layer_east_dx:g})")
-        elif recenter_to_mountain:
-            print(f"[recenter] shifted clouds to mountain center ({mtn_cx:.1f}, {mtn_cy:.1f})")
+        print(f"[place] real ENU decay positions from tau_wholesky.jl "
+              f"(N={positions_all.shape[0]}; East/North offsets + Up along the axis, "
+              f"east_entry={east_entry:g}, dx={layer_east_dx:g})")
     if verbose and n_sanitized:
         print(f"[sanitize] zeroed {n_sanitized} non-finite points (float32 energy overflow)")
 

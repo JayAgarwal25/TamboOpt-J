@@ -54,7 +54,7 @@ from modules_v6.tau_showers import load_tau_primaries
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
-    TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
+    TRAINING_DATASET_FOLDER,
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
 )
 from modules_v4.tr_geometry       import load_tr_mountain
@@ -181,24 +181,6 @@ def _generate_repeated_showers(n_prim, m_real, seed, gen_batch):
     return out, prim
 
 
-def _recenter(clouds_flat, mountain):
-    """Per-shower recenter onto the mountain bbox centre — identical to
-    fnn_surrogate_ne.build_training_pairs(recenter_to_mountain=True). The shower
-    transverse plane is (North, Up) even in the NE pipeline, so this intentionally
-    stays on mountain.u_min/u_max (NOT east) — matching the NE builder exactly."""
-    mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
-    mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
-    mask  = (clouds_flat[:, :, 3] > 0).float()                 # (N, P)
-    w_sum = mask.sum(dim=1).clamp(min=1.0)
-    cx = (clouds_flat[:, :, 0] * mask).sum(dim=1) / w_sum
-    cy = (clouds_flat[:, :, 1] * mask).sum(dim=1) / w_sum
-    dx = (mtn_cx - cx).view(-1, 1)
-    dy = (mtn_cy - cy).view(-1, 1)
-    clouds_flat[..., 0] = clouds_flat[..., 0] + dx * mask
-    clouds_flat[..., 1] = clouds_flat[..., 1] + dy * mask
-    return clouds_flat
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-prim",    type=int, default=128, help="distinct primaries")
@@ -213,7 +195,7 @@ def main():
     print("aleatoric floor — within-primary label variance / corpus variance")
     print("=" * 72)
     print(f"device={DEVICE}  tau_primaries={USE_TAU_PRIMARIES}  "
-          f"recenter={RECENTER_TO_MOUNTAIN}  n_prim={args.n_prim}  "
+          f"n_prim={args.n_prim}  "
           f"m_real={args.m_real}  strategies={len(_STRATEGIES)}")
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     torch.set_float32_matmul_precision('high') # TODO maybe deactivate if perforamne is too bad
@@ -251,35 +233,26 @@ def main():
 
     # Place each realization exactly as Step 1 does, so the generated labels live
     # in the same frame as the corpus labels that form the z-score denominator.
-    #   - real tau primaries  -> C8 direction-aware placement at the decay vertex
-    #   - synthetic primaries -> the legacy recenter-to-mountain shift
-    # Skipping placement entirely (what this script did once RECENTER_TO_MOUNTAIN
-    # was turned off for the tau pipeline) leaves the clouds in the generator's
-    # native transverse frame near the origin, so the numerator and the corpus
-    # denominator would describe different geometries.
-    if _prim.get("positions") is not None:
-        pos = torch.as_tensor(_prim["positions"], dtype=torch.float32)      # (n_prim,3)
-        dirs = torch.as_tensor(_prim["directions"], dtype=torch.float32)    # (n_prim,3)
-        dirs = dirs / dirs.norm(dim=1, keepdim=True).clamp(min=1e-12)
-        # Every realization of primary p shares that primary's vertex + direction.
-        pos_flat  = torch.repeat_interleave(pos,  m_real, dim=0)            # (n_prim*m,3)
-        dirs_flat = torch.repeat_interleave(dirs, m_real, dim=0)
-        for name in clouds:
-            clouds[name] = place_clouds_enu(
-                clouds[name].reshape(n_prim * m_real, P, 5), pos_flat, dirs_flat,
-                east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
-            ).reshape(n_prim, m_real, P, 5)
-        print(f"[place] C8 direction-aware placement at {n_prim} real decay vertices "
-              f"(east_entry={EAST_ENTRY:g}, dx={LAYER_EAST_DX:g})")
-    elif RECENTER_TO_MOUNTAIN:
-        for name in clouds:
-            clouds[name] = _recenter(
-                clouds[name].reshape(n_prim * m_real, P, 5), mountain
-            ).reshape(n_prim, m_real, P, 5)
-        print("[place] recentered to the mountain bbox centre (synthetic primaries)")
-    else:
-        print("[place] WARNING: no real positions and RECENTER_TO_MOUNTAIN=False — "
-              "clouds stay in the native frame and will not overlap the mountain")
+    # Placement is always the real ENU decay vertices from tau_wholesky.jl; skipping
+    # it would leave the clouds in the generator's native frame near the origin, so
+    # numerator and corpus denominator would describe different geometries.
+    if _prim.get("positions") is None:
+        raise RuntimeError(
+            "no decay positions on the primaries — placement requires the real ENU "
+            "vertices from tau_wholesky.jl (re-run 00_generate_data_dual_species.py)")
+    pos  = torch.as_tensor(_prim["positions"],  dtype=torch.float32)    # (n_prim,3)
+    dirs = torch.as_tensor(_prim["directions"], dtype=torch.float32)    # (n_prim,3)
+    dirs = dirs / dirs.norm(dim=1, keepdim=True).clamp(min=1e-12)
+    # Every realization of primary p shares that primary's vertex + direction.
+    pos_flat  = torch.repeat_interleave(pos,  m_real, dim=0)            # (n_prim*m,3)
+    dirs_flat = torch.repeat_interleave(dirs, m_real, dim=0)
+    for name in clouds:
+        clouds[name] = place_clouds_enu(
+            clouds[name].reshape(n_prim * m_real, P, 5), pos_flat, dirs_flat,
+            east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
+        ).reshape(n_prim, m_real, P, 5)
+    print(f"[place] real ENU decay vertices from tau_wholesky.jl at {n_prim} primaries "
+          f"(east_entry={EAST_ENTRY:g}, dx={LAYER_EAST_DX:g})")
     print(f"[gen] done in {time.time()-t0:.1f}s  P(max_points)={P}  species={list(clouds)}")
 
     # For each (species component, strategy, primary): one fixed layout, M
@@ -341,7 +314,7 @@ def main():
     res = dict(
         n_prim=n_prim, m_real=m_real, n_strategies=len(_STRATEGIES),
         species=list(gen00.SPECIES),
-        recenter=RECENTER_TO_MOUNTAIN, tau_primaries=USE_TAU_PRIMARIES,
+        tau_primaries=USE_TAU_PRIMARIES,
         n_prim_used=n_prim, fire_eps=FIRE_EPS,
         corpus_std=dict(E=e_std, T=t_std),
         corpus_std_fired=dict(E=e_std_fired, T=t_std_fired),
