@@ -53,7 +53,7 @@ AZIMUTH_MIN  = 0.0   # degrees
 AZIMUTH_MAX  = 360.0 # degrees
 
 
-RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/04_83k_primaires"
+RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/05_100k_primaires"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
@@ -83,6 +83,7 @@ BATCH_SIZE_TRAIN  = 20
 # origin. Energies are filtered to [10**LOG_E_MIN, 10**LOG_E_MAX] in the loader.
 USE_TAU_PRIMARIES = True
 TAU_WHOLESKY_PATH = "/n/home05/zdimitrov/tambo/TambOpt/detector_optimization_v6/decay_locations/tau_wholesky_n750k.h5"
+
 # TAU_WHOLESKY_PATH = ".../decay_locations/tau_wholesky_n2M_83k.h5"  # built the current corpus
 TAU_CORPUS_PATH   = os.path.join(SHOWER_CACHE, "cashed_showers_tau_dual.pt")
 
