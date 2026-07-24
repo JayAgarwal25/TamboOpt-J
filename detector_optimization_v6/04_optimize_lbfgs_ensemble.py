@@ -86,7 +86,7 @@ _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(
 INIT_SCHEMES         = ("grid", "center")
 RUN_COMBINED         = True
 COMBINED_SCHEME_NAME = "combined"
-OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_{scheme}"
+OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_full_corpus_{scheme}"
 # Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
 # with --recon_folder (exact path). utility_of_xy feeds recon (B, n_det, 4).
 RECON_DIR            = RECON_FOLDER + "_deepsets"
@@ -353,22 +353,38 @@ def _run_one_scheme(scheme: str,
             all_adam_grads.append(ag)
             source_per_run.append(src)
 
-    # One fixed primary batch for the WHOLE scheme so all refinements + scores
-    # share the same deterministic objective and are directly comparable.
-    g = torch.Generator().manual_seed(SEED)
-    idx_fixed = torch.randint(0, n_total_primaries, (LBFGS_BATCH_PRIMARIES,), generator=g)
-    primary_fixed = primary_all[idx_fixed].to(DEVICE)
+    # Split the FULL corpus into shuffled chunks of LBFGS_BATCH_PRIMARIES so
+    # every primary is eventually seen — even though each L-BFGS closure can
+    # only hold one batch in memory at a time. The same chunk order is reused
+    # for every Adam-best so all refinements stay directly comparable.
+    g = torch.Generator()  # .manual_seed(SEED)
+    perm = torch.randperm(n_total_primaries, generator=g)
+    n_chunks = math.ceil(n_total_primaries / LBFGS_BATCH_PRIMARIES)
+    primary_chunks = [
+        primary_all[perm[i * LBFGS_BATCH_PRIMARIES:(i + 1) * LBFGS_BATCH_PRIMARIES]].to(DEVICE)
+        for i in range(n_chunks)
+    ]
 
-    # Stage 2: L-BFGS refine every Adam-best.
+    # Stage 2: L-BFGS refine every Adam-best, sweeping sequentially over ALL
+    # chunks (i.e. the whole corpus) — several L-BFGS runs chained per Adam-best.
     refined, lbfgs_logs, refined_U, all_lbfgs_grads = [], [], [], []
     for k, (bx, by) in enumerate(all_bests):
-        print(f"[lbfgs] refine {k+1}/{len(all_bests)}  (src={source_per_run[k]})")
-        xp, yp, Up, lg, ghist = lbfgs_refine(bx, by, fnn, recon, primary_fixed, mountain)
+        print(f"[lbfgs] refine {k+1}/{len(all_bests)}  (src={source_per_run[k]})  "
+              f"over {n_chunks} chunk(s)")
+        xp, yp = bx, by
+        run_logs, run_grads = [], []
+        for c, primary_chunk in enumerate(primary_chunks):
+            xp, yp, Up, lg, ghist = lbfgs_refine(xp, yp, fnn, recon, primary_chunk, mountain)
+            run_logs.extend(lg)
+            run_grads.extend(ghist)
+            print(f"  [lbfgs] refine {k} chunk {c+1}/{n_chunks}  U={Up:+.3f}  "
+                  f"({len(lg)} closure calls)")
         refined.append((xp, yp))
         refined_U.append(Up)
-        lbfgs_logs.append(lg)
-        all_lbfgs_grads.append(ghist)
-        print(f"  [lbfgs] refine {k} U={Up:+.3f}  ({len(lg)} closure calls)")
+        lbfgs_logs.append(run_logs)
+        all_lbfgs_grads.append(run_grads)
+        print(f"  [lbfgs] refine {k} DONE  final U={Up:+.3f}  "
+              f"({sum(len(lg) for lg in [run_logs])} total closure calls)")
 
     # Per-run consecutive-step gradient cosine distance (Adam + L-BFGS phases),
     # W-step vector-averaged to suppress minibatch-noise inflation.
@@ -562,8 +578,8 @@ def main():
         print(f"init scheme: {scheme}"
               f"{'  (warm-start from --init_from)' if init_center is not None else ''}")
         print("=" * 72)
-        torch.manual_seed(SEED); np.random.seed(SEED)
-        g = torch.Generator().manual_seed(SEED)
+        #torch.manual_seed(SEED); np.random.seed(SEED)
+        g = torch.Generator()#.manual_seed(SEED)
         per_scheme[scheme] = _perturbed_adam_runs(
             scheme, N_CHAINS, g, mountain, fnn, recon, primary_all, n_total_primaries,
             init_center=init_center,
