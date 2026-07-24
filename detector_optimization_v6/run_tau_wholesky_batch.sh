@@ -4,7 +4,7 @@
 #SBATCH --time=12:00:00
 #SBATCH -c 8
 #SBATCH -J tau_wholesky
-#SBATCH -o slurm-%j.out
+#SBATCH -o slurm_logs/slurm-%j-%x.out
 
 # nu_tau injection -> tau propagation -> geometric cuts -> HDF5.
 # Drives decay_locations/tau_wholesky.jl.
