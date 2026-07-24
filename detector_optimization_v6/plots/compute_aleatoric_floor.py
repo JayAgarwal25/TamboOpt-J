@@ -110,15 +110,24 @@ def _corpus_label_stats() -> dict:
     floor's z-score denominators; the min/max/mean give the range to read the std
     against. (Fired std differs from global std because the global also includes
     the non-fired ≈zero detectors.)"""
+    # Per-species denominators: species_ids.pt is row-aligned with E/T (0=electron
+    # block, 1=muon block, in gen00.SPECIES order), so mask by it for a per-species
+    # corpus std — electron and muon have different label spreads.
+    species = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt"))
+    sp_names = list(gen00.SPECIES)
     E = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
     fired = E > FIRE_EPS                                   # E-based fired mask (corpus)
     out = {"E_all": _describe(E)}
     out["E_fired"] = _describe(E[fired]) if fired.any() else None
+    out["E_by_species"] = {n: (_describe(E[species == i]) if (species == i).any() else None)
+                           for i, n in enumerate(sp_names)}
     del E                                                  # free E; keep `fired` for T
     T = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
     T = torch.log1p(T * T_LOG_SCALE)
     out["T_all"]   = _describe(T)
     out["T_fired"] = _describe(T[fired]) if fired.any() else None
+    out["T_by_species"] = {n: (_describe(T[species == i]) if (species == i).any() else None)
+                           for i, n in enumerate(sp_names)}
     del T, fired
     return out
 
@@ -260,11 +269,13 @@ def main():
     # the combined dual corpus (per-species component rows) used for corpus_std.
     rng = np.random.default_rng(args.seed)
     var_E, var_T, fired_frac = [], [], []   # each appends (n_det,) per (species,s,p)
+    var_E_sp = {name: [] for name in clouds}   # same, kept separated per species
+    var_T_sp = {name: [] for name in clouds}
     gen_E_vals, gen_T_vals = [], []         # all generated labels → value range
     t0 = time.time()
     for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
         fn = _STRATEGY_FNS[fn_name]
-        for sp_clouds in clouds.values():           # pool both species' components
+        for sp_name, sp_clouds in clouds.items():   # per species (also pooled below)
             for p in range(n_prim):
                 x_det, y_det = fn(mountain, n_det=N_DETECTORS, rng=rng, **kwargs)
                 x_det = x_det.float().to(DEVICE); y_det = y_det.float().to(DEVICE)
@@ -272,8 +283,10 @@ def main():
                 E, T = compute_labels_batch(cl, x_det, y_det, surface, sigma_spatial=sigma_spatial)
                 E = torch.log1p(E)                             # → training E space
                 T = torch.log1p(T * T_LOG_SCALE)               # → training T space
-                var_E.append(E.var(dim=0, unbiased=True).cpu())
-                var_T.append(T.var(dim=0, unbiased=True).cpu())
+                vE = E.var(dim=0, unbiased=True).cpu()
+                vT = T.var(dim=0, unbiased=True).cpu()
+                var_E.append(vE);            var_T.append(vT)
+                var_E_sp[sp_name].append(vE); var_T_sp[sp_name].append(vT)
                 fired_frac.append((E > FIRE_EPS).float().mean(dim=0).cpu())
                 gen_E_vals.append(E.reshape(-1).cpu())
                 gen_T_vals.append(T.reshape(-1).cpu())
@@ -311,6 +324,18 @@ def main():
     floor_total = 0.5 * (floor_E + floor_T)
     floor_total_fired_vs_fired = 0.5 * (floor_E_fired_vs_fired + floor_T_fired_vs_fired)
 
+    # Per-species floors: each species' within-var normalized by THAT species'
+    # corpus std, so electron and muon get separate levels (a shared denominator
+    # would distort them since their label spreads differ).
+    floor_by_species = {}
+    for name in clouds:
+        vE_sp = torch.cat(var_E_sp[name]); vT_sp = torch.cat(var_T_sp[name])
+        es_sp = corpus_stats["E_by_species"][name]["std"]
+        ts_sp = corpus_stats["T_by_species"][name]["std"]
+        fE_sp, fT_sp = _floor(vE_sp, es_sp), _floor(vT_sp, ts_sp)
+        floor_by_species[name] = dict(E=fE_sp, T=fT_sp, total=0.5 * (fE_sp + fT_sp),
+                                      corpus_std=dict(E=es_sp, T=ts_sp))
+
     res = dict(
         n_prim=n_prim, m_real=m_real, n_strategies=len(_STRATEGIES),
         species=list(gen00.SPECIES),
@@ -333,6 +358,7 @@ def main():
             T_fired_vs_fired=floor_T_fired_vs_fired,
             total_fired_vs_fired=floor_total_fired_vs_fired,
         ),
+        floor_zmse_by_species=floor_by_species,
         max_R2=dict(
             E=1 - floor_E, T=1 - floor_T, total=1 - floor_total,
             E_fired_vs_fired=1 - floor_E_fired_vs_fired,
@@ -357,6 +383,10 @@ def main():
     print(f"  floor  E (fired vs fired)     = {floor_E_fired_vs_fired:.4f}   (max R²|fired = {1-floor_E_fired_vs_fired:.3f})")
     print(f"  floor  T (fired vs fired)     = {floor_T_fired_vs_fired:.4f}   (max R²|fired = {1-floor_T_fired_vs_fired:.3f})")
     print(f"  floor  total (fired vs fired) = {floor_total_fired_vs_fired:.4f}   (max R²|fired = {1-floor_total_fired_vs_fired:.3f})")
+    print("\n  per-species floor (each vs its own corpus std):")
+    for name, fl in floor_by_species.items():
+        print(f"    {name:8s}  E={fl['E']:.4f}  T={fl['T']:.4f}  total={fl['total']:.4f}"
+              f"   (max R² total = {1-fl['total']:.3f})")
     print(f"\n  A surrogate whose val MSE reaches the floor is Bayes-optimal;")
     print(f"  no architecture/optimizer change can go below it.")
     print(f"\n[done] wrote {args.out}")
