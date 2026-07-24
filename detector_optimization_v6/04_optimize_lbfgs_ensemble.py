@@ -113,7 +113,7 @@ GRAD_COS_WINDOW     = 10
 LBFGS_MAX_ITER       = 1_500
 LBFGS_LR             = 1.0
 LBFGS_HISTORY_SIZE   = 20
-LBFGS_BATCH_PRIMARIES = 512    # FIXED batch → deterministic objective for line search
+LBFGS_BATCH_PRIMARIES = 15000    # FIXED batch → deterministic objective for line search
 
 # Composite weights (W_*) + reconstructability thresholds are imported from
 # modules_v6/opt_core.py (shared across the 04 optimizers).

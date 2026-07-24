@@ -49,7 +49,8 @@ from modules_v6.constants import (
     DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH, TRAINING_DATASET_FOLDER, OPT_FOLDER,
 )
 
-LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_grid", "layout_best.pt")
+# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_grid", "layout_best.pt")
+LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_center", "layout_best.pt")
 
 
 class KernelDualLabels:
@@ -116,6 +117,10 @@ def grid_layout(mountain):
     e, n = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme="grid")
     return _snap(mountain, torch.as_tensor(np.asarray(e)), torch.as_tensor(np.asarray(n)))
 
+def center_layout(mountain):
+    e, n = sample_initial_layout_ne(mountain, n_units=N_DETECTORS, scheme="center")
+    return _snap(mountain, torch.as_tensor(np.asarray(e)), torch.as_tensor(np.asarray(n)))
+
 
 @torch.no_grad()
 def score(e_det, n_det, primary_batch, fnn, kernel_fnn, recon, device):
@@ -156,11 +161,13 @@ def main():
     prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
 
     e_o, n_o = load_layout(mountain)
-    e_g, n_g = grid_layout(mountain)
+    # e_g, n_g = grid_layout(mountain)
+    e_g, n_g = center_layout(mountain)
     gs, gt, _, _ = score(e_g, n_g, prim, fnn, kernel_fnn, recon, device)
     os_, ot, ops, opt_ = score(e_o, n_o, prim, fnn, kernel_fnn, recon, device)
 
     print()
+    print("CENTER LAYOUT (baseline) vs OPTIMIZED LAYOUT")
     print("                  surrogate-U     true-U")
     print(f"  baseline grid   {gs:11.4f}   {gt:11.4f}")
     print(f"  optimized       {os_:11.4f}   {ot:11.4f}")
