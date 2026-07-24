@@ -352,7 +352,7 @@ def main():
     print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
     print("=" * 72)
     print(f"device      : {DEVICE}")
-    print(f"primaries   : {'REAL tau (tau_wholesky.h5, ENU position + direction)' if USE_TAU_PRIMARIES else 'synthetic sample_primary_particles'}")
+    print(f"primaries   : {f'REAL tau ({os.path.basename(TAU_WHOLESKY_PATH)}, ENU position + direction)' if USE_TAU_PRIMARIES else 'synthetic sample_primary_particles'}")
     if USE_TAU_PRIMARIES:
         print(f"            : {n_pairs} in-band taus in [1e{LOG_E_MIN:g}, 1e{LOG_E_MAX:g}] GeV "
               f"(East {positions_all[:,0].min():.0f}..{positions_all[:,0].max():.0f}, "
