@@ -15,4 +15,4 @@ conda deactivate
 
 conda activate multiproc_env
 
-python -u plots/eval_true_utility.py
+python -u plots/eval_true_utility.py --grid-layout

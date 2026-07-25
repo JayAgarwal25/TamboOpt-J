@@ -50,8 +50,8 @@ from modules_v6.constants import (
 )
 
 # LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_grid", "layout_best.pt")
-LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_center", "layout_best.pt")
-
+# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_center", "layout_best.pt")
+LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
 
 class KernelDualLabels:
     """Drop-in for the dual surrogate: same ``(primary_batch, xy_batch) -> (B, n_det, 2)``
@@ -137,6 +137,8 @@ def main():
     ap.add_argument("--n-events", type=int, default=512,
                     help="fixed primary/cloud batch size for the objective")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--grid-layout", action="store_true",
+                    help="use grid layout as baseline")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
@@ -161,13 +163,18 @@ def main():
     prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
 
     e_o, n_o = load_layout(mountain)
-    # e_g, n_g = grid_layout(mountain)
-    e_g, n_g = center_layout(mountain)
+    if args.grid_layout:
+        e_g, n_g = grid_layout(mountain)
+    else:
+        e_g, n_g = center_layout(mountain)
     gs, gt, _, _ = score(e_g, n_g, prim, fnn, kernel_fnn, recon, device)
     os_, ot, ops, opt_ = score(e_o, n_o, prim, fnn, kernel_fnn, recon, device)
 
     print()
-    print("CENTER LAYOUT (baseline) vs OPTIMIZED LAYOUT")
+    if args.grid_layout:
+        print("GRID LAYOUT (baseline) vs OPTIMIZED LAYOUT")
+    else:
+        print("CENTER LAYOUT (baseline) vs OPTIMIZED LAYOUT")
     print("                  surrogate-U     true-U")
     print(f"  baseline grid   {gs:11.4f}   {gt:11.4f}")
     print(f"  optimized       {os_:11.4f}   {ot:11.4f}")
