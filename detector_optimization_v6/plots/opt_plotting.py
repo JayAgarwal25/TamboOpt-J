@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
-from modules_v6.opt_core import consecutive_cos_distance
+from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
 
 
 # ── Layout figures ────────────────────────────────────────────────────────────
@@ -51,6 +51,200 @@ def project_ne_to_up(surface, north, east):
     return surface(n, e).detach().cpu().numpy().reshape(shp)
 
 
+def mountain_nue(mountain) -> np.ndarray:
+    """The mountain surface as (n, 3) columns [North, Up, East], the order this
+    module's plotting bodies are written in.
+
+    Built from the canonical `centroids_ENU` ([East, North, Up]) plus, when
+    present, `vertices_ENU` — the unique triangle corner points of the detector
+    region. The vertices are the real surface corners (denser and truer than the
+    face centroids), and they are what `SurfaceUpMap` now fits, so including them
+    makes the drawn slope match the surface the detectors are actually projected
+    onto. Replaces the old `mountain.centroids_NUE` compat view."""
+    cen = np.asarray(mountain.centroids_ENU)                  # (n_tri, 3) [E, N, U]
+    verts = getattr(mountain, "vertices_ENU", None)
+    enu = cen if verts is None or not len(verts) else np.concatenate(
+        [cen, np.asarray(verts)], axis=0)
+    return enu[:, [1, 2, 0]]                                  # -> [North, Up, East]
+
+
+def mountain_enu(mountain) -> np.ndarray:
+    """The same surface points as `mountain_nue`, in canonical [East, North, Up]."""
+    cen = np.asarray(mountain.centroids_ENU)
+    verts = getattr(mountain, "vertices_ENU", None)
+    return cen if verts is None or not len(verts) else np.concatenate(
+        [cen, np.asarray(verts)], axis=0)
+
+
+def cliff_frame(mountain):
+    """Fit the detector region's plane and return its face-on basis.
+
+    The malata detector region is a dipping ramp, not a North-South wall: it has
+    real extent in BOTH horizontal axes. Drawing it as a (North, Up) cross
+    section collapses East, so the face is seen edge-on and renders as a diagonal
+    line — detectors separated in East pile onto the same spot. This builds the
+    plane the ramp actually lies in so it can be drawn face-on instead.
+
+    The plane is the least-squares (SVD) fit through the surface points; the fit
+    is justified because the ramp is planar to ~0.2% of its variance (see the
+    `resid_std` return). The in-plane basis is the geological one:
+
+        normal  outward plane normal, Up component forced positive
+        strike  horizontal in-plane axis (perpendicular to the dip) = Up x normal
+        updip   in-plane axis pointing up the slope = normal x strike
+
+    Returns (origin, strike, updip, normal, resid_std) with `origin` the surface
+    centroid [E,N,U], the three axes unit vectors in [E,N,U], and `resid_std` the
+    std of the out-of-plane residual [m] — the roughness the face view flattens."""
+    P = mountain_enu(mountain)
+    origin = P.mean(axis=0)
+    _, _, Vt = np.linalg.svd(P - origin, full_matrices=False)
+
+    normal = Vt[2]
+    if normal[2] < 0.0:
+        normal = -normal                       # outward / upward-facing
+
+    strike = np.cross(np.array([0.0, 0.0, 1.0]), normal)
+    sn = np.linalg.norm(strike)
+    # Degenerate only for a perfectly horizontal plane (no strike direction);
+    # fall back to East so the frame stays well defined.
+    strike = np.array([1.0, 0.0, 0.0]) if sn < 1e-9 else strike / sn
+
+    updip = np.cross(normal, strike)
+    updip /= np.linalg.norm(updip)
+    if updip[2] < 0.0:
+        updip = -updip                         # point up the slope
+
+    resid_std = float(((P - origin) @ normal).std())
+    return origin, strike, updip, normal, resid_std
+
+
+def dip_deg(normal) -> float:
+    """Dip of the fitted plane from horizontal [deg]."""
+    return float(np.degrees(np.arccos(abs(float(normal[2])))))
+
+
+def enu_to_face(pts_enu, frame):
+    """Project [E,N,U] points onto the cliff plane → (strike, updip) in-plane
+    coordinates [m], measured from the surface centroid."""
+    origin, strike, updip = frame[0], frame[1], frame[2]
+    d = np.asarray(pts_enu, dtype=float) - origin
+    return d @ strike, d @ updip
+
+
+@torch.no_grad()
+def project_en_to_face(surface, east, north, frame):
+    """Detector (East, North) → cliff-face (strike, updip).
+
+    Lifts each detector onto the mountain with Up = g(North, East) (the same
+    differentiable `SurfaceUpMap` the optimiser is scored through), then projects
+    the resulting 3-D point into the fitted cliff plane. Returns two arrays shaped
+    like `east`."""
+    e = np.asarray(east, dtype=float)
+    n = np.asarray(north, dtype=float)
+    up = project_ne_to_up(surface, n, e)
+    pts = np.stack([e.reshape(-1), n.reshape(-1), np.asarray(up).reshape(-1)], axis=-1)
+    s, u = enu_to_face(pts, frame)
+    return s.reshape(e.shape), u.reshape(e.shape)
+
+
+def cloud_to_face(cloud, frame, east_entry=None, layer_east_dx=None):
+    """A PLACED shower cloud → cliff-face (strike, updip).
+
+    Thin composition of `fnn_surrogate_ne.cloud_to_enu` (undo the kernel's
+    North/Up/z_cont packing) with `enu_to_face`, so a cloud can be overlaid on the
+    same axes as the mountain and the detectors."""
+    from modules_v6.fnn_surrogate_ne import cloud_to_enu
+    from modules_v6.constants import EAST_ENTRY, LAYER_EAST_DX
+    pts = cloud_to_enu(cloud,
+                       east_entry=EAST_ENTRY if east_entry is None else east_entry,
+                       layer_east_dx=LAYER_EAST_DX if layer_east_dx is None else layer_east_dx)
+    return enu_to_face(pts, frame)
+
+
+def det_counts(E, log1p_space: bool = False):
+    """Detector labels → RAW counts, the space LAYOUT_THRESHOLD lives in.
+
+    Two different things are called "E" in this codebase and they are NOT in the
+    same space — mixing them up double-transforms the values:
+
+    * ``fnn_surrogate_ne.compute_labels_batch`` returns **raw counts**. The log1p
+      is applied afterwards, by 01_build_dataset_northeast.py, when writing E.pt.
+      Pass these through unchanged (``log1p_space=False``, the default).
+    * the trained **surrogate** predicts in log1p space, because it was fitted to
+      E.pt. That is why ``opt_core.utility_of_xy`` calls
+      ``reconstructability(torch.expm1(E_pred_det), ...)``. Pass those with
+      ``log1p_space=True``.
+
+    Non-finite entries are zeroed, mirroring the ``torch.nan_to_num`` the builder
+    applies to the kernel output (fnn_surrogate_ne), so a single bad detector
+    cannot poison a colour scale."""
+    c = np.asarray(E, dtype=float)
+    if log1p_space:
+        c = np.expm1(c)
+    return np.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def face_limits(ax, mtn_s, mtn_u, pad: float = 400.0):
+    """Frame an axis on the mountain face (+pad), equal aspect.
+
+    A shower rod is ~11.5 km long while the array is ~1.4 km, so autoscaling to
+    the cloud shrinks the detectors to a dot."""
+    ax.set_xlim(float(np.min(mtn_s)) - pad, float(np.max(mtn_s)) + pad)
+    ax.set_ylim(float(np.min(mtn_u)) - pad, float(np.max(mtn_u)) + pad)
+    ax.set_aspect("equal")
+
+
+def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
+                           layout_threshold=None, legend=True,
+                           log1p_space: bool = False, dyn_range: float = 1e6,
+                           cmap: str = "plasma"):
+    """Scatter detectors on the cliff face, coloured by RAW counts (log scale).
+
+    Colouring by magnitude rather than drawing a boolean "triggered" mask matters:
+    the kernel's Gaussian (SIGMA_SPATIAL) leaves a numerically nonzero tail on
+    essentially ALL detectors, so an ``E > 0`` cut lights the whole array up and
+    hides the spatial falloff. Detectors clearing `layout_threshold` (the
+    optimiser's own cut, in counts) get a ring.
+
+    `log1p_space` says which space `E` is in — see `det_counts`. `dyn_range` caps
+    how many decades the colour scale spans below the peak: real layouts mix a few
+    strong detectors with a far tail, and an unbounded LogNorm over ~60 decades
+    fails outright with "Invalid vmin or vmax".
+
+    Returns (mappable_or_None, n_with_signal, n_over_threshold)."""
+    from matplotlib.colors import LogNorm
+    if layout_threshold is None:
+        layout_threshold = LAYOUT_THRESHOLD
+    ds, du = project_en_to_face(surface, np.asarray(e_det), np.asarray(n_det), frame)
+    c = det_counts(E, log1p_space=log1p_space)
+    live, over = c > 0.001, c > layout_threshold
+
+    ax.scatter(ds[~live], du[~live], s=14, c="0.55", marker="x", lw=0.9, zorder=2,
+               label="no signal" if legend else None)
+    sc = None
+    if live.any():
+        hi = float(c[live].max())
+        lo = max(float(c[live].min()), hi / dyn_range)
+        if not (np.isfinite(lo) and np.isfinite(hi)) or lo <= 0:
+            lo, hi = 1e-12, 1.0
+        if hi <= lo:                      # single value / all-equal → give LogNorm room
+            hi = lo * 10.0
+        # `cmap` defaults to plasma rather than inferno on purpose: inferno's low
+        # end is pure BLACK, so the weakest detectors render as bold black dots
+        # indistinguishable from the strongest — and from a black shower cloud.
+        # plasma bottoms out at dark blue-violet, keeping the ramp readable. The
+        # thin white edge separates markers from the cloud behind them.
+        sc = ax.scatter(ds[live], du[live], c=np.clip(c[live], lo, hi), s=42,
+                        cmap=cmap, edgecolor="white", linewidths=0.5,
+                        norm=LogNorm(vmin=lo, vmax=hi), zorder=3,
+                        label="signal" if legend else None)
+    if over.any():
+        ax.scatter(ds[over], du[over], s=150, facecolors="none", edgecolors="cyan",
+                   lw=1.4, label=f"> {layout_threshold:g} counts" if legend else None)
+    return sc, int(live.sum()), int(over.sum())
+
+
 def plot_ensemble(aligned_xy: np.ndarray,
                   mean_xy: np.ndarray,
                   std_xy: np.ndarray,
@@ -59,12 +253,14 @@ def plot_ensemble(aligned_xy: np.ndarray,
                   member_word: str = "run",
                   title_kind: str = "DE ensemble",
                   count_word: str = "K"):
-    """Mountain top-down ensemble: every aligned run/member (faint) + per-group
-    mean + 1σ ellipses.
+    """Cliff-face ensemble: every aligned run/member (faint) + per-group mean +
+    1σ ellipses.
 
-    With `surface` (a SurfaceUpMap) the detector East is projected to Up =
-    g(North, East) and the plot is the (North, Up) cross section; mean/std are
-    recomputed in that plane. Without it the native (North, East) plane is drawn.
+    With `surface` (a SurfaceUpMap) each detector is lifted onto the mountain via
+    Up = g(North, East) and then projected FACE-ON into the fitted cliff plane, so
+    the axes are the ramp's own (along-strike, up-dip) coordinates and both
+    horizontal extents survive. Mean/std are recomputed in that plane. Without
+    `surface` the native (North, East) map view is drawn.
     `member_word`/`title_kind`/`count_word` set the legend + title wording so each
     optimizer keeps its own labels."""
     try:
@@ -74,19 +270,35 @@ def plot_ensemble(aligned_xy: np.ndarray,
         from matplotlib.patches import Ellipse
         from matplotlib.collections import PatchCollection
 
+        # Layouts arrive as (East, North) to match the ENU h5 convention.
+        sub = ""
         if surface is not None:
-            up = project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])
-            aligned_xy = np.stack([aligned_xy[..., 0], up], axis=-1)   # (K, n_det, 2)=(N,Up)
+            frame = cliff_frame(mountain)
+            s, u = project_en_to_face(surface, aligned_xy[..., 0], aligned_xy[..., 1], frame)
+            aligned_xy = np.stack([s, u], axis=-1)              # (K, n_det, 2) = (strike, updip)
             mean_xy = aligned_xy.mean(axis=0)
             std_xy  = aligned_xy.std(axis=0)
-            best_y  = project_ne_to_up(surface, np.asarray(best_x), np.asarray(best_y))
-            mtn_y, ylab, ylet = mountain.centroids_NUE[:, 1], "Up [m]", "Up"
+            best_x, best_y = project_en_to_face(
+                surface, np.asarray(best_x), np.asarray(best_y), frame)
+            mtn_x, mtn_y = enu_to_face(mountain_enu(mountain), frame)
+            xlab, ylab = "along-strike [m]", "up-dip [m]"
+            xlet, ylet = "s", "u"
+            sub = (f"cliff face — dip {dip_deg(frame[3]):.1f}°, "
+                   f"out-of-plane σ={frame[4]:.0f} m")
         else:
-            mtn_y, ylab, ylet = mountain.centroids_NUE[:, 2], "East [m]", "E"
+            # Body below is written x=North, y=East; reorder once here.
+            aligned_xy = np.stack([aligned_xy[..., 1], aligned_xy[..., 0]], axis=-1)
+            mean_xy    = np.stack([mean_xy[..., 1],    mean_xy[..., 0]],    axis=-1)
+            std_xy     = np.stack([std_xy[..., 1],     std_xy[..., 0]],     axis=-1)
+            best_x, best_y = best_y, best_x
+            mtn = mountain_nue(mountain)                         # (n, 3) [N, Up, E]
+            mtn_x, mtn_y = mtn[:, 0], mtn[:, 2]
+            xlab, ylab = "North [m]", "East [m]"
+            xlet, ylet = "N", "E"
 
         K = aligned_xy.shape[0]
         fig, ax = plt.subplots(figsize=(12, 8))
-        ax.scatter(mountain.centroids_NUE[:, 0], mtn_y,
+        ax.scatter(mtn_x, mtn_y,
                    s=2, c="lightgray", alpha=0.6, label="mountain")
 
         colors = plt.cm.tab10(np.linspace(0, 1, max(K, 1)))
@@ -105,12 +317,13 @@ def plot_ensemble(aligned_xy: np.ndarray,
         ))
         ax.scatter(best_x, best_y, s=26, c="C3",
                    edgecolors="black", linewidths=0.4, alpha=0.95,
-                   label=f"best  (σ̄N={std_xy[:,0].mean():.1f} m, "
+                   label=f"best  (σ̄{xlet}={std_xy[:,0].mean():.1f} m, "
                          f"σ̄{ylet}={std_xy[:,1].mean():.1f} m)")
 
-        ax.set_xlabel("North [m]"); ax.set_ylabel(ylab)
+        ax.set_xlabel(xlab); ax.set_ylabel(ylab)
         ax.set_aspect("equal")
-        ax.set_title(f"{title_kind} ({count_word}={K}) — aligned best + 1σ ellipses")
+        title = f"{title_kind} ({count_word}={K}) — aligned best + 1σ ellipses"
+        ax.set_title(title + (f"\n{sub}" if sub else ""))
         ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=8)
         fig.tight_layout()
         fig.savefig(path, dpi=110)
@@ -126,35 +339,45 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
                          bins: int = 60, surface=None, vmax=None,
                          member_word: str = "run",
                          count_word: str = "K", count_suffix: str = " runs"):
-    """Mountain top-down 2D density of detector placements across the ensemble.
+    """2D density of detector placements across the ensemble, on the cliff face.
 
-    With `surface` the detector East is projected to Up = g(North, East) so the
-    plot is the (North, Up) cross section; without it the native (North, East)
-    plane is drawn. `vmax` pins the colorbar to [0, vmax] so faint structure isn't
-    squashed by a few hot cells; None auto-scales. `member_word`/`count_word`/
-    `count_suffix` set the colorbar + title wording per optimizer."""
+    With `surface` each detector is lifted onto the mountain via Up = g(North,
+    East) and projected FACE-ON into the fitted cliff plane, so the axes are the
+    ramp's own (along-strike, up-dip) coordinates; without it the native
+    (North, East) map view is drawn. `vmax` pins the colorbar to [0, vmax] so faint
+    structure isn't squashed by a few hot cells; None auto-scales.
+    `member_word`/`count_word`/`count_suffix` set the colorbar + title wording per
+    optimizer."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
+        # Layouts arrive as (East, North) to match the ENU h5 convention.
+        sub = ""
         if surface is not None:
-            up = project_ne_to_up(surface, aligned_xy[..., 0], aligned_xy[..., 1])
-            aligned_xy = np.stack([aligned_xy[..., 0], up], axis=-1)
-            best_y = project_ne_to_up(surface, np.asarray(best_x), np.asarray(best_y))
-            mtn_col, ylab = 1, "Up [m]"
+            frame = cliff_frame(mountain)
+            s, u = project_en_to_face(surface, aligned_xy[..., 0], aligned_xy[..., 1], frame)
+            aligned_xy = np.stack([s, u], axis=-1)               # (K, n_det, 2)
+            best_x, best_y = project_en_to_face(
+                surface, np.asarray(best_x), np.asarray(best_y), frame)
+            mtn_x, mtn_y = enu_to_face(mountain_enu(mountain), frame)
+            xlab, ylab = "along-strike [m]", "up-dip [m]"
+            sub = (f"cliff face — dip {dip_deg(frame[3]):.1f}°, "
+                   f"out-of-plane σ={frame[4]:.0f} m")
         else:
-            mtn_col, ylab = 2, "East [m]"
+            # Body below is written x=North, y=East; reorder once here.
+            aligned_xy = np.stack([aligned_xy[..., 1], aligned_xy[..., 0]], axis=-1)
+            best_x, best_y = best_y, best_x
+            cen = mountain_nue(mountain)                          # (n, 3) [N, Up, E]
+            mtn_x, mtn_y = cen[:, 0], cen[:, 2]
+            xlab, ylab = "North [m]", "East [m]"
 
         K, n_det, _ = aligned_xy.shape
         pts = aligned_xy.reshape(-1, 2)                          # (K*n_det, 2)
 
-        cen = getattr(mountain, "centroids_NUE", None)
-        if cen is not None:
-            allx = np.concatenate([cen[:, 0], pts[:, 0]])
-            ally = np.concatenate([cen[:, mtn_col], pts[:, 1]])
-        else:
-            allx, ally = pts[:, 0], pts[:, 1]
+        allx = np.concatenate([mtn_x, pts[:, 0]])
+        ally = np.concatenate([mtn_y, pts[:, 1]])
         extent = [float(allx.min()), float(allx.max()),
                   float(ally.min()), float(ally.max())]
 
@@ -167,19 +390,20 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         except Exception:
             pass
 
-        if cen is not None:
-            occ, _, _ = np.histogram2d(cen[:, 0], cen[:, mtn_col], bins=bins, range=rng)
-            det_occ, _, _ = np.histogram2d(pts[:, 0], pts[:, 1], bins=bins, range=rng)
-            mask = (occ > 0) | (det_occ > 0)
-            try:
-                from scipy.ndimage import (binary_dilation, binary_fill_holes,
-                                           binary_erosion)
-                mask = binary_dilation(mask, iterations=2)
-                mask = binary_fill_holes(mask)
-                mask = binary_erosion(mask, iterations=1, border_value=1)
-            except Exception:
-                pass
-            H = np.ma.masked_array(H, mask=~mask)
+        # Mask cells the mountain does not actually occupy, so the heatmap is
+        # drawn only over real surface rather than the whole bounding box.
+        occ, _, _ = np.histogram2d(mtn_x, mtn_y, bins=bins, range=rng)
+        det_occ, _, _ = np.histogram2d(pts[:, 0], pts[:, 1], bins=bins, range=rng)
+        mask = (occ > 0) | (det_occ > 0)
+        try:
+            from scipy.ndimage import (binary_dilation, binary_fill_holes,
+                                       binary_erosion)
+            mask = binary_dilation(mask, iterations=2)
+            mask = binary_fill_holes(mask)
+            mask = binary_erosion(mask, iterations=1, border_value=1)
+        except Exception:
+            pass
+        H = np.ma.masked_array(H, mask=~mask)
 
         data_ar = (extent[3] - extent[2]) / (extent[1] - extent[0])
         fig_w = 14.0
@@ -197,9 +421,10 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         ax.scatter(np.asarray(best_x), np.asarray(best_y), s=22, c="cyan",
                    edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
                    label="best-U layout")
-        ax.set_xlabel("North [m]"); ax.set_ylabel(ylab)
-        ax.set_title(f"detector placement density ({count_word}={K}{count_suffix}, "
-                     f"{bins}×{bins} bins) + best-U layout")
+        ax.set_xlabel(xlab); ax.set_ylabel(ylab)
+        title = (f"detector placement density ({count_word}={K}{count_suffix}, "
+                 f"{bins}×{bins} bins) + best-U layout")
+        ax.set_title(title + (f"\n{sub}" if sub else ""))
         ax.legend(loc="upper right", fontsize=8)
         fig.savefig(path, dpi=110, bbox_inches="tight")
         plt.close(fig)

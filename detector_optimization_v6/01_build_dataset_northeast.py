@@ -47,12 +47,17 @@ from modules_v6.fnn_surrogate_ne import (
 from modules_v6.fnn_surrogate import _load_species_sidecar, encode_primary
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.constants import (
-    SHOWER_CACHE, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    SHOWER_CACHE, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     N_DETECTORS, PRIMARY_DIM,
-    BATCH_SIZE_TRAIN, RUN_LOCATION, RECENTER_TO_MOUNTAIN,
+    BATCH_SIZE, BATCH_SIZE_TRAIN, RUN_LOCATION,
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
+
+# Legacy synthetic-recenter flag for the infill path only. The main build path
+# now always places clouds at their real ENU decay vertex (constants dropped this
+# constant), so infill keeps a local default of False.
+RECENTER_TO_MOUNTAIN = False
 from modules_v4.tr_geometry    import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
@@ -68,7 +73,6 @@ TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 MAX_SHOWERS = int(DATASET_FRACTION * 2 * NUM_SHOWERS)
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# RECENTER_TO_MOUNTAIN is imported from modules_v6.constants — edit it there.
 
 
 def _load_center_layout(path: str):
@@ -228,14 +232,13 @@ def main():
     print(f"v6/01_build_dataset_northeast.py")
     print("=" * 72)
     print(f"shower cache : {DUAL_SHOWER_CACHE_PATH}")
-    print(f"geometry     : {GEOMETRY_PATH}")
+    print(f"geometry     : {GEOMETRY_PATH_RESOLVED}")
     print(f"device       : {DEVICE}")
-    print(f"recenter     : {RECENTER_TO_MOUNTAIN}")
 
     # Mountain + surface map (Up = g(N, East))
     t0 = time.time()
     mountain = load_tr_mountain(
-        GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+        GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
     surface = SurfaceUpMap.from_mountain(mountain, grid_h=256, grid_w=256).to(DEVICE)
@@ -290,7 +293,7 @@ def main():
         output_folder = TRAINING_DATASET_FOLDER
         print(f"mode         : NORMAL (7 fixed strategies)")
         print(f"output dir   : {output_folder}")
-        print(f"batch size   : {BATCH_SIZE_TRAIN}")
+        print(f"batch size   : {BATCH_SIZE}")
         print(f"max showers  : {MAX_SHOWERS}")
 
         t0 = time.time()
@@ -298,17 +301,20 @@ def main():
             mountain=mountain,
             surface=surface,
             shower_cache_path=DUAL_SHOWER_CACHE_PATH,
-            batch_size=BATCH_SIZE_TRAIN,
+            batch_size=BATCH_SIZE,
             max_showers=MAX_SHOWERS,
             seed=SEED,
             device=DEVICE,
             verbose=True,
-            recenter_to_mountain=RECENTER_TO_MOUNTAIN,
+            # Placement is always the real ENU decay vertices from tau_wholesky.jl
+            # (`<corpus>_positions.pt`); a missing sidecar raises. East→layer injection
+            # uses the same calibration as the kernel.
+            east_entry=EAST_ENTRY,
+            layer_east_dx=LAYER_EAST_DX,
         )
         print(f"[build] training pairs in {time.time() - t0:.1f}s")
-
     print(f"  primary : {tuple(primary.shape)}  dtype={primary.dtype}")
-    print(f"  xy      : {tuple(xy.shape)}       dtype={xy.dtype}   (North, East)")
+    print(f"  xy      : {tuple(xy.shape)}       dtype={xy.dtype}   (East, North)")
     print(f"  E       : {tuple(E.shape)}        dtype={E.dtype}")
     print(f"  T       : {tuple(T.shape)}        dtype={T.dtype}")
     print(f"  strat   : {tuple(strat.shape)}    unique={sorted(strat.unique().tolist())}")

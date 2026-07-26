@@ -48,12 +48,14 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
-from modules_v6.fnn_surrogate_ne import compute_labels_batch
+from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
 from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
+from modules_v6.tau_showers import load_tau_primaries
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, RECENTER_TO_MOUNTAIN,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
+    TRAINING_DATASET_FOLDER,
+    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
 )
 from modules_v4.tr_geometry       import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -75,23 +77,16 @@ T_LOG_SCALE = 1.0e8          # must match 02_train_fnn*.py
 FIRE_EPS    = 1.0e-3         # log1p(E) above this ⇒ detector "fired" this shower
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# constants.GEOMETRY_PATH went stale after the TAMBOSim v1 reorg
-# (resources/basic_geometry.h5 → resources/geometry/colca_valley.h5; confirmed in
-# TAMBOSim git). GEOMETRY_GROUP/DET_KEY still match. Prefer a local copy in this
-# folder, then the new TAMBOSim path, then the (stale) constant.
-GEOMETRY_PATH_RESOLVED = next(
-    (p for p in (
-        os.path.join(_HERE, "colca_valley.h5"),
-        "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
-        GEOMETRY_PATH,
-    ) if os.path.exists(p)),
-    GEOMETRY_PATH,
-)
+# Mesh path resolution lives in constants.GEOMETRY_PATH_RESOLVED. This script used
+# to re-derive it here with a colca_valley.h5 fallback, which is now actively wrong:
+# GEOMETRY_GROUP is "malata", so falling back to colca_valley.h5 would raise a
+# missing-group KeyError rather than degrade gracefully.
 
 # Must match the NE dataset builder: fnn_surrogate_ne.build_training_pairs calls
-# compute_labels_batch with its DEFAULT sigma (200 m), so use 200 to reproduce the
-# exact training labels (the kernel's transverse smoothing length).
-sigma_spatial = 200
+# compute_labels_batch with its DEFAULT sigma (SIGMA_SPATIAL), so use the same
+# constant to reproduce the exact training labels (the kernel's transverse
+# smoothing length).
+sigma_spatial = SIGMA_SPATIAL
 
 
 def _describe(x: torch.Tensor) -> dict:
@@ -115,15 +110,24 @@ def _corpus_label_stats() -> dict:
     floor's z-score denominators; the min/max/mean give the range to read the std
     against. (Fired std differs from global std because the global also includes
     the non-fired ≈zero detectors.)"""
+    # Per-species denominators: species_ids.pt is row-aligned with E/T (0=electron
+    # block, 1=muon block, in gen00.SPECIES order), so mask by it for a per-species
+    # corpus std — electron and muon have different label spreads.
+    species = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "species_ids.pt"))
+    sp_names = list(gen00.SPECIES)
     E = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
     fired = E > FIRE_EPS                                   # E-based fired mask (corpus)
     out = {"E_all": _describe(E)}
     out["E_fired"] = _describe(E[fired]) if fired.any() else None
+    out["E_by_species"] = {n: (_describe(E[species == i]) if (species == i).any() else None)
+                           for i, n in enumerate(sp_names)}
     del E                                                  # free E; keep `fired` for T
     T = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
     T = torch.log1p(T * T_LOG_SCALE)
     out["T_all"]   = _describe(T)
     out["T_fired"] = _describe(T[fired]) if fired.any() else None
+    out["T_by_species"] = {n: (_describe(T[species == i]) if (species == i).any() else None)
+                           for i, n in enumerate(sp_names)}
     del T, fired
     return out
 
@@ -138,12 +142,26 @@ def _generate_repeated_showers(n_prim, m_real, seed, gen_batch):
     species is padded to the common target_P (the muon cap)."""
     if gen_batch:
         gen00.BATCH_SIZE = int(gen_batch)                  # GPU generate batch size
-    prim = sample_primary_particles(                       # corpus ranges (match 00)
-        e_min=10 ** gen00.LOG_E_MIN, e_max=10 ** gen00.LOG_E_MAX,
-        zenith_min=gen00.ZENITH_MIN, zenith_max=gen00.ZENITH_MAX,
-        azimuth_min=gen00.AZIMUTH_MIN, azimuth_max=gen00.AZIMUTH_MAX,
-        n=n_prim, seed=seed,
-    )
+    if USE_TAU_PRIMARIES:
+        # Draw the SAME kind of primaries Step 0 does — real taus carrying a
+        # physical ENU decay position, not synthetic direction/energy draws. The
+        # position matters here: it is what Step 1 places the cloud at, so the
+        # floor's labels only match the corpus if the primaries carry one.
+        prim = load_tau_primaries(
+            TAU_WHOLESKY_PATH, e_min=10 ** LOG_E_MIN, e_max=10 ** LOG_E_MAX,
+            n=n_prim, seed=seed,
+        )
+        print(f"[gen] real tau primaries from {os.path.basename(TAU_WHOLESKY_PATH)}"
+              f"  ({int(prim['energies'].shape[0])} drawn)")
+    else:
+        prim = sample_primary_particles(                   # corpus ranges (match 00)
+            e_min=10 ** gen00.LOG_E_MIN, e_max=10 ** gen00.LOG_E_MAX,
+            zenith_min=gen00.ZENITH_MIN, zenith_max=gen00.ZENITH_MAX,
+            azimuth_min=gen00.AZIMUTH_MIN, azimuth_max=gen00.AZIMUTH_MAX,
+            n=n_prim, seed=seed,
+        )
+    # load_tau_primaries caps at the number of in-band events, which can be < n_prim.
+    n_prim = int(prim["energies"].shape[0])
     energies   = torch.repeat_interleave(prim["energies"],   m_real, dim=0)  # (n*m,1)
     directions = torch.repeat_interleave(prim["directions"], m_real, dim=0)  # (n*m,3)
     labels     = torch.repeat_interleave(prim["labels"],     m_real, dim=0)  # (n*m,)
@@ -172,24 +190,6 @@ def _generate_repeated_showers(n_prim, m_real, seed, gen_batch):
     return out, prim
 
 
-def _recenter(clouds_flat, mountain):
-    """Per-shower recenter onto the mountain bbox centre — identical to
-    fnn_surrogate_ne.build_training_pairs(recenter_to_mountain=True). The shower
-    transverse plane is (North, Up) even in the NE pipeline, so this intentionally
-    stays on mountain.u_min/u_max (NOT east) — matching the NE builder exactly."""
-    mtn_cx = 0.5 * (mountain.n_min + mountain.n_max)
-    mtn_cy = 0.5 * (mountain.u_min + mountain.u_max)
-    mask  = (clouds_flat[:, :, 3] > 0).float()                 # (N, P)
-    w_sum = mask.sum(dim=1).clamp(min=1.0)
-    cx = (clouds_flat[:, :, 0] * mask).sum(dim=1) / w_sum
-    cy = (clouds_flat[:, :, 1] * mask).sum(dim=1) / w_sum
-    dx = (mtn_cx - cx).view(-1, 1)
-    dy = (mtn_cy - cy).view(-1, 1)
-    clouds_flat[..., 0] = clouds_flat[..., 0] + dx * mask
-    clouds_flat[..., 1] = clouds_flat[..., 1] + dy * mask
-    return clouds_flat
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-prim",    type=int, default=128, help="distinct primaries")
@@ -203,8 +203,9 @@ def main():
     print("=" * 72)
     print("aleatoric floor — within-primary label variance / corpus variance")
     print("=" * 72)
-    print(f"device={DEVICE}  recenter={RECENTER_TO_MOUNTAIN}  "
-          f"n_prim={args.n_prim}  m_real={args.m_real}  strategies={len(_STRATEGIES)}")
+    print(f"device={DEVICE}  tau_primaries={USE_TAU_PRIMARIES}  "
+          f"n_prim={args.n_prim}  "
+          f"m_real={args.m_real}  strategies={len(_STRATEGIES)}")
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     torch.set_float32_matmul_precision('high') # TODO maybe deactivate if perforamne is too bad
 
@@ -235,13 +236,32 @@ def main():
     t0 = time.time()
     clouds, _prim = _generate_repeated_showers(
         args.n_prim, args.m_real, args.seed, args.gen_batch)
-    n_prim, m_real = args.n_prim, args.m_real
+    # NOT args.n_prim: with real tau primaries the in-band count can be smaller.
+    n_prim, m_real = int(_prim["energies"].shape[0]), args.m_real
     P = next(iter(clouds.values())).shape[2]
-    if RECENTER_TO_MOUNTAIN:
-        for name in clouds:
-            clouds[name] = _recenter(
-                clouds[name].reshape(n_prim * m_real, P, 5), mountain
-            ).reshape(n_prim, m_real, P, 5)
+
+    # Place each realization exactly as Step 1 does, so the generated labels live
+    # in the same frame as the corpus labels that form the z-score denominator.
+    # Placement is always the real ENU decay vertices from tau_wholesky.jl; skipping
+    # it would leave the clouds in the generator's native frame near the origin, so
+    # numerator and corpus denominator would describe different geometries.
+    if _prim.get("positions") is None:
+        raise RuntimeError(
+            "no decay positions on the primaries — placement requires the real ENU "
+            "vertices from tau_wholesky.jl (re-run 00_generate_data_dual_species.py)")
+    pos  = torch.as_tensor(_prim["positions"],  dtype=torch.float32)    # (n_prim,3)
+    dirs = torch.as_tensor(_prim["directions"], dtype=torch.float32)    # (n_prim,3)
+    dirs = dirs / dirs.norm(dim=1, keepdim=True).clamp(min=1e-12)
+    # Every realization of primary p shares that primary's vertex + direction.
+    pos_flat  = torch.repeat_interleave(pos,  m_real, dim=0)            # (n_prim*m,3)
+    dirs_flat = torch.repeat_interleave(dirs, m_real, dim=0)
+    for name in clouds:
+        clouds[name] = place_clouds_enu(
+            clouds[name].reshape(n_prim * m_real, P, 5), pos_flat, dirs_flat,
+            east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
+        ).reshape(n_prim, m_real, P, 5)
+    print(f"[place] real ENU decay vertices from tau_wholesky.jl at {n_prim} primaries "
+          f"(east_entry={EAST_ENTRY:g}, dx={LAYER_EAST_DX:g})")
     print(f"[gen] done in {time.time()-t0:.1f}s  P(max_points)={P}  species={list(clouds)}")
 
     # For each (species component, strategy, primary): one fixed layout, M
@@ -249,11 +269,13 @@ def main():
     # the combined dual corpus (per-species component rows) used for corpus_std.
     rng = np.random.default_rng(args.seed)
     var_E, var_T, fired_frac = [], [], []   # each appends (n_det,) per (species,s,p)
+    var_E_sp = {name: [] for name in clouds}   # same, kept separated per species
+    var_T_sp = {name: [] for name in clouds}
     gen_E_vals, gen_T_vals = [], []         # all generated labels → value range
     t0 = time.time()
     for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
         fn = _STRATEGY_FNS[fn_name]
-        for sp_clouds in clouds.values():           # pool both species' components
+        for sp_name, sp_clouds in clouds.items():   # per species (also pooled below)
             for p in range(n_prim):
                 x_det, y_det = fn(mountain, n_det=N_DETECTORS, rng=rng, **kwargs)
                 x_det = x_det.float().to(DEVICE); y_det = y_det.float().to(DEVICE)
@@ -261,8 +283,10 @@ def main():
                 E, T = compute_labels_batch(cl, x_det, y_det, surface, sigma_spatial=sigma_spatial)
                 E = torch.log1p(E)                             # → training E space
                 T = torch.log1p(T * T_LOG_SCALE)               # → training T space
-                var_E.append(E.var(dim=0, unbiased=True).cpu())
-                var_T.append(T.var(dim=0, unbiased=True).cpu())
+                vE = E.var(dim=0, unbiased=True).cpu()
+                vT = T.var(dim=0, unbiased=True).cpu()
+                var_E.append(vE);            var_T.append(vT)
+                var_E_sp[sp_name].append(vE); var_T_sp[sp_name].append(vT)
                 fired_frac.append((E > FIRE_EPS).float().mean(dim=0).cpu())
                 gen_E_vals.append(E.reshape(-1).cpu())
                 gen_T_vals.append(T.reshape(-1).cpu())
@@ -300,10 +324,23 @@ def main():
     floor_total = 0.5 * (floor_E + floor_T)
     floor_total_fired_vs_fired = 0.5 * (floor_E_fired_vs_fired + floor_T_fired_vs_fired)
 
+    # Per-species floors: each species' within-var normalized by THAT species'
+    # corpus std, so electron and muon get separate levels (a shared denominator
+    # would distort them since their label spreads differ).
+    floor_by_species = {}
+    for name in clouds:
+        vE_sp = torch.cat(var_E_sp[name]); vT_sp = torch.cat(var_T_sp[name])
+        es_sp = corpus_stats["E_by_species"][name]["std"]
+        ts_sp = corpus_stats["T_by_species"][name]["std"]
+        fE_sp, fT_sp = _floor(vE_sp, es_sp), _floor(vT_sp, ts_sp)
+        floor_by_species[name] = dict(E=fE_sp, T=fT_sp, total=0.5 * (fE_sp + fT_sp),
+                                      corpus_std=dict(E=es_sp, T=ts_sp))
+
     res = dict(
         n_prim=n_prim, m_real=m_real, n_strategies=len(_STRATEGIES),
         species=list(gen00.SPECIES),
-        recenter=RECENTER_TO_MOUNTAIN, fire_eps=FIRE_EPS,
+        tau_primaries=USE_TAU_PRIMARIES,
+        n_prim_used=n_prim, fire_eps=FIRE_EPS,
         corpus_std=dict(E=e_std, T=t_std),
         corpus_std_fired=dict(E=e_std_fired, T=t_std_fired),
         # Full label ranges (min/max/mean/std + z-span) to read the stds against.
@@ -321,6 +358,7 @@ def main():
             T_fired_vs_fired=floor_T_fired_vs_fired,
             total_fired_vs_fired=floor_total_fired_vs_fired,
         ),
+        floor_zmse_by_species=floor_by_species,
         max_R2=dict(
             E=1 - floor_E, T=1 - floor_T, total=1 - floor_total,
             E_fired_vs_fired=1 - floor_E_fired_vs_fired,
@@ -345,6 +383,10 @@ def main():
     print(f"  floor  E (fired vs fired)     = {floor_E_fired_vs_fired:.4f}   (max R²|fired = {1-floor_E_fired_vs_fired:.3f})")
     print(f"  floor  T (fired vs fired)     = {floor_T_fired_vs_fired:.4f}   (max R²|fired = {1-floor_T_fired_vs_fired:.3f})")
     print(f"  floor  total (fired vs fired) = {floor_total_fired_vs_fired:.4f}   (max R²|fired = {1-floor_total_fired_vs_fired:.3f})")
+    print("\n  per-species floor (each vs its own corpus std):")
+    for name, fl in floor_by_species.items():
+        print(f"    {name:8s}  E={fl['E']:.4f}  T={fl['T']:.4f}  total={fl['total']:.4f}"
+              f"   (max R² total = {1-fl['total']:.3f})")
     print(f"\n  A surrogate whose val MSE reaches the floor is Bayes-optimal;")
     print(f"  no architecture/optimizer change can go below it.")
     print(f"\n[done] wrote {args.out}")

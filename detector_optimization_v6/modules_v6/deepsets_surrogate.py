@@ -12,7 +12,7 @@ This module is permutation-EQUIVARIANT by construction, so the trainer can drop
 the permutation augmentation entirely. It preserves FNNSurrogate's call contract
 exactly:
 
-    model = DeepSetsSurrogate(n_det=100, primary_dim=5, ...)
+    model = DeepSetsSurrogate(n_det=100, primary_dim=PRIMARY_DIM, ...)
     model.set_normalization(stats)          # same stats dict as compute_normalization()
     et = model(primary, xy)                 # (B, n_det, 2): col0=E, col1=T, raw units
 
@@ -60,7 +60,8 @@ class DeepSetsSurrogate(nn.Module):
 
     Args:
         n_det       : number of detectors (output set size).
-        primary_dim : primary encoding width (5).
+        primary_dim : primary encoding width (PRIMARY_DIM = 8: direction, energy,
+                      pdg, decay vertex). Never hardcode — checkpoints store it.
         hidden      : per-detector encoder/decoder width.
         context     : pooled-context width (the invariant global summary).
         n_enc       : encoder MLP depth (≥2).
@@ -93,7 +94,7 @@ class DeepSetsSurrogate(nn.Module):
 
         # SAME buffer layout as FNNSurrogate so set_normalization is identical
         # and the trainer's log-T stat mutation (out_mean[n_det:]) flows through.
-        in_dim  = primary_dim + 2 * n_det                # 205
+        in_dim  = primary_dim + 2 * n_det
         out_dim = 2 * n_det                              # 200
         self.register_buffer("in_mean",  torch.zeros(in_dim))
         self.register_buffer("in_std",   torch.ones(in_dim))
@@ -120,17 +121,17 @@ class DeepSetsSurrogate(nn.Module):
         n_active = xy.shape[1]   # actual detector count for this call (may differ from n_det)
 
         # Per-feature z-score scalars pulled from the broadcast-shared buffers:
-        #   in_mean = [primary(5), x0,y0, x1,y1, ...]  → x stat at idx 5, y at 6.
+        #   in_mean = [primary(primary_dim), x0,y0, x1,y1, ...]  → x stat at idx primary_dim, y at +1.
         #   out_mean = [E(100), T(100)]                → E stat at 0, T at n_det.
-        p_mean = self.in_mean[:self.primary_dim]                       # (5,)
+        p_mean = self.in_mean[:self.primary_dim]                       # (primary_dim,)
         p_std  = self.in_std[:self.primary_dim]
         x_mean, x_std = self.in_mean[self.primary_dim],     self.in_std[self.primary_dim]
         y_mean, y_std = self.in_mean[self.primary_dim + 1], self.in_std[self.primary_dim + 1]
         E_mean, E_std = self.out_mean[0],  self.out_std[0]
         T_mean, T_std = self.out_mean[nd], self.out_std[nd]
 
-        q_n = (primary - p_mean) / p_std                              # (B, 5)
-        q_n = q_n.unsqueeze(1).expand(B, n_active, -1)                 # (B, n_active, 5)
+        q_n = (primary - p_mean) / p_std                              # (B, primary_dim)
+        q_n = q_n.unsqueeze(1).expand(B, n_active, -1)                 # (B, n_active, primary_dim)
         x_n = (xy[..., 0] - x_mean) / x_std                           # (B, n_active)
         y_n = (xy[..., 1] - y_mean) / y_std
         token = torch.cat([q_n, x_n.unsqueeze(-1), y_n.unsqueeze(-1)], dim=-1)  # (B, n_active, 7)

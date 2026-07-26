@@ -47,7 +47,7 @@ AZIMUTH_MIN, AZIMUTH_MAX = 0.0, 360.0
 
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_V6, "colca_valley.h5"),
+        os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),
@@ -61,21 +61,6 @@ def _load_mountain():
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
-
-def _recenter_to_mountain(pts, mountain):
-    """Translate one shower so its energy-weighted (x,y) centroid lands on the
-    mountain bbox centre (pipeline mountain normalization — translation only)."""
-    if not len(pts):
-        return pts
-    cx_t = 0.5 * (mountain.n_min + mountain.n_max)
-    cy_t = 0.5 * (mountain.u_min + mountain.u_max)
-    w = pts[:, 3]
-    cx = (pts[:, 0] * w).sum() / max(w.sum(), 1e-9)
-    cy = (pts[:, 1] * w).sum() / max(w.sum(), 1e-9)
-    q = pts.copy()
-    q[:, 0] += (cx_t - cx)
-    q[:, 1] += (cy_t - cy)
-    return q
 
 
 def main():
@@ -94,7 +79,7 @@ def main():
                          "to a slow O(P^2) math path (materializes the full scores matrix); on "
                          "GPU run_allshowers compiles a fused kernel. Use cpu only if no GPU.")
     ap.add_argument("--mountain", action="store_true",
-                    help="mountain-normalize each cell (recenter to bbox centre) + overlay footprint")
+                    help="overlay the mountain footprint")
     ap.add_argument("--out", type=str, default=os.path.join(_HERE, "shower_angle_grid.png"))
     args = ap.parse_args()
 
@@ -136,9 +121,8 @@ def main():
 
     mountain = None
     if args.mountain:
-        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering each cell")
+        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — footprint overlay")
         mountain = _load_mountain()
-        cells = [_recenter_to_mountain(p, mountain) for p in cells]
 
     _plot_grid(cells, zeniths, azimuths, args.energy, args.pdg, args.out, mountain)
     print(f"[done] wrote {args.out}")

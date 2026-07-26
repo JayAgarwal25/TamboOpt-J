@@ -43,8 +43,10 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-op
 from modules_v6.constants import (
     LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
-    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE
+    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE,
+    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, DUAL_SHOWER_CACHE_PATH,
 )
+from modules_v6.tau_showers import load_tau_primaries
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
 from modules.generate_showers import GenerateShowers  # noqa: F401  (path injection)
@@ -289,16 +291,19 @@ def main():
     # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so the
     # pair count can scale freely (disk is the only limit). Muons are capped at
     # 25088 points; the file is preallocated at that P and electrons are padded up.
-    ap.add_argument("--n-pairs", type=int, default=NUM_SHOWERS,
+    ap.add_argument("--n-pairs", type=int, default=0,
                     help="number of paired events; the corpus holds 2*n_pairs rows "
                          "(electron block rows 0..N-1, muon block rows N..2N-1, "
-                         "row i and row N+i share the same primary)")
+                         "row i and row N+i share the same primary). 0 = all "
+                         "available (all in-band tau events with USE_TAU_PRIMARIES, "
+                         "else NUM_SHOWERS synthetic).")
     ap.add_argument("--seed", type=int, default=0,
                     help="primary-sampling seed (deterministic corpus)")
     ap.add_argument("--chunk", type=int, default=CHUNK_SIZE,
                     help="showers per streamed write-batch (bounds peak RAM)")
     ap.add_argument("--out", type=str, default=None,
-                    help="output .pt path (default: <SHOWER_CACHE>/cashed_showers_dual_<2*n_pairs>.pt)")
+                    help="output .pt path (default: DUAL_SHOWER_CACHE_PATH from "
+                         "constants — the tau corpus when USE_TAU_PRIMARIES)")
     ap.add_argument("--resume-at-row", type=int, default=0,
                     help="continue a crashed run into the EXISTING output file, "
                          "skipping rows < this (use the last logged 'file offset'). "
@@ -309,31 +314,50 @@ def main():
     os.makedirs(SHOWER_CACHE, exist_ok=True)
     os.makedirs(STAGE_ROOT, exist_ok=True)
 
-    n_pairs = int(args.n_pairs)
-    total   = 2 * n_pairs
-
-    out_path = args.out or os.path.join(SHOWER_CACHE, f"cashed_showers_dual_{total}.pt")
     target_P = max(cfg["max_points"] for cfg in SPECIES.values())
 
     # Sample the primaries ONCE — both species blocks reuse them, so row i and
     # row n_pairs+i are the two components of one physical event.
-    prim = sample_primary_particles(
-        e_min=10**LOG_E_MIN, e_max=10**LOG_E_MAX, 
-        zenith_min=ZENITH_MIN, zenith_max=ZENITH_MAX,
-        azimuth_min=AZIMUTH_MIN, azimuth_max=AZIMUTH_MAX,
-        n=n_pairs, seed=args.seed
+    if USE_TAU_PRIMARIES:
+        # Real tau primaries (energy + direction + physical ENU decay position),
+        # filtered to the generator's trained energy band. n_pairs follows the
+        # number of in-band events (capped by --n-pairs if given).
+        prim = load_tau_primaries(
+            TAU_WHOLESKY_PATH, e_min=10**LOG_E_MIN, e_max=10**LOG_E_MAX,
+            n=int(args.n_pairs), seed=args.seed,
         )
+        positions_all = prim["positions"]                 # (M, 3) ENU (East, North, Up)
+    else:
+        n_req = int(args.n_pairs) or NUM_SHOWERS
+        prim = sample_primary_particles(
+            e_min=10**LOG_E_MIN, e_max=10**LOG_E_MAX,
+            zenith_min=ZENITH_MIN, zenith_max=ZENITH_MAX,
+            azimuth_min=AZIMUTH_MIN, azimuth_max=AZIMUTH_MAX,
+            n=n_req, seed=args.seed,
+        )
+        positions_all = None                              # synthetic: no real position (Step 1 re-centers)
+
     energies_all, directions_all = prim["energies"], prim["directions"]
     # Per-event EM/hadronic primary class (0/1); both species blocks reuse it so paired rows share the class.
     labels_all = prim["labels"]
+    n_pairs = int(energies_all.shape[0])
+    total   = 2 * n_pairs
     # Paired-event ids: the electron row e and the muon row n_pairs+e are the two
     # components of one physical event.
     event_ids_all = torch.arange(n_pairs, dtype=torch.int64)
+
+    out_path = args.out or DUAL_SHOWER_CACHE_PATH
 
     print("=" * 72)
     print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
     print("=" * 72)
     print(f"device      : {DEVICE}")
+    print(f"primaries   : {f'REAL tau ({os.path.basename(TAU_WHOLESKY_PATH)}, ENU position + direction)' if USE_TAU_PRIMARIES else 'synthetic sample_primary_particles'}")
+    if USE_TAU_PRIMARIES:
+        print(f"            : {n_pairs} in-band taus in [1e{LOG_E_MIN:g}, 1e{LOG_E_MAX:g}] GeV "
+              f"(East {positions_all[:,0].min():.0f}..{positions_all[:,0].max():.0f}, "
+              f"North {positions_all[:,1].min():.0f}..{positions_all[:,1].max():.0f}, "
+              f"Up {positions_all[:,2].min():.0f}..{positions_all[:,2].max():.0f} m)")
     print(f"pairs       : {n_pairs} events -> {total} rows (seed={args.seed})")
     for name in SPECIES:
         print(f"{name:12s} : max_points={SPECIES[name]['max_points']}")
@@ -369,6 +393,16 @@ def main():
     # rule to whatever corpus path they are pointed at.
     species_path = os.path.splitext(out_path)[0] + "_species.pt"
     torch.save(species_ids, species_path)
+    # Real ENU decay position sidecar (M, 3) columns (East, North, Up), duplicated
+    # across the electron+muon blocks (paired rows share the primary → same
+    # position). Step 1 places each cloud at this position instead of re-centering.
+    # Only written for real-primary (tau) runs; the synthetic path has no position.
+    if positions_all is not None:
+        positions_dual = torch.cat([positions_all, positions_all], dim=0)   # (2N, 3)
+        positions_path = os.path.splitext(out_path)[0] + "_positions.pt"
+        torch.save(positions_dual, positions_path)
+        print(f"[positions] wrote sidecar {positions_path}  "
+              f"({tuple(positions_dual.shape)}, ENU East/North/Up)")
     print(f"[species] wrote sidecar {species_path} "
           f"({n_pairs} electron + {n_pairs} muon rows)")
 

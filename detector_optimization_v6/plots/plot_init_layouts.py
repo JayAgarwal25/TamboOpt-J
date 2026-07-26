@@ -37,7 +37,7 @@ OUT_DIR = OPT_FOLDER + "_init"
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
-    (p for p in (os.path.join(_V6, "colca_valley.h5"),
+    (p for p in (os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
                  "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
                  GEOMETRY_PATH) if os.path.exists(p)),
     GEOMETRY_PATH)
@@ -53,10 +53,11 @@ def _to_up(surface, north, east):
 
 
 def _init_up(mtn, surface, scheme):
-    """Sample one init scheme, project to the mountain (NE), return (North, Up)."""
-    N_np, E_np = sample_initial_layout_ne(mtn, n_units=N_DETECTORS, scheme=scheme)
-    N, E = project_to_mountain_ne(mtn, torch.as_tensor(N_np).float(),
-                                  torch.as_tensor(E_np).float())
+    """Sample one init scheme, project to the mountain (NE), return (North, Up).
+    Detectors are (East, North) to match the ENU h5 convention."""
+    E_np, N_np = sample_initial_layout_ne(mtn, n_units=N_DETECTORS, scheme=scheme)
+    E, N = project_to_mountain_ne(mtn, torch.as_tensor(E_np).float(),
+                                  torch.as_tensor(N_np).float())
     return N.numpy(), _to_up(surface, N.numpy(), E.numpy())
 
 

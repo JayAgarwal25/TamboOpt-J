@@ -44,7 +44,7 @@ _DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_1000000.pt")
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_V6, "colca_valley.h5"),
+        os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),
@@ -59,25 +59,6 @@ def _load_mountain():
     )
 
 
-def _recenter_to_mountain(reals, mountain):
-    """Shift each shower so its energy-weighted (x,y) centroid lands on the
-    mountain bbox centre — identical to build_training_pairs(recenter_to_mountain=True)
-    / compute_aleatoric_floor.py. Returns new list of shifted (P,5) arrays."""
-    cx_t = 0.5 * (mountain.n_min + mountain.n_max)
-    cy_t = 0.5 * (mountain.u_min + mountain.u_max)
-    out = []
-    for pts in reals:
-        if not len(pts):
-            out.append(pts); continue
-        w = pts[:, 3]
-        cx = (pts[:, 0] * w).sum() / max(w.sum(), 1e-9)
-        cy = (pts[:, 1] * w).sum() / max(w.sum(), 1e-9)
-        q = pts.copy()
-        q[:, 0] += (cx_t - cx)
-        q[:, 1] += (cy_t - cy)
-        out.append(q)
-    return out
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -88,9 +69,7 @@ def main():
                     help="dataset index where muon showers begin (electrons precede it). "
                          "Defaults to the midpoint, i.e. the second half is treated as muons.")
     ap.add_argument("--mountain", action="store_true",
-                    help="apply pipeline mountain normalization (recenter each shower's "
-                         "energy-weighted centroid onto the mountain bbox centre) and "
-                         "overlay the mountain footprint")
+                    help="overlay the mountain footprint")
     ap.add_argument("--out", type=str, default=os.path.join(_HERE, "cached_showers.png"),
                     help="output path; the species name is inserted before the extension")
     args = ap.parse_args()
@@ -109,7 +88,7 @@ def main():
 
     mountain = None
     if args.mountain:
-        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering to bbox centre")
+        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — footprint overlay")
         mountain = _load_mountain()
 
     # (species name, [start, stop) row range of the leading N showers)
@@ -136,9 +115,6 @@ def main():
             reals.append(pts[m])
             print(f"  {name} shower {lo + j}: pdg(EM/had)={int(pdg[j])}  "
                   f"n_points={int(m.sum())}  E_tot={pts[m, 3].sum():.3g}")
-
-        if mountain is not None:
-            reals = _recenter_to_mountain(reals, mountain)
 
         plabel = f"first {len(points)} {name} showers — {os.path.basename(args.ckpt)}"
         out = f"{base}_{name}{ext}"

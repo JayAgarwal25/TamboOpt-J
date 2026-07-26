@@ -23,8 +23,8 @@ Each mode writes an energy figure and a companion ``_time`` figure:
   2d : shower_angle_grid_<species>.png      + _time   (size ∝ energy / color = time)
   3d : shower_angle_grid_3d_<species>.png   + _time   (color = energy / color = time)
 
-2D-only: ``--mountain`` recenters each cell to the mountain bbox centre and
-overlays the detector footprint (North/Up), the pipeline mountain normalization.
+2D-only: ``--mountain`` overlays the detector footprint (North/Up). Showers are
+drawn in their native frame; the pipeline's placement lives in place_clouds_enu.
 
 These models are heavy and use flex_attention — run on GPU. PointCountFM
 (`compiled.pt`) is forced to CPU (TorchScript device-baked), same as the
@@ -84,7 +84,7 @@ E_MIN, E_MAX = 10**LOG_E_MIN, 10**LOG_E_MAX
 
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_V6, "colca_valley.h5"),
+        os.path.join(_V6, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),
@@ -98,21 +98,6 @@ def _load_mountain():
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
-
-def _recenter_to_mountain(pts, mountain):
-    """Translate one shower so its energy-weighted (x,y) centroid lands on the
-    mountain bbox centre (pipeline mountain normalization — translation only)."""
-    if not len(pts):
-        return pts
-    cx_t = 0.5 * (mountain.n_min + mountain.n_max)
-    cy_t = 0.5 * (mountain.u_min + mountain.u_max)
-    w = pts[:, 3]
-    cx = (pts[:, 0] * w).sum() / max(w.sum(), 1e-9)
-    cy = (pts[:, 1] * w).sum() / max(w.sum(), 1e-9)
-    q = pts.copy()
-    q[:, 0] += (cx_t - cx)
-    q[:, 1] += (cy_t - cy)
-    return q
 
 
 def _out_for(mode, species, custom):
@@ -149,7 +134,7 @@ def main():
     ap.add_argument("--batch", type=int, default=12,
                     help="AllShowers generation batch size (lower if CUDA OOM)")
     ap.add_argument("--mountain", action="store_true",
-                    help="(2D) mountain-normalize each cell (recenter to bbox centre) + overlay footprint")
+                    help="(2D) overlay the mountain footprint")
     ap.add_argument("--out", type=str, default=None,
                     help="output PNG (single-mode only; default: shower_angle_grid[_3d]_<species>.png)")
     args = ap.parse_args()
@@ -214,9 +199,8 @@ def main():
     # when 2D is being drawn and --mountain is set.
     mountain = None
     if args.mountain and "2d" in modes:
-        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering each cell")
+        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — footprint overlay")
         mountain = _load_mountain()
-        cells = [_recenter_to_mountain(p, mountain) for p in cells]
     elif args.mountain:
         print("[warn] --mountain only applies to the 2D grid; ignored for --mode 3d")
 

@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -p gpu_requeue 	
-#SBATCH --mem=70g        			
-#SBATCH --time=3:00:00 			
+#SBATCH --mem=20g        			
+#SBATCH --time=00:30:00 			
 #SBATCH -c 32            			
-#SBATCH --gres=gpu:1        
+#SBATCH --gres=gpu:1
 #SBATCH --constraint=a100
-#SBATCH -J run_floor_calculation
+#SBATCH -J run_eval_performance
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 
 module load python
@@ -15,4 +15,4 @@ conda deactivate
 
 conda activate multiproc_env
 
-python -u plots/compute_aleatoric_floor.py
+python -u plots/eval_true_utility.py --grid-layout

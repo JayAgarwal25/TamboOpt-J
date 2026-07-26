@@ -40,7 +40,7 @@ from modules_v4.tr_geometry import load_tr_mountain
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
     (p for p in (
-        os.path.join(_HERE, "colca_valley.h5"),
+        os.path.join(_HERE, os.path.basename(GEOMETRY_PATH)),
         "/n/home05/zdimitrov/tambo/TAMBOSim/resources/geometry/colca_valley.h5",
         GEOMETRY_PATH,
     ) if os.path.exists(p)),
@@ -54,25 +54,6 @@ def _load_mountain():
         east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES,
     )
 
-
-def _recenter_to_mountain(reals, mountain):
-    """Shift each realization so its energy-weighted (x,y) centroid lands on the
-    mountain bbox centre — identical to build_training_pairs(recenter_to_mountain=True)
-    / compute_aleatoric_floor.py. Returns new list of shifted (P,5) arrays."""
-    cx_t = 0.5 * (mountain.n_min + mountain.n_max)
-    cy_t = 0.5 * (mountain.u_min + mountain.u_max)
-    out = []
-    for pts in reals:
-        if not len(pts):
-            out.append(pts); continue
-        w = pts[:, 3]
-        cx = (pts[:, 0] * w).sum() / max(w.sum(), 1e-9)
-        cy = (pts[:, 1] * w).sum() / max(w.sum(), 1e-9)
-        q = pts.copy()
-        q[:, 0] += (cx_t - cx)
-        q[:, 1] += (cy_t - cy)
-        out.append(q)
-    return out
 
 
 def _primary(args):
@@ -114,9 +95,7 @@ def main():
                          "to a slow O(P^2) math path; on GPU run_allshowers compiles a fused "
                          "kernel. Use cpu only if no GPU.")
     ap.add_argument("--mountain", action="store_true",
-                    help="apply pipeline mountain normalization (recenter each shower's "
-                         "energy-weighted centroid onto the mountain bbox centre) and "
-                         "overlay the mountain footprint")
+                    help="overlay the mountain footprint")
     ap.add_argument("--out", type=str, default=os.path.join(_HERE, "shower_realizations.png"))
     args = ap.parse_args()
 
@@ -146,9 +125,8 @@ def main():
 
     mountain = None
     if args.mountain:
-        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — recentering to bbox centre")
+        print(f"[mountain] {GEOMETRY_PATH_RESOLVED}  — footprint overlay")
         mountain = _load_mountain()
-        reals = _recenter_to_mountain(reals, mountain)
 
     _plot(reals, plabel, args.out, mountain=mountain)
     print(f"[done] wrote {args.out}")
