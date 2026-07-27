@@ -182,6 +182,19 @@ class DeepSetsSurrogate(nn.Module):
         mu_z, logvar_z = self._forward_z(primary, xy)
         return self._unnorm_mean(mu_z), logvar_z
 
+    def forward_var(self, primary: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+        """Raw-unit variance (not z-scored) — for downstream consumers that
+        want an explicit per-detector uncertainty channel (recon input,
+        dual-species combination), as opposed to forward_dist()'s z-scored
+        logvar which is only meant for the training loss.
+        """
+        nd = self.n_det
+        _, logvar_z = self._forward_z(primary, xy)
+        E_std, T_std = self.out_std[0], self.out_std[nd]
+        var_E = logvar_z[..., 0].exp() * E_std ** 2
+        var_T = logvar_z[..., 1].exp() * T_std ** 2
+        return torch.stack([var_E, var_T], dim=-1)                    # (B, nd, 2)
+
 
 def build_surrogate_from_ckpt(ckpt: dict, n_det: int, primary_dim: int, device=None):
     """Construct the right surrogate class from a checkpoint's `config`.

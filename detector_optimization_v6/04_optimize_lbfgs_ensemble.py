@@ -88,7 +88,7 @@ RUN_COMBINED         = True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_full_corpus_{scheme}"
 # Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
-# with --recon_folder (exact path). utility_of_xy feeds recon (B, n_det, 4).
+# with --recon_folder (exact path). utility_of_xy feeds recon (B, n_det, 6).
 RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.

@@ -95,6 +95,19 @@ class DualSpeciesSurrogate(nn.Module):
         pred_mu = self.muon(primary, xy)
         return combine_species_outputs(pred_e, pred_mu)
 
+    def forward_with_var(self, primary: torch.Tensor, xy: torch.Tensor):
+        """(mean, var) — mean is identical to forward(). var is an
+        approximate combination: electron + muon raw-unit variances summed
+        (independent noise sources); the two components' physical
+        combination (count-weighted average, log1p) is nonlinear, so this
+        is not a full delta-method propagation, just a reasonable per-
+        detector uncertainty signal for recon/optimizer consumption.
+        """
+        mean   = self.forward(primary, xy)
+        var_e  = self.electron.forward_var(primary, xy)
+        var_mu = self.muon.forward_var(primary, xy)
+        return mean, var_e + var_mu
+
 
 def load_dual_surrogate(folder: str,
                         device: torch.device,

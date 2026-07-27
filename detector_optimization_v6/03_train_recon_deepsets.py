@@ -4,12 +4,16 @@ Drop-in replacement for 03_train_recon.py using DeepSetsRecon instead of the
 flat MLP. Permutation invariance is structural — no augmentation needed.
 
 Architecture:
-    token_i = [x_i, y_i, E_comb_i, T_comb_i]     (4 features, per detector)
+    token_i = [x_i, y_i, E_comb_i, T_comb_i, var_E_i, var_T_i]  (6 features)
     h_i     = encoder(token_i)                     shared encoder
     c       = context_proj(cat[mean h_i, max h_i])  invariant pool (maxmean)
     out     = decoder(c)            → [dir_x, dir_y, dir_z, log_e_norm]
 
-Normalization: in_mean/in_std are (4,) — one scalar per feature kind,
+var_E/var_T come from the stage-2 heteroscedastic surrogate's variance head
+(DualSpeciesSurrogate.forward_with_var) — an explicit per-detector
+uncertainty signal, not just the point estimate.
+
+Normalization: in_mean/in_std are (6,) — one scalar per feature kind,
 broadcast over all detector slots. Output stats are (4,) like the flat MLP.
 
 Writes to RECON_FOLDER + "_deepsets" — safe to run alongside 03_train_recon.py.
@@ -70,7 +74,7 @@ LBFGS_HISTORY_SIZE = 20
 LBFGS_CHUNK        = 4_096
 RESUME_CKPT_INTERVAL = 25   # save a rolling resume checkpoint every N Adam epochs
 
-RECON_INPUT_FEATURES = 4   # (x, y, E, T) per detector
+RECON_INPUT_FEATURES = 6   # (x, y, E, T, var_E, var_T) per detector
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -101,19 +105,24 @@ def compute_fnn_predictions(model: nn.Module,
                              xy:      torch.Tensor,
                              device:  torch.device,
                              batch_size: int = 1024
-                             ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Run dual surrogate forward on the whole corpus. Returns CPU tensors."""
+                             ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run dual surrogate forward (mean + var) on the whole corpus. Returns CPU tensors."""
     model.eval()
     N = int(primary.shape[0])
-    E_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
-    T_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    E_pred    = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    T_pred    = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    varE_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    varT_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
     for lo in range(0, N, batch_size):
         hi = min(lo + batch_size, N)
-        pred = model(primary[lo:hi].to(device, non_blocking=True),
-                     xy[lo:hi].to(device, non_blocking=True))   # (B, 100, 2)
-        E_pred[lo:hi] = pred[..., 0].cpu()
-        T_pred[lo:hi] = pred[..., 1].cpu()
-    return E_pred, T_pred
+        pred, var = model.forward_with_var(
+            primary[lo:hi].to(device, non_blocking=True),
+            xy[lo:hi].to(device, non_blocking=True))            # (B, 100, 2) each
+        E_pred[lo:hi]    = pred[..., 0].cpu()
+        T_pred[lo:hi]    = pred[..., 1].cpu()
+        varE_pred[lo:hi] = var[..., 0].cpu()
+        varT_pred[lo:hi] = var[..., 1].cpu()
+    return E_pred, T_pred, varE_pred, varT_pred
 
 
 _AXIS_KEYS = ("tot", "dx", "dy", "dz", "logE")
@@ -132,12 +141,14 @@ def _per_axis_loss(pred: torch.Tensor, tgt: torch.Tensor,
 def _validate(recon: nn.Module, loader: DataLoader, device: torch.device) -> dict:
     sums = [0.0] * 5
     n = 0
-    for xy_b, E_b, T_b, tgt_b in loader:
-        xy_b  = xy_b .to(device, non_blocking=True)
-        E_b   = E_b  .to(device, non_blocking=True)
-        T_b   = T_b  .to(device, non_blocking=True)
-        tgt_b = tgt_b.to(device, non_blocking=True)
-        inp   = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
+    for xy_b, E_b, T_b, varE_b, varT_b, tgt_b in loader:
+        xy_b   = xy_b  .to(device, non_blocking=True)
+        E_b    = E_b   .to(device, non_blocking=True)
+        T_b    = T_b   .to(device, non_blocking=True)
+        varE_b = varE_b.to(device, non_blocking=True)
+        varT_b = varT_b.to(device, non_blocking=True)
+        tgt_b  = tgt_b .to(device, non_blocking=True)
+        inp    = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b, varE_b, varT_b], dim=-1)
         losses = _per_axis_loss(recon(inp), tgt_b)
         B = xy_b.shape[0]
         for i, v in enumerate(losses):
@@ -256,10 +267,11 @@ def main():
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
     t0 = time.time()
-    E_pred, T_pred = compute_fnn_predictions(dual, primary, xy, DEVICE)
+    E_pred, T_pred, varE_pred, varT_pred = compute_fnn_predictions(dual, primary, xy, DEVICE)
     print(f"[dual] predictions in {time.time() - t0:.1f}s  "
           f"E mean={E_pred.mean():.3g} std={E_pred.std():.3g}  "
-          f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
+          f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}  "
+          f"var_E mean={varE_pred.mean():.3g}  var_T mean={varT_pred.mean():.3g}")
 
     target   = primary[:, :4].clone().float()
     tgt_mean = target.mean(dim=0)
@@ -271,12 +283,14 @@ def main():
 
     # Per-feature z-score: one scalar per feature kind, broadcast over all slots.
     in_mean = torch.stack([xy[..., 0].mean(), xy[..., 1].mean(),
-                           E_pred.mean(),      T_pred.mean()])         # (4,)
+                           E_pred.mean(),      T_pred.mean(),
+                           varE_pred.mean(),   varT_pred.mean()])      # (6,)
     in_std  = torch.stack([xy[..., 0].std(),  xy[..., 1].std(),
-                           E_pred.std(),       T_pred.std()]).clamp(min=1e-8)
+                           E_pred.std(),       T_pred.std(),
+                           varE_pred.std(),    varT_pred.std()]).clamp(min=1e-8)
     print(f"[norm] per-feat mean={in_mean.tolist()}  std={in_std.tolist()}")
 
-    full_ds  = TensorDataset(xy, E_pred, T_pred, target)
+    full_ds  = TensorDataset(xy, E_pred, T_pred, varE_pred, varT_pred, target)
     train_ds = Subset(full_ds, train_idx.tolist())
     val_ds   = Subset(full_ds, val_idx.tolist())
     pin = (DEVICE.type == "cuda")
@@ -327,13 +341,15 @@ def main():
         recon.train()
         sums = [0.0] * 5
         n_tr = 0
-        for xy_b, E_b, T_b, tgt_b in train_loader:
-            xy_b  = xy_b .to(DEVICE, non_blocking=True)
-            E_b   = E_b  .to(DEVICE, non_blocking=True)
-            T_b   = T_b  .to(DEVICE, non_blocking=True)
-            tgt_b = tgt_b.to(DEVICE, non_blocking=True)
+        for xy_b, E_b, T_b, varE_b, varT_b, tgt_b in train_loader:
+            xy_b   = xy_b  .to(DEVICE, non_blocking=True)
+            E_b    = E_b   .to(DEVICE, non_blocking=True)
+            T_b    = T_b   .to(DEVICE, non_blocking=True)
+            varE_b = varE_b.to(DEVICE, non_blocking=True)
+            varT_b = varT_b.to(DEVICE, non_blocking=True)
+            tgt_b  = tgt_b .to(DEVICE, non_blocking=True)
 
-            inp    = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
+            inp    = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b, varE_b, varT_b], dim=-1)
             losses = _per_axis_loss(recon(inp), tgt_b)
 
             optimizer.zero_grad(set_to_none=True)
@@ -406,14 +422,17 @@ def main():
 
     recon.eval()   # dropout off; grad stays True
 
-    # Pre-stack full training set as (N_train, n_det, 4) on GPU.
-    xy_train  = xy[train_idx].to(DEVICE)
-    E_train   = E_pred[train_idx].to(DEVICE)
-    T_train   = T_pred[train_idx].to(DEVICE)
-    tgt_train = target[train_idx].to(DEVICE)
-    inp_all   = torch.stack([xy_train[..., 0], xy_train[..., 1],
-                             E_train, T_train], dim=-1)    # (N_train, n_det, 4)
-    del xy_train, E_train, T_train
+    # Pre-stack full training set as (N_train, n_det, 6) on GPU.
+    xy_train    = xy[train_idx].to(DEVICE)
+    E_train     = E_pred[train_idx].to(DEVICE)
+    T_train     = T_pred[train_idx].to(DEVICE)
+    varE_train  = varE_pred[train_idx].to(DEVICE)
+    varT_train  = varT_pred[train_idx].to(DEVICE)
+    tgt_train   = target[train_idx].to(DEVICE)
+    inp_all     = torch.stack([xy_train[..., 0], xy_train[..., 1],
+                               E_train, T_train, varE_train, varT_train],
+                              dim=-1)                       # (N_train, n_det, 6)
+    del xy_train, E_train, T_train, varE_train, varT_train
     print(f"[lbfgs] full train set on {DEVICE}: {tgt_train.shape[0]} samples")
 
     lbfgs_optimizer = torch.optim.LBFGS(

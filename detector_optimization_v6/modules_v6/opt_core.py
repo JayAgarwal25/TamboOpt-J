@@ -91,15 +91,25 @@ def utility_of_xy(x_det: torch.Tensor,
     xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
     xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
 
-    pred_ET    = fnn(primary_batch, xy_batch)                              # (B, n_det, 2)
+    # Uncertainty-aware recon input: mean + per-detector variance. Callers
+    # without a variance head (e.g. eval_true_utility.py's kernel-label
+    # stand-in, which IS ground truth) fall back to zero variance so recon
+    # still sees the 6 features it was trained on.
+    if hasattr(fnn, "forward_with_var"):
+        pred_ET, var_ET = fnn.forward_with_var(primary_batch, xy_batch)    # (B, n_det, 2) each
+    else:
+        pred_ET = fnn(primary_batch, xy_batch)
+        var_ET  = torch.zeros_like(pred_ET)
     E_pred_det = pred_ET[..., 0]
     T_pred_det = pred_ET[..., 1]
+    var_E_det  = var_ET[..., 0]
+    var_T_det  = var_ET[..., 1]
 
     recon_feats = torch.stack(
-        [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
+        [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det, var_E_det, var_T_det],
         dim=-1,
-    )                                                                      # (B, n_det, 4)
-    pred = recon(recon_feats)                                              # (B, 4); DeepSets recon takes (B, n_det, 4)
+    )                                                                      # (B, n_det, 6)
+    pred = recon(recon_feats)                                              # (B, 4); DeepSets recon takes (B, n_det, 6)
     E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
     E_pred_phys = E_pred_phys.clamp(min=1.0)
 
@@ -183,7 +193,8 @@ def load_models(device, fnn_folder=None, recon_dir=None):
     The dual wrapper combines fnn_electron.pt + fnn_muon.pt per event (frozen,
     eval); gradients flow through both branches. `build_recon_from_ckpt` loads
     whichever recon the checkpoint declares (DeepSets here, consuming
-    (B, n_det, 4) per-detector features), applies its normalization, and freezes
+    (B, n_det, 6) per-detector features: x, y, E, T, var_E, var_T), applies
+    its normalization, and freezes
     it. Defaults: FNN_FOLDER and RECON_FOLDER + "_deepsets"."""
     fnn_folder = fnn_folder or FNN_FOLDER
     recon_dir  = recon_dir  or (RECON_FOLDER + "_deepsets")
