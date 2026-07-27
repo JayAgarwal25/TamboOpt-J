@@ -129,16 +129,28 @@ def permute_detectors_batch(xy: torch.Tensor,
     return xy_p, E_p, T_p
     
 
-def mse_normalized(pred, E_tgt, T_tgt, out_mean, out_std):
-    """MSE in the z-score space the model normalizes to. Returns (total, E, T)."""
-    pred_flat   = torch.cat([pred[..., 0], pred[..., 1]], dim=1)   # (B, 200)
+def gaussian_nll_normalized(mean_raw, logvar_z, E_tgt, T_tgt, out_mean, out_std):
+    """Gaussian NLL in the z-score space the model normalizes to.
+
+    mean_raw is unnormalized (same units as E_tgt/T_tgt); re-normalizing it
+    here (rather than trusting it already equals the model's internal mu_z)
+    mirrors the old mse_normalized pattern and keeps this function agnostic
+    to how the mean was produced. logvar_z is already z-scored (dimensionless),
+    so no unit conversion is needed for it. Returns (total, E, T) NLL, same
+    3-tuple shape mse_normalized used, so callers are unchanged.
+    """
+    mean_flat   = torch.cat([mean_raw[..., 0], mean_raw[..., 1]], dim=1)   # (B, 200)
     target_flat = torch.cat([E_tgt, T_tgt], dim=1)
-    pred_n   = (pred_flat   - out_mean) / out_std
+    mean_n   = (mean_flat   - out_mean) / out_std
     target_n = (target_flat - out_mean) / out_std
+    logvar_flat = torch.cat([logvar_z[..., 0], logvar_z[..., 1]], dim=1)   # (B, 200)
+    var = logvar_flat.exp()
     n = E_tgt.shape[1]
-    mse_E = F.mse_loss(pred_n[:, :n], target_n[:, :n])
-    mse_T = F.mse_loss(pred_n[:, n:], target_n[:, n:])
-    return 0.5 * (mse_E + mse_T), mse_E, mse_T
+
+    nll = 0.5 * (target_n - mean_n) ** 2 / var + 0.5 * logvar_flat
+    nll_E = nll[:, :n].mean()
+    nll_T = nll[:, n:].mean()
+    return 0.5 * (nll_E + nll_T), nll_E, nll_T
 
 
 def _plot_curves(log, path, adam_epochs=0, lbfgs_iter_log=None):
@@ -295,9 +307,9 @@ def train_species(tag:        str,
             # Permutation augmentation: independent perm per sample in the batch
             xy_b, E_b, T_b = permute_detectors_batch(xy_b, E_b, T_b)
 
-            pred = model(p_b, xy_b)                # (B, 100, 2) unnormalized
-            loss, mE, mT = mse_normalized(
-                pred, E_b, T_b, model.out_mean, model.out_std,
+            mean_pred, logvar_pred = model.forward_dist(p_b, xy_b)   # (B,100,2), (B,100,2)
+            loss, mE, mT = gaussian_nll_normalized(
+                mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -323,9 +335,9 @@ def train_species(tag:        str,
                 xy_b = xy_b.to(DEVICE, non_blocking=True)
                 E_b  = E_b.to(DEVICE, non_blocking=True)
                 T_b  = T_b.to(DEVICE, non_blocking=True)
-                pred = model(p_b, xy_b)
-                loss, mE, mT = mse_normalized(
-                    pred, E_b, T_b, model.out_mean, model.out_std,
+                mean_pred, logvar_pred = model.forward_dist(p_b, xy_b)
+                loss, mE, mT = gaussian_nll_normalized(
+                    mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
                 )
                 B = p_b.shape[0]
                 va_tot += loss.item() * B
@@ -431,9 +443,9 @@ def train_species(tag:        str,
             xy_c = xy_all[start:end]
             E_c  = E_all_train[start:end]
             T_c  = T_all_train[start:end]
-            pred_c = model(p_c, xy_c)
-            chunk_loss, chunk_mE, chunk_mT = mse_normalized(
-                pred_c, E_c, T_c, model.out_mean, model.out_std,
+            mean_c, logvar_c = model.forward_dist(p_c, xy_c)
+            chunk_loss, chunk_mE, chunk_mT = gaussian_nll_normalized(
+                mean_c, logvar_c, E_c, T_c, model.out_mean, model.out_std,
             )
             weight = chunk_size / n_total
             (chunk_loss * weight).backward()
@@ -451,9 +463,9 @@ def train_species(tag:        str,
                 xy_b = xy_b.to(DEVICE, non_blocking=True)
                 E_b  = E_b.to(DEVICE, non_blocking=True)
                 T_b  = T_b.to(DEVICE, non_blocking=True)
-                v_pred = model(p_b, xy_b)
-                v_loss, v_mE, v_mT = mse_normalized(
-                    v_pred, E_b, T_b, model.out_mean, model.out_std,
+                v_mean, v_logvar = model.forward_dist(p_b, xy_b)
+                v_loss, v_mE, v_mT = gaussian_nll_normalized(
+                    v_mean, v_logvar, E_b, T_b, model.out_mean, model.out_std,
                 )
                 B = p_b.shape[0]
                 va_tot += v_loss.item() * B

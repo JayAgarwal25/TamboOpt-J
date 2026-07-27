@@ -25,7 +25,16 @@ shared per-detector decoder):
     token_i = [q (5), x_i, y_i]                       # 7 features, per detector
     h_i     = ψ(token_i)                              # shared encoder MLP
     c       = mean_i h_i  → context projection        # permutation-INVARIANT pool
-    (E_i, T_i) = ρ([h_i, c])                          # shared decoder MLP
+    (mu_i, logvar_i) = ρ([h_i, c])                    # shared decoder MLP, per channel
+
+Heteroscedastic head: the decoder outputs a per-channel mean AND log-variance
+(4 numbers per detector: mu_E, mu_T, logvar_E, logvar_T) instead of a bare
+point estimate. `forward()` keeps the original 2-channel contract (mean only,
+raw units) so Steps 3-4 and dual_surrogate.py need no changes; the trainer
+uses `forward_dist()` to get both moments for a Gaussian NLL loss. This lets
+the model represent the physical shower-to-shower aleatoric floor
+(plots/compute_aleatoric_floor.py) as an explicit per-input uncertainty rather
+than being forced toward a single conditional-mean point estimate.
 
 Z-scoring is baked into forward via the SAME registered buffers FNNSurrogate
 uses (in_mean(205), in_std(205), out_mean(200), out_std(200)), so
@@ -33,6 +42,8 @@ uses (in_mean(205), in_std(205), out_mean(200), out_std(200)), so
 mutation (out_mean[n_det:] / out_std[n_det:]) flows through unchanged. In
 forward we read the per-detector scalars out of those broadcast-shared buffers
 (every xy/E/T slot holds the same stat by construction of compute_normalization).
+The log-variance head lives entirely in z-scored space (no un-normalization
+needed — it is a dimensionless training target, not a physical unit).
 """
 
 import torch
@@ -87,7 +98,8 @@ class DeepSetsSurrogate(nn.Module):
         token_dim = primary_dim + 2                      # [q, x_i, y_i]
         self.encoder = _mlp(token_dim, hidden, hidden, n_enc, dropout)
         self.context_proj = nn.Linear(hidden, context)
-        self.decoder = _mlp(hidden + context, hidden, 2, n_dec, dropout)
+        # 4 outputs per detector: mu_E, mu_T, logvar_E, logvar_T (all z-scored).
+        self.decoder = _mlp(hidden + context, hidden, 4, n_dec, dropout)
 
         # SAME buffer layout as FNNSurrogate so set_normalization is identical
         # and the trainer's log-T stat mutation (out_mean[n_det:]) flows through.
@@ -105,13 +117,13 @@ class DeepSetsSurrogate(nn.Module):
         self.out_mean.copy_(stats["out_mean"])
         self.out_std.copy_(stats["out_std"])
 
-    def forward(self, primary: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            primary : (B, primary_dim)
-            xy      : (B, n_det, 2)
+    def _forward_z(self, primary: torch.Tensor, xy: torch.Tensor):
+        """Shared encoder/decoder pass, entirely in z-scored space.
+
         Returns:
-            (B, n_det, 2) — col0 = E, col1 = T, unnormalized units.
+            mu_z     : (B, nd, 2) z-scored per-channel mean.
+            logvar_z : (B, nd, 2) z-scored per-channel log-variance, clamped
+                       to [-10, 10] (var in [4.5e-5, 2.2e4]) for exp() safety.
         """
         B = primary.shape[0]
         nd = self.n_det
@@ -123,8 +135,6 @@ class DeepSetsSurrogate(nn.Module):
         p_std  = self.in_std[:self.primary_dim]
         x_mean, x_std = self.in_mean[self.primary_dim],     self.in_std[self.primary_dim]
         y_mean, y_std = self.in_mean[self.primary_dim + 1], self.in_std[self.primary_dim + 1]
-        E_mean, E_std = self.out_mean[0],  self.out_std[0]
-        T_mean, T_std = self.out_mean[nd], self.out_std[nd]
 
         q_n = (primary - p_mean) / p_std                              # (B, primary_dim)
         q_n = q_n.unsqueeze(1).expand(B, nd, -1)                       # (B, nd, primary_dim)
@@ -135,11 +145,42 @@ class DeepSetsSurrogate(nn.Module):
         h = self.encoder(token)                                       # (B, nd, hidden)
         c = self.context_proj(h.mean(dim=1))                          # (B, context)  invariant pool
         c = c.unsqueeze(1).expand(B, nd, -1)                          # (B, nd, context)
-        out_n = self.decoder(torch.cat([h, c], dim=-1))              # (B, nd, 2)  z-scored
+        out_n = self.decoder(torch.cat([h, c], dim=-1))              # (B, nd, 4)  z-scored
 
-        E_out = out_n[..., 0] * E_std + E_mean                        # (B, nd)
-        T_out = out_n[..., 1] * T_std + T_mean
+        mu_z     = out_n[..., :2]                                     # (B, nd, 2): mu_E, mu_T
+        logvar_z = out_n[..., 2:].clamp(min=-10.0, max=10.0)          # (B, nd, 2): logvar_E, logvar_T
+        return mu_z, logvar_z
+
+    def _unnorm_mean(self, mu_z: torch.Tensor) -> torch.Tensor:
+        nd = self.n_det
+        E_mean, E_std = self.out_mean[0],  self.out_std[0]
+        T_mean, T_std = self.out_mean[nd], self.out_std[nd]
+        E_out = mu_z[..., 0] * E_std + E_mean
+        T_out = mu_z[..., 1] * T_std + T_mean
         return torch.stack([E_out, T_out], dim=-1)                    # (B, nd, 2)
+
+    def forward(self, primary: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            primary : (B, primary_dim)
+            xy      : (B, n_det, 2)
+        Returns:
+            (B, n_det, 2) — col0 = E, col1 = T, unnormalized units (mean only;
+            drop-in contract for Steps 3-4 and dual_surrogate.py).
+        """
+        mu_z, _ = self._forward_z(primary, xy)
+        return self._unnorm_mean(mu_z)
+
+    def forward_dist(self, primary: torch.Tensor, xy: torch.Tensor):
+        """Full predictive distribution, for the Gaussian-NLL trainer.
+
+        Returns:
+            mean_raw : (B, n_det, 2) — same as `forward()`, unnormalized units.
+            logvar_z : (B, n_det, 2) — z-scored log-variance (dimensionless;
+                       compare directly against z-scored residuals).
+        """
+        mu_z, logvar_z = self._forward_z(primary, xy)
+        return self._unnorm_mean(mu_z), logvar_z
 
 
 def build_surrogate_from_ckpt(ckpt: dict, n_det: int, primary_dim: int, device=None):
