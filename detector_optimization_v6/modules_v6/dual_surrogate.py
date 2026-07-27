@@ -108,6 +108,19 @@ class DualSpeciesSurrogate(nn.Module):
         var_mu = self.muon.forward_var(primary, xy)
         return mean, var_e + var_mu
 
+    def forward_sample(self, primary: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
+        """One stochastic draw from the predicted (mean, var) distribution,
+        same (B, n_det, 2) contract as forward() — a fresh noisy realization
+        each call instead of the mean point estimate, so downstream
+        training/optimization sees the surrogate's learned aleatoric spread
+        directly rather than being handed mean and variance as separate,
+        discardable inputs. Reparameterized (mean + eps*std) so gradients
+        into (primary, xy) still flow for stage-4's L-BFGS/Adam.
+        """
+        mean, var = self.forward_with_var(primary, xy)
+        eps = torch.randn_like(mean)
+        return mean + eps * var.clamp(min=0.0).sqrt()
+
 
 def load_dual_surrogate(folder: str,
                         device: torch.device,
