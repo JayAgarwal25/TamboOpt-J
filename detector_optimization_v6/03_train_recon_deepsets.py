@@ -35,11 +35,11 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
 import modules_v6   # noqa: F401
-from modules_v6.dual_surrogate  import load_dual_surrogate
+from modules_v6.dual_surrogate  import load_dual_surrogate, combine_species_outputs
 from modules_v6.reconstruction  import DeepSetsRecon
 from modules_v6.constants import (
     RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
-    N_DETECTORS,
+    N_DETECTORS, T_LOG_SCALE,
 )
 
 OUTPUT_FOLDER = RECON_FOLDER + "_deepsets"
@@ -116,21 +116,82 @@ def compute_fnn_predictions(model: nn.Module,
     return E_pred, T_pred
 
 
-_AXIS_KEYS = ("tot", "dx", "dy", "dz", "logE")
+@torch.no_grad()
+def build_kernel_combined_labels(E_raw: torch.Tensor, T_raw: torch.Tensor,
+                                 strat_ids: torch.Tensor, device: torch.device,
+                                 chunk: int = 100_000
+                                 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Combine per-species KERNEL labels into the recon's (E,T) input space.
+
+    `E_raw`/`T_raw` are the stored ground-truth kernel labels (raw counts / times),
+    one SINGLE-SPECIES shower per row. The recon input space is the physically
+    combined electron+muon signal — `combine_species_outputs` applied to
+    log1p(counts) / log1p(time*T_LOG_SCALE) — the same space the dual surrogate
+    emits and that `eval_true_utility.KernelDualLabels` builds at eval time.
+
+    Row layout (from build_training_pairs): rows are blocked by strategy; within
+    each strategy block the first k_sp rows are electron showers 0..k_sp-1 and the
+    next k_sp are the paired muon showers (same primary/vertex). So for global row
+    r: s = r // rows_per_strat; j = (r % rows_per_strat) % k_sp; electron row =
+    s*rows_per_strat + j, muon row = + k_sp. BOTH duplicated rows of an event map
+    to the same combined label, so the row set and the train/val split are byte
+    identical to the FNN-prediction path — only the (E,T) VALUES change (clean A/B).
+    """
+    N, n_det = E_raw.shape
+    n_strat = int(strat_ids.max().item()) + 1
+    assert N % n_strat == 0, "rows not divisible by n_strat"
+    rows_per_strat = N // n_strat
+    assert rows_per_strat % 2 == 0, "strategy block is not e/mu halves"
+    k_sp = rows_per_strat // 2
+    expected = torch.arange(n_strat).repeat_interleave(rows_per_strat)
+    assert torch.equal(strat_ids.cpu(), expected), \
+        "strategy_ids not contiguous-blocked; kernel-pairing assumption invalid"
+
+    r      = torch.arange(N)
+    s      = r // rows_per_strat
+    j      = (r % rows_per_strat) % k_sp
+    e_row  = s * rows_per_strat + j
+    mu_row = s * rows_per_strat + k_sp + j
+
+    E_comb = torch.empty((N, n_det), dtype=torch.float32)
+    T_comb = torch.empty((N, n_det), dtype=torch.float32)
+    for lo in range(0, N, chunk):
+        hi = min(lo + chunk, N)
+        er, mr = e_row[lo:hi], mu_row[lo:hi]
+        pe = torch.stack([torch.log1p(E_raw[er].to(device)),
+                          torch.log1p(T_raw[er].to(device) * T_LOG_SCALE)], dim=-1)
+        pm = torch.stack([torch.log1p(E_raw[mr].to(device)),
+                          torch.log1p(T_raw[mr].to(device) * T_LOG_SCALE)], dim=-1)
+        comb = combine_species_outputs(pe, pm)          # (b, n_det, 2)
+        E_comb[lo:hi] = comb[..., 0].cpu()
+        T_comb[lo:hi] = comb[..., 1].cpu()
+    return E_comb, T_comb
+
+
+# Per-axis log keys. 4-output = direction + energy (default, unchanged). The
+# 7-output variant additionally reconstructs the decay vertex (vE, vN, vU).
+_BASE_AXIS_KEYS = ("tot", "dx", "dy", "dz", "logE")
+
+
+def _axis_keys(output_dim: int):
+    if output_dim == 7:
+        return _BASE_AXIS_KEYS + ("vE", "vN", "vU")
+    return _BASE_AXIS_KEYS
 
 
 def _per_axis_loss(pred: torch.Tensor, tgt: torch.Tensor,
                    reduction: str = "mean"):
-    l_dx = F.mse_loss(pred[:, 0], tgt[:, 0], reduction=reduction)
-    l_dy = F.mse_loss(pred[:, 1], tgt[:, 1], reduction=reduction)
-    l_dz = F.mse_loss(pred[:, 2], tgt[:, 2], reduction=reduction)
-    l_lE = F.mse_loss(pred[:, 3], tgt[:, 3], reduction=reduction)
-    return l_dx + l_dy + l_dz + l_lE, l_dx, l_dy, l_dz, l_lE
+    """(total, per-column…) MSE, length 1 + pred.shape[1]. Generalizes from the
+    4-output (dir+E) recon to the 7-output (+vertex) recon without hardcoding."""
+    per = [F.mse_loss(pred[:, j], tgt[:, j], reduction=reduction)
+           for j in range(pred.shape[1])]
+    return (sum(per), *per)
 
 
 @torch.no_grad()
 def _validate(recon: nn.Module, loader: DataLoader, device: torch.device) -> dict:
-    sums = [0.0] * 5
+    keys = _axis_keys(recon.output_dim)
+    sums = [0.0] * len(keys)
     n = 0
     for xy_b, E_b, T_b, tgt_b in loader:
         xy_b  = xy_b .to(device, non_blocking=True)
@@ -144,7 +205,7 @@ def _validate(recon: nn.Module, loader: DataLoader, device: torch.device) -> dic
             sums[i] += v.item() * B
         n += B
     n = max(n, 1)
-    return {k: sums[i] / n for i, k in enumerate(_AXIS_KEYS)}
+    return {k: sums[i] / n for i, k in enumerate(keys)}
 
 
 def _save_ckpt(path: str,
@@ -170,7 +231,7 @@ def _save_ckpt(path: str,
             model_type="deepsets",
             hidden=HIDDEN, context=CONTEXT,
             n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
-            output_dim=4,
+            output_dim=recon.output_dim,
         ),
         **extra,
     }, path)
@@ -242,7 +303,16 @@ def main():
                     help="Override the recon output directory (default: "
                          "RECON_FOLDER + '_deepsets').  Use a round-suffixed path "
                          "(e.g. …_deepsets_r1) to keep the base recon intact.")
+    ap.add_argument("--label_source", type=str, default="fnn", choices=("fnn", "kernel"),
+                    help="Recon input (E,T) source: 'fnn' = dual-surrogate predictions "
+                         "(default, current behaviour); 'kernel' = the stored ground-truth "
+                         "kernel labels E.pt/T.pt, e+mu combined into the same space.")
+    ap.add_argument("--output_dim", type=int, default=4, choices=(4, 7),
+                    help="Recon target width: 4 = direction+energy (default); "
+                         "7 = also reconstruct the decay vertex (rel_E/N/U).")
     args = ap.parse_args()
+    label_source = args.label_source
+    output_dim   = int(args.output_dim)
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
     if args.fnn_folder:
         global FNN_FOLDER
@@ -269,17 +339,34 @@ def main():
     strat_ids = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "strategy_ids.pt")).long()
     print(f"[load] corpus in {time.time() - t0:.1f}s  primary={tuple(primary.shape)}")
 
+    # `dual` is always loaded: it produces the recon input for the FNN source and
+    # is reused by the post-hoc target-vs-pred plot.
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
 
+    # Recon input (E,T) source — the ONE variable this A/B varies (with output_dim).
     t0 = time.time()
-    E_pred, T_pred = compute_fnn_predictions(dual, primary, xy, DEVICE)
-    print(f"[dual] predictions in {time.time() - t0:.1f}s  "
-          f"E mean={E_pred.mean():.3g} std={E_pred.std():.3g}  "
-          f"T mean={T_pred.mean():.3g} std={T_pred.std():.3g}")
+    if label_source == "kernel":
+        E_raw = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
+        T_raw = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
+        E_in, T_in = build_kernel_combined_labels(E_raw, T_raw, strat_ids, DEVICE)
+        del E_raw, T_raw
+        print(f"[kernel] combined ground-truth labels in {time.time() - t0:.1f}s  "
+              f"E mean={E_in.mean():.3g} std={E_in.std():.3g}  "
+              f"T mean={T_in.mean():.3g} std={T_in.std():.3g}")
+    else:
+        E_in, T_in = compute_fnn_predictions(dual, primary, xy, DEVICE)
+        print(f"[dual] predictions in {time.time() - t0:.1f}s  "
+              f"E mean={E_in.mean():.3g} std={E_in.std():.3g}  "
+              f"T mean={T_in.mean():.3g} std={T_in.std():.3g}")
 
-    target   = primary[:, :4].clone().float()
+    # Target columns: cols 0-3 = (dir_x, dir_y, dir_z, log_e_norm) always; for the
+    # 7-output recon add the decay vertex (cols 5-7 = rel_E/N/U; col 4 = pdg is a
+    # conditioning label, not a reconstruction target).
+    tgt_cols = [0, 1, 2, 3, 5, 6, 7] if output_dim == 7 else [0, 1, 2, 3]
+    target   = primary[:, tgt_cols].clone().float()
     tgt_mean = target.mean(dim=0)
     tgt_std  = target.std(dim=0).clamp(min=1e-8)
+    print(f"[target] source={label_source} output_dim={output_dim} cols={tgt_cols}")
     print(f"[target] mean={tgt_mean.tolist()}  std={tgt_std.tolist()}")
 
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
@@ -287,12 +374,12 @@ def main():
 
     # Per-feature z-score: one scalar per feature kind, broadcast over all slots.
     in_mean = torch.stack([xy[..., 0].mean(), xy[..., 1].mean(),
-                           E_pred.mean(),      T_pred.mean()])         # (4,)
+                           E_in.mean(),        T_in.mean()])           # (4,)
     in_std  = torch.stack([xy[..., 0].std(),  xy[..., 1].std(),
-                           E_pred.std(),       T_pred.std()]).clamp(min=1e-8)
+                           E_in.std(),         T_in.std()]).clamp(min=1e-8)
     print(f"[norm] per-feat mean={in_mean.tolist()}  std={in_std.tolist()}")
 
-    full_ds  = TensorDataset(xy, E_pred, T_pred, target)
+    full_ds  = TensorDataset(xy, E_in, T_in, target)
     train_ds = Subset(full_ds, train_idx.tolist())
     val_ds   = Subset(full_ds, val_idx.tolist())
     pin = (DEVICE.type == "cuda")
@@ -303,7 +390,7 @@ def main():
 
     torch.manual_seed(SEED)
     recon = DeepSetsRecon(
-        n_det=N_DETECTORS, input_features=RECON_INPUT_FEATURES, output_dim=4,
+        n_det=N_DETECTORS, input_features=RECON_INPUT_FEATURES, output_dim=output_dim,
         hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
     ).to(DEVICE)
     recon.set_normalization(
@@ -341,7 +428,7 @@ def main():
     for epoch in range(start_epoch if not adam_done else N_EPOCHS, N_EPOCHS):
         t_epoch = time.time()
         recon.train()
-        sums = [0.0] * 5
+        sums = [0.0] * (1 + output_dim)
         n_tr = 0
         for xy_b, E_b, T_b, tgt_b in train_loader:
             xy_b  = xy_b .to(DEVICE, non_blocking=True)
@@ -362,7 +449,7 @@ def main():
                 sums[i] += v.item() * B
             n_tr += B
         n_tr = max(n_tr, 1)
-        tr = {k: sums[i] / n_tr for i, k in enumerate(_AXIS_KEYS)}
+        tr = {k: sums[i] / n_tr for i, k in enumerate(_axis_keys(output_dim))}
 
         recon.eval()
         va = _validate(recon, val_loader, DEVICE)
@@ -404,6 +491,7 @@ def main():
                     batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
                     grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
                     hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
+                    output_dim=output_dim, label_source=label_source,
                 ),
             }, f, indent=2)
         _plot_curves(log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"))
@@ -424,8 +512,8 @@ def main():
 
     # Pre-stack full training set as (N_train, n_det, 4) on GPU.
     xy_train  = xy[train_idx].to(DEVICE)
-    E_train   = E_pred[train_idx].to(DEVICE)
-    T_train   = T_pred[train_idx].to(DEVICE)
+    E_train   = E_in[train_idx].to(DEVICE)
+    T_train   = T_in[train_idx].to(DEVICE)
     tgt_train = target[train_idx].to(DEVICE)
     inp_all   = torch.stack([xy_train[..., 0], xy_train[..., 1],
                              E_train, T_train], dim=-1)    # (N_train, n_det, 4)
@@ -449,7 +537,7 @@ def main():
     def closure():
         nonlocal lbfgs_best_val, lbfgs_best_iter
         lbfgs_optimizer.zero_grad()
-        sums = [0.0] * 5
+        sums = [0.0] * (1 + output_dim)
         for lo in range(0, N_train, LBFGS_CHUNK):
             hi = min(lo + LBFGS_CHUNK, N_train)
             losses = _per_axis_loss(recon(inp_all[lo:hi]),
@@ -457,7 +545,7 @@ def main():
             (losses[0] / N_train).backward()
             for i, v in enumerate(losses):
                 sums[i] += v.item()
-        tr = {k: sums[i] / N_train for i, k in enumerate(_AXIS_KEYS)}
+        tr = {k: sums[i] / N_train for i, k in enumerate(_axis_keys(output_dim))}
         va = _validate(recon, val_loader, DEVICE)
 
         it = len(lbfgs_iter_log)
@@ -527,6 +615,7 @@ def main():
                 lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
                 hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
+                output_dim=output_dim, label_source=label_source,
             ),
         }, f, indent=2)
     _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"),

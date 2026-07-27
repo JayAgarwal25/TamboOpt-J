@@ -139,6 +139,10 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--grid-layout", action="store_true",
                     help="use grid layout as baseline")
+    ap.add_argument("--recon_dir", type=str, default=None,
+                    help="Recon checkpoint directory to score (default: "
+                         "constants RECON_FOLDER + '_deepsets'). Point at a "
+                         "C0/T1/T2 experiment recon to compare them on one layout.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
@@ -159,7 +163,7 @@ def main():
     print(f"events      : {B} of {n_pairs} pairs")
     kernel_fnn = KernelDualLabels(elec, muon, surface, device)
 
-    fnn, recon = load_models(device)
+    fnn, recon = load_models(device, recon_dir=args.recon_dir)
     prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
 
     e_o, n_o = load_layout(mountain)

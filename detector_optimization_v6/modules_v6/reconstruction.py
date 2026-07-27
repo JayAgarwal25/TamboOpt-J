@@ -159,6 +159,7 @@ def build_recon_from_ckpt(ckpt: dict, n_det: int, device=None):
         model = DeepSetsRecon(
             n_det=n_det_ckpt,
             input_features=input_features,
+            output_dim=int(cfg.get("output_dim", 4)),
             hidden=int(cfg.get("hidden", 256)),
             context=int(cfg.get("context", 128)),
             n_enc=int(cfg.get("n_enc", 3)),
@@ -169,6 +170,7 @@ def build_recon_from_ckpt(ckpt: dict, n_det: int, device=None):
         model = Reconstruction(
             n_det=n_det_ckpt,
             input_features=input_features,
+            output_dim=int(cfg.get("output_dim", 4)),
             hidden=int(cfg.get("hidden", 512)),
             dropout=float(cfg.get("dropout", 0.1)),
         )
