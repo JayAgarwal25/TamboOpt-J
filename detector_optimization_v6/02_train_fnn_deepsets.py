@@ -79,6 +79,13 @@ DS_N_ENC    = 3
 DS_N_DEC    = 3
 DS_DROPOUT  = 0.0
 
+# Mean/variance warm-start: the NLL objective's closed-form optimum for a
+# fixed residual r is var=r^2, so an undertrained mean gets "explained away"
+# by inflated variance instead of actually improving (Kendall & Gal 2017).
+# Train the mean alone with plain MSE for the first fraction of Adam epochs,
+# THEN switch to full Gaussian NLL once the mean has somewhere to start from.
+NLL_WARMUP_FRAC = 0.3
+
 # ── L-BFGS fine-tuning (full-batch, chunked closure) ─────────────
 LBFGS_LR            = 1.0
 LBFGS_MAX_ITER      = 1000
@@ -128,6 +135,24 @@ def permute_detectors_batch(xy: torch.Tensor,
     T_p  = torch.gather(T,  1, perms)
     return xy_p, E_p, T_p
     
+
+def mse_mean_only(mean_raw, E_tgt, T_tgt, out_mean, out_std):
+    """Plain z-scored MSE on the mean channel, ignoring variance entirely.
+
+    Used only during the warm-start phase (NLL_WARMUP_FRAC): the variance
+    head's weights get zero gradient here since they don't appear in this
+    loss, so warm-start only shapes the mean branch. Same (total, E, T)
+    shape as gaussian_nll_normalized so callers don't need to branch on it.
+    """
+    mean_flat   = torch.cat([mean_raw[..., 0], mean_raw[..., 1]], dim=1)
+    target_flat = torch.cat([E_tgt, T_tgt], dim=1)
+    mean_n   = (mean_flat   - out_mean) / out_std
+    target_n = (target_flat - out_mean) / out_std
+    n = E_tgt.shape[1]
+    mse_E = F.mse_loss(mean_n[:, :n], target_n[:, :n])
+    mse_T = F.mse_loss(mean_n[:, n:], target_n[:, n:])
+    return 0.5 * (mse_E + mse_T), mse_E, mse_T
+
 
 def gaussian_nll_normalized(mean_raw, logvar_z, E_tgt, T_tgt, out_mean, out_std):
     """Gaussian NLL in the z-score space the model normalizes to.
@@ -293,8 +318,18 @@ def train_species(tag:        str,
     best_val   = float("inf")
     best_epoch = -1
 
+    # Warm-start: mean-only MSE for the first fraction of Adam epochs, then
+    # full Gaussian NLL. Clamp so at least one post-warmup epoch always runs
+    # (else Phase 2 below would try to load a checkpoint that was never saved).
+    n_warmup_epochs = min(int(round(NLL_WARMUP_FRAC * n_epochs)), max(0, n_epochs - 1))
+    print(f"[{tag}] NLL warm-start: {n_warmup_epochs} mean-only epochs, "
+          f"then {n_epochs - n_warmup_epochs} full-NLL epochs")
+
     # ── Phase 1: Adam (no permutation augmentation) ──────────────────────
     for epoch in range(n_epochs):
+        is_warmup = epoch < n_warmup_epochs
+        if epoch == n_warmup_epochs and n_warmup_epochs > 0:
+            print(f"[{tag}] warm-start done — switching to full Gaussian NLL")
         t_epoch = time.time()
         model.train()
         tr_tot, tr_E, tr_T, n_tr = 0.0, 0.0, 0.0, 0
@@ -308,9 +343,14 @@ def train_species(tag:        str,
             xy_b, E_b, T_b = permute_detectors_batch(xy_b, E_b, T_b)
 
             mean_pred, logvar_pred = model.forward_dist(p_b, xy_b)   # (B,100,2), (B,100,2)
-            loss, mE, mT = gaussian_nll_normalized(
-                mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
-            )
+            if is_warmup:
+                loss, mE, mT = mse_mean_only(
+                    mean_pred, E_b, T_b, model.out_mean, model.out_std,
+                )
+            else:
+                loss, mE, mT = gaussian_nll_normalized(
+                    mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
+                )
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -336,9 +376,14 @@ def train_species(tag:        str,
                 E_b  = E_b.to(DEVICE, non_blocking=True)
                 T_b  = T_b.to(DEVICE, non_blocking=True)
                 mean_pred, logvar_pred = model.forward_dist(p_b, xy_b)
-                loss, mE, mT = gaussian_nll_normalized(
-                    mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
-                )
+                if is_warmup:
+                    loss, mE, mT = mse_mean_only(
+                        mean_pred, E_b, T_b, model.out_mean, model.out_std,
+                    )
+                else:
+                    loss, mE, mT = gaussian_nll_normalized(
+                        mean_pred, logvar_pred, E_b, T_b, model.out_mean, model.out_std,
+                    )
                 B = p_b.shape[0]
                 va_tot += loss.item() * B
                 va_E   += mE.item()   * B
@@ -350,18 +395,22 @@ def train_species(tag:        str,
 
         dt = time.time() - t_epoch
         lr_now = optimizer.param_groups[0]["lr"]
-        print(f"[{tag} epoch {epoch+1:3d}/{n_epochs}] "
+        phase_tag = "warmup-mse" if is_warmup else "nll"
+        print(f"[{tag} epoch {epoch+1:3d}/{n_epochs}] ({phase_tag}) "
               f"train={tr_tot:.4f} (E={tr_E:.4f} T={tr_T:.4f})  "
               f"val={va_tot:.4f} (E={va_E:.4f} T={va_T:.4f})  "
               f"lr={lr_now:.1e}  {dt:.1f}s")
         log.append(dict(
-            epoch=epoch + 1,
+            epoch=epoch + 1, phase=phase_tag,
             train=tr_tot, train_E=tr_E, train_T=tr_T,
             val=va_tot,   val_E=va_E,   val_T=va_T,
             lr=lr_now, dt=dt,
         ))
 
-        if va_tot < best_val - 1e-5:
+        # Warmup losses (plain MSE) and NLL losses live on different scales —
+        # never compare them, and never checkpoint a warmup-only model (its
+        # variance head hasn't been trained yet).
+        if not is_warmup and va_tot < best_val - 1e-5:
             best_val   = va_tot
             best_epoch = epoch + 1
             torch.save({
