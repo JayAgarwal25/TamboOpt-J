@@ -220,7 +220,10 @@ def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
     c = det_counts(E, log1p_space=log1p_space)
     live, over = c > 0.001, c > layout_threshold
 
-    ax.scatter(ds[~live], du[~live], s=14, c="0.55", marker="x", lw=0.9, zorder=2,
+    # "dimgray" rather than a mid gray value: needs to read as clearly distinct
+    # from the mountain's light neutral background, not just a darker shade of
+    # the same gray family.
+    ax.scatter(ds[~live], du[~live], s=14, c="dimgray", marker="x", lw=0.9, zorder=2,
                label="no signal" if legend else None)
     sc = None
     if live.any():
