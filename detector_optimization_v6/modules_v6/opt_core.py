@@ -91,18 +91,14 @@ def utility_of_xy(x_det: torch.Tensor,
     xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
     xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
 
-    # Uncertainty-aware recon input: a fresh stochastic draw from the
-    # surrogate's predicted (mean, var) distribution each call, not the mean
-    # point estimate — recon/the optimizer see the learned aleatoric spread
-    # directly instead of a smoothed-out average. Reparameterized, so the
-    # gradient into (x_det, y_det) still flows through mean and var alike.
-    # Callers without a variance head (e.g. eval_true_utility.py's
-    # kernel-label stand-in, which IS ground truth — nothing to sample)
-    # fall back to the plain point value.
-    if hasattr(fnn, "forward_sample"):
-        pred_ET = fnn.forward_sample(primary_batch, xy_batch)              # (B, n_det, 2)
-    else:
-        pred_ET = fnn(primary_batch, xy_batch)
+    # Deterministic mean prediction. The layout optimizers (Adam warm-start's
+    # argmax-over-epochs best-tracking, L-BFGS's strong_wolfe line search, DE's
+    # fitness comparison) all select on this value, so a fresh stochastic
+    # sample per call would let them cherry-pick lucky noise draws instead of
+    # real improvement — verified: every Adam chain's "best" collapsed by a
+    # uniform ~10 points once refined/re-evaluated when this called
+    # forward_sample(). Sampling stays confined to stage 3 (recon training).
+    pred_ET = fnn(primary_batch, xy_batch)
     E_pred_det = pred_ET[..., 0]
     T_pred_det = pred_ET[..., 1]
 
