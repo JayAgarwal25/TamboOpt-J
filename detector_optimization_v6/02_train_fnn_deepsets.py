@@ -86,6 +86,17 @@ DS_DROPOUT  = 0.0
 # THEN switch to full Gaussian NLL once the mean has somewhere to start from.
 NLL_WARMUP_FRAC = 0.3
 
+# beta-NLL (Seitzer et al. 2022): even with the warm-start above, plain NLL
+# can still collapse variance toward zero during the NLL phase itself, since
+# shrinking sigma on an already-well-fit TRAIN point directly rewards the
+# 0.5*log(var) term with no floor. Observed empirically before this fix:
+# train NLL slid monotonically more negative every epoch while val NLL (esp.
+# the E channel) climbed positive and increasingly erratic -- the model was
+# getting confidently wrong, not converging. Weighting each term by
+# var.detach()**NLL_BETA counteracts this (0 = plain NLL, 1 = fully
+# de-weighted; 0.5 is the paper's commonly-used middle ground).
+NLL_BETA = 0.5
+
 # ── L-BFGS fine-tuning (full-batch, chunked closure) ─────────────
 LBFGS_LR            = 1.0
 LBFGS_MAX_ITER      = 1000
@@ -155,7 +166,13 @@ def mse_mean_only(mean_raw, E_tgt, T_tgt, out_mean, out_std):
 
 
 def gaussian_nll_normalized(mean_raw, logvar_z, E_tgt, T_tgt, out_mean, out_std):
-    """Gaussian NLL in the z-score space the model normalizes to.
+    """beta-NLL (Seitzer et al. 2022) in the z-score space the model
+    normalizes to: each element's NLL is weighted by var.detach()**NLL_BETA,
+    which counteracts variance collapsing toward zero purely to reward the
+    log(var) term on already-well-fit training points (see NLL_BETA's
+    comment for the empirical symptom this fixes). detach() keeps the
+    weighting itself out of the gradient — it only rescales, it isn't
+    something to differentiate through.
 
     mean_raw is unnormalized (same units as E_tgt/T_tgt); re-normalizing it
     here (rather than trusting it already equals the model's internal mu_z)
@@ -173,6 +190,7 @@ def gaussian_nll_normalized(mean_raw, logvar_z, E_tgt, T_tgt, out_mean, out_std)
     n = E_tgt.shape[1]
 
     nll = 0.5 * (target_n - mean_n) ** 2 / var + 0.5 * logvar_flat
+    nll = nll * var.detach() ** NLL_BETA
     nll_E = nll[:, :n].mean()
     nll_T = nll[:, n:].mean()
     return 0.5 * (nll_E + nll_T), nll_E, nll_T
