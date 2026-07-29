@@ -99,7 +99,14 @@ def utility_of_xy(x_det: torch.Tensor,
     xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
     xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
 
-    pred_ET    = fnn(primary_batch, xy_batch)                              # (B, n_det, 2)
+    # Deterministic mean prediction. The layout optimizers (Adam warm-start's
+    # argmax-over-epochs best-tracking, L-BFGS's strong_wolfe line search, DE's
+    # fitness comparison) all select on this value, so a fresh stochastic
+    # sample per call would let them cherry-pick lucky noise draws instead of
+    # real improvement — verified: every Adam chain's "best" collapsed by a
+    # uniform ~10 points once refined/re-evaluated when this called
+    # forward_sample(). Sampling stays confined to stage 3 (recon training).
+    pred_ET = fnn(primary_batch, xy_batch)
     E_pred_det = pred_ET[..., 0]
     T_pred_det = pred_ET[..., 1]
 
@@ -191,7 +198,9 @@ def load_models(device, fnn_folder=None, recon_dir=None):
     The dual wrapper combines fnn_electron.pt + fnn_muon.pt per event (frozen,
     eval); gradients flow through both branches. `build_recon_from_ckpt` loads
     whichever recon the checkpoint declares (DeepSets here, consuming
-    (B, n_det, 4) per-detector features), applies its normalization, and freezes
+    (B, n_det, 4) per-detector features: x, y, and a stochastic sample of
+    E/T drawn from the surrogate's predicted distribution), applies its
+    normalization, and freezes
     it. Defaults: FNN_FOLDER and RECON_FOLDER + "_deepsets"."""
     fnn_folder = fnn_folder or FNN_FOLDER
     recon_dir  = recon_dir  or (RECON_FOLDER + "_deepsets")

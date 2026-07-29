@@ -9,6 +9,15 @@ Architecture:
     c       = context_proj(cat[mean h_i, max h_i])  invariant pool (maxmean)
     out     = decoder(c)            → [dir_x, dir_y, dir_z, log_e_norm]
 
+E_comb/T_comb default to a stochastic SAMPLE drawn from the stage-2
+heteroscedastic surrogate's predicted (mean, var) distribution
+(DualSpeciesSurrogate.forward_sample), not the mean point estimate — recon
+trains on the surrogate's learned aleatoric spread directly instead of a
+smoothed average. Two flags override that source: --label_source kernel reads
+the on-disk kernel labels instead, and --noise_scale>0 falls back to the
+surrogate MEAN and injects its own measured (kernel−surrogate) residual noise,
+so exactly one noise model is ever in play.
+
 Normalization: in_mean/in_std are (4,) — one scalar per feature kind,
 broadcast over all detector slots. Output stats are (4,) like the flat MLP.
 
@@ -70,7 +79,9 @@ LBFGS_HISTORY_SIZE = 20
 LBFGS_CHUNK        = 4_096
 RESUME_CKPT_INTERVAL = 25   # save a rolling resume checkpoint every N Adam epochs
 
-RECON_INPUT_FEATURES = 4   # (x, y, E, T) per detector
+RECON_INPUT_FEATURES = 4   # (x, y, E, T) per detector — E, T are a stochastic
+                            # sample from the stage-2 surrogate's predicted
+                            # distribution, not the mean point estimate.
 
 
 def shower_level_split(strategy_ids: torch.Tensor,
@@ -100,17 +111,30 @@ def compute_fnn_predictions(model: nn.Module,
                              primary: torch.Tensor,
                              xy:      torch.Tensor,
                              device:  torch.device,
-                             batch_size: int = 1024
+                             batch_size: int = 1024,
+                             sample:  bool = True,
                              ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Run dual surrogate forward on the whole corpus. Returns CPU tensors."""
+    """Run the dual surrogate over the whole corpus. Returns CPU tensors.
+
+    `sample=True` draws one stochastic realization per row from the predicted
+    (mean, var) distribution. Sampled once here and reused for every epoch --
+    the same "one fixed realization per (primary, layout) row" convention the
+    real kernel-labeled corpus already uses, not a fresh draw every epoch.
+
+    `sample=False` returns the mean point estimate. Required when the caller
+    supplies its own noise model (`--noise_scale`), whose residual statistics
+    are measured against the MEAN; sampling here as well would stack two
+    independent noise sources on the same rows."""
     model.eval()
     N = int(primary.shape[0])
     E_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
     T_pred = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    forward_fn = model.forward_sample if sample else model.forward
     for lo in range(0, N, batch_size):
         hi = min(lo + batch_size, N)
-        pred = model(primary[lo:hi].to(device, non_blocking=True),
-                     xy[lo:hi].to(device, non_blocking=True))   # (B, 100, 2)
+        pred = forward_fn(
+            primary[lo:hi].to(device, non_blocking=True),
+            xy[lo:hi].to(device, non_blocking=True))            # (B, 100, 2)
         E_pred[lo:hi] = pred[..., 0].cpu()
         T_pred[lo:hi] = pred[..., 1].cpu()
     return E_pred, T_pred
@@ -384,8 +408,14 @@ def main():
               f"E mean={E_in.mean():.3g} std={E_in.std():.3g}  "
               f"T mean={T_in.mean():.3g} std={T_in.std():.3g}")
     else:
-        E_in, T_in = compute_fnn_predictions(dual, primary, xy, DEVICE)
-        print(f"[dual] predictions in {time.time() - t0:.1f}s  "
+        # An explicit --noise_scale model supplies the spread itself, measured
+        # against the mean, so don't also draw from the surrogate's own
+        # distribution here (that would stack two noise sources).
+        draw_sample = noise_scale <= 0.0
+        E_in, T_in = compute_fnn_predictions(dual, primary, xy, DEVICE,
+                                             sample=draw_sample)
+        kind = "sampled" if draw_sample else "mean"
+        print(f"[dual] {kind} predictions in {time.time() - t0:.1f}s  "
               f"E mean={E_in.mean():.3g} std={E_in.std():.3g}  "
               f"T mean={T_in.mean():.3g} std={T_in.std():.3g}")
 
