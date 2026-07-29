@@ -180,16 +180,24 @@ def _axis_keys(output_dim: int):
 
 
 def _per_axis_loss(pred: torch.Tensor, tgt: torch.Tensor,
-                   reduction: str = "mean"):
+                   reduction: str = "mean", std: torch.Tensor = None):
     """(total, per-column…) MSE, length 1 + pred.shape[1]. Generalizes from the
-    4-output (dir+E) recon to the 7-output (+vertex) recon without hardcoding."""
+    4-output (dir+E) recon to the 7-output (+vertex) recon without hardcoding.
+
+    `std` (per-axis, shape (D,)): if given, the MSE is computed in z-scored space
+    (pred/std, tgt/std) so axes on very different physical scales — e.g. the
+    metre-scale vertex vs the O(1) direction — contribute comparably."""
+    if std is not None:
+        pred = pred / std
+        tgt  = tgt / std
     per = [F.mse_loss(pred[:, j], tgt[:, j], reduction=reduction)
            for j in range(pred.shape[1])]
     return (sum(per), *per)
 
 
 @torch.no_grad()
-def _validate(recon: nn.Module, loader: DataLoader, device: torch.device) -> dict:
+def _validate(recon: nn.Module, loader: DataLoader, device: torch.device,
+              std: torch.Tensor = None) -> dict:
     keys = _axis_keys(recon.output_dim)
     sums = [0.0] * len(keys)
     n = 0
@@ -199,7 +207,7 @@ def _validate(recon: nn.Module, loader: DataLoader, device: torch.device) -> dic
         T_b   = T_b  .to(device, non_blocking=True)
         tgt_b = tgt_b.to(device, non_blocking=True)
         inp   = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
-        losses = _per_axis_loss(recon(inp), tgt_b)
+        losses = _per_axis_loss(recon(inp), tgt_b, std=std)
         B = xy_b.shape[0]
         for i, v in enumerate(losses):
             sums[i] += v.item() * B
@@ -310,9 +318,31 @@ def main():
     ap.add_argument("--output_dim", type=int, default=4, choices=(4, 7),
                     help="Recon target width: 4 = direction+energy (default); "
                          "7 = also reconstruct the decay vertex (rel_E/N/U).")
+    ap.add_argument("--noise_scale", type=float, default=0.0,
+                    help="Noise augmentation amplitude (fnn source only). 0 = off "
+                         "(= C0). >0 adds fresh noise to the FNN means each batch so "
+                         "the recon becomes robust to the real (kernel) shower "
+                         "fluctuations it meets at deployment; scales the residual.")
+    ap.add_argument("--noise_mode", type=str, default="gaussian",
+                    choices=("gaussian", "bootstrap"),
+                    help="Noise model when noise_scale>0. 'gaussian': per-detector "
+                         "Gaussian, std from the (kernel-FNN) residual (independent "
+                         "across detectors). 'bootstrap': resample a WHOLE real "
+                         "residual row (preserves cross-detector + E-T correlations "
+                         "and tails), stratified by shower brightness. Bootstrap is "
+                         "the physically honest arm; gaussian is the amplitude sweep.")
+    ap.add_argument("--normalize_loss", action="store_true",
+                    help="Compute the per-axis MSE in z-scored (normalized) space so "
+                         "every output axis contributes comparably. Needed for the "
+                         "7-output recon, where the metre-scale vertex target otherwise "
+                         "dominates the raw-space loss and starves direction/energy. "
+                         "Default off keeps the 4-output runs byte-identical.")
     args = ap.parse_args()
-    label_source = args.label_source
-    output_dim   = int(args.output_dim)
+    label_source   = args.label_source
+    output_dim     = int(args.output_dim)
+    noise_scale    = float(args.noise_scale)
+    noise_mode     = args.noise_mode
+    normalize_loss = bool(args.normalize_loss)
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
     if args.fnn_folder:
         global FNN_FOLDER
@@ -372,6 +402,45 @@ def main():
     train_idx, val_idx = shower_level_split(strat_ids, VAL_FRAC, SEED)
     print(f"[split] train={len(train_idx)}  val={len(val_idx)}")
 
+    # ── Noise augmentation (fnn source only) ──────────────────────────────────
+    # `noise_sigma_*` (gaussian) or `R_E/R_T`+`stratum_pool` (bootstrap) are built
+    # from the real (kernel - FNN) residual, the exact train->deploy input shift.
+    # Selection/validation then uses the KERNEL labels (the deployment condition),
+    # not the clean means.  All tensors CPU; small per-batch slices move to device.
+    noise_on      = noise_scale > 0.0
+    noise_sigma_E = noise_sigma_T = None        # gaussian
+    R_E = R_T = None                            # bootstrap residual bank (N, n_det) CPU
+    stratum_pool  = None                        # list[S] of CPU LongTensors of train rows
+    row_stratum   = torch.zeros(int(E_in.shape[0]), dtype=torch.long)   # dataset column
+    E_ker = T_ker = None                        # kept for kernel-val when noise_on
+    if noise_on:
+        if label_source != "fnn":
+            raise SystemExit("--noise_scale is only valid with --label_source fnn")
+        E_raw = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "E.pt")).float()
+        T_raw = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "T.pt")).float()
+        E_ker, T_ker = build_kernel_combined_labels(E_raw, T_raw, strat_ids, DEVICE)
+        del E_raw, T_raw
+        resid_E = E_ker - E_in                  # (N, n_det) CPU
+        resid_T = T_ker - T_in
+        if noise_mode == "gaussian":
+            noise_sigma_E = resid_E.std(dim=0).clamp(min=1e-8).to(DEVICE)   # (n_det,)
+            noise_sigma_T = resid_T.std(dim=0).clamp(min=1e-8).to(DEVICE)
+            print(f"[noise] gaussian scale={noise_scale}  per-det residual std "
+                  f"E mean={noise_sigma_E.mean():.3g}  T mean={noise_sigma_T.mean():.3g}")
+        else:  # bootstrap: whole real residual rows, stratified by FNN-mean brightness
+            R_E, R_T = resid_E, resid_T                                   # CPU banks
+            brightness = E_in.sum(dim=1)                                  # (N,)
+            S = 8
+            edges = torch.quantile(brightness[train_idx].double(),
+                                   torch.linspace(0, 1, S + 1).double())
+            row_stratum = torch.bucketize(brightness, edges[1:-1].to(brightness.dtype))
+            stratum_pool = [train_idx[row_stratum[train_idx] == s] for s in range(S)]
+            # A stratum with no train rows can't be sampled; fold it into the global pool.
+            stratum_pool = [p if len(p) > 0 else train_idx for p in stratum_pool]
+            print(f"[noise] bootstrap scale={noise_scale}  S={S} strata  "
+                  f"pool sizes={[int(len(p)) for p in stratum_pool]}")
+        del resid_E, resid_T
+
     # Per-feature z-score: one scalar per feature kind, broadcast over all slots.
     in_mean = torch.stack([xy[..., 0].mean(), xy[..., 1].mean(),
                            E_in.mean(),        T_in.mean()])           # (4,)
@@ -379,9 +448,16 @@ def main():
                            E_in.std(),         T_in.std()]).clamp(min=1e-8)
     print(f"[norm] per-feat mean={in_mean.tolist()}  std={in_std.tolist()}")
 
-    full_ds  = TensorDataset(xy, E_in, T_in, target)
-    train_ds = Subset(full_ds, train_idx.tolist())
-    val_ds   = Subset(full_ds, val_idx.tolist())
+    # Train set carries a per-row stratum column (0 when not bootstrap). Validation
+    # uses KERNEL labels when noise_on (deployment condition drives checkpoint pick).
+    train_full = TensorDataset(xy, E_in, T_in, target, row_stratum)
+    train_ds   = Subset(train_full, train_idx.tolist())
+    if noise_on:
+        val_full = TensorDataset(xy, E_ker, T_ker, target)
+        print("[val] selecting/validating on KERNEL labels (deployment condition)")
+    else:
+        val_full = TensorDataset(xy, E_in, T_in, target)
+    val_ds = Subset(val_full, val_idx.tolist())
     pin = (DEVICE.type == "cuda")
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
                               num_workers=NUM_WORKERS, pin_memory=pin)
@@ -401,6 +477,12 @@ def main():
     )
     n_params = sum(p.numel() for p in recon.parameters() if p.requires_grad)
     print(f"[model] DeepSetsRecon  params={n_params:,}")
+
+    # Per-axis z-scored loss (balances physical scales) when --normalize_loss.
+    # recon.out_std == tgt_std, set above.
+    loss_std = recon.out_std if normalize_loss else None
+    if normalize_loss:
+        print(f"[loss] normalized per-axis MSE; out_std={recon.out_std.tolist()}")
 
     optimizer = torch.optim.Adam(recon.parameters(), lr=LR)
 
@@ -430,14 +512,32 @@ def main():
         recon.train()
         sums = [0.0] * (1 + output_dim)
         n_tr = 0
-        for xy_b, E_b, T_b, tgt_b in train_loader:
+        for xy_b, E_b, T_b, tgt_b, strat_b in train_loader:
             xy_b  = xy_b .to(DEVICE, non_blocking=True)
             E_b   = E_b  .to(DEVICE, non_blocking=True)
             T_b   = T_b  .to(DEVICE, non_blocking=True)
             tgt_b = tgt_b.to(DEVICE, non_blocking=True)
 
+            # Noise augmentation (train only): FRESH noise per batch so the recon
+            # sees many noisy realizations of each mean, not one fixed sample (that
+            # is what T1 memorized). gaussian = per-detector; bootstrap = a whole
+            # real residual row (keeps cross-detector/E-T correlation), stratified.
+            if noise_on and noise_mode == "gaussian":
+                E_b = (E_b + noise_scale * noise_sigma_E * torch.randn_like(E_b)).clamp(min=0.0)
+                T_b = (T_b + noise_scale * noise_sigma_T * torch.randn_like(T_b)).clamp(min=0.0)
+            elif noise_on:  # bootstrap
+                pick = torch.empty(strat_b.shape[0], dtype=torch.long)
+                for s in range(len(stratum_pool)):
+                    m = (strat_b == s)
+                    k = int(m.sum())
+                    if k:
+                        pool = stratum_pool[s]
+                        pick[m] = pool[torch.randint(len(pool), (k,))]
+                E_b = (E_b + noise_scale * R_E[pick].to(DEVICE)).clamp(min=0.0)
+                T_b = (T_b + noise_scale * R_T[pick].to(DEVICE)).clamp(min=0.0)
+
             inp    = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)
-            losses = _per_axis_loss(recon(inp), tgt_b)
+            losses = _per_axis_loss(recon(inp), tgt_b, std=loss_std)
 
             optimizer.zero_grad(set_to_none=True)
             losses[0].backward()
@@ -452,7 +552,7 @@ def main():
         tr = {k: sums[i] / n_tr for i, k in enumerate(_axis_keys(output_dim))}
 
         recon.eval()
-        va = _validate(recon, val_loader, DEVICE)
+        va = _validate(recon, val_loader, DEVICE, std=loss_std)
 
         dt = time.time() - t_epoch
         print(f"[epoch {epoch+1:3d}/{N_EPOCHS}] "
@@ -491,12 +591,21 @@ def main():
                     batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
                     grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
                     hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
-                    output_dim=output_dim, label_source=label_source,
+                    output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss,
                 ),
             }, f, indent=2)
         _plot_curves(log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"))
         print(f"[adam done] best val {best_val:.4f} at epoch {best_epoch}")
         torch.save({"adam_done": True}, resume_path)
+
+    if noise_on:
+        # Noise-aug runs SKIP L-BFGS: a single fixed-noise full-batch L-BFGS would
+        # minimize the T1 "one fixed realization" objective and could undo the
+        # fresh-noise robustness. recon.pt (best on kernel-val) is the final model.
+        print("[noise] skipping L-BFGS fine-tuning for the noise-augmented run.")
+        print(f"[done] best recon (kernel-val) {best_val:.4f} at epoch {best_epoch}"
+              f"  -> {OUTPUT_FOLDER}")
+        return
 
     # ── Phase 2: L-BFGS fine-tuning ─────────────────────────────────────────
     print("\n" + "=" * 72)
@@ -515,6 +624,7 @@ def main():
     E_train   = E_in[train_idx].to(DEVICE)
     T_train   = T_in[train_idx].to(DEVICE)
     tgt_train = target[train_idx].to(DEVICE)
+    # (L-BFGS only runs for non-noise-aug runs; noise-aug returned above.)
     inp_all   = torch.stack([xy_train[..., 0], xy_train[..., 1],
                              E_train, T_train], dim=-1)    # (N_train, n_det, 4)
     del xy_train, E_train, T_train
@@ -541,12 +651,12 @@ def main():
         for lo in range(0, N_train, LBFGS_CHUNK):
             hi = min(lo + LBFGS_CHUNK, N_train)
             losses = _per_axis_loss(recon(inp_all[lo:hi]),
-                                    tgt_train[lo:hi], reduction="sum")
+                                    tgt_train[lo:hi], reduction="sum", std=loss_std)
             (losses[0] / N_train).backward()
             for i, v in enumerate(losses):
                 sums[i] += v.item()
         tr = {k: sums[i] / N_train for i, k in enumerate(_axis_keys(output_dim))}
-        va = _validate(recon, val_loader, DEVICE)
+        va = _validate(recon, val_loader, DEVICE, std=loss_std)
 
         it = len(lbfgs_iter_log)
         lbfgs_iter_log.append(dict(
@@ -615,7 +725,7 @@ def main():
                 lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
                 hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
-                output_dim=output_dim, label_source=label_source,
+                output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss,
             ),
         }, f, indent=2)
     _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"),

@@ -143,7 +143,13 @@ def main():
                     help="Recon checkpoint directory to score (default: "
                          "constants RECON_FOLDER + '_deepsets'). Point at a "
                          "C0/T1/T2 experiment recon to compare them on one layout.")
+    ap.add_argument("--layout", type=str, default=None,
+                    help="Path to the OPTIMIZED layout_best.pt to score against the "
+                         "baseline (default: the constants full_corpus_grid layout).")
     args = ap.parse_args()
+    if args.layout:
+        global LAYOUT_PATH
+        LAYOUT_PATH = args.layout
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
