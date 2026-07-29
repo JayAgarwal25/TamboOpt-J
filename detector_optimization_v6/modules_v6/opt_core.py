@@ -45,6 +45,23 @@ W_DIV   = 1e3
 LAYOUT_THRESHOLD      = 5e-2
 RECONSTRUCT_THRESHOLD = 10.0
 
+# Soft caps on the per-event 1/(err^2 + eps) reward, sized from the measured
+# reward distribution on the trained nets (20k events, grid layout) rather than
+# from the eps ceiling alone. Rule: keep the cap well above the term's MEDIAN
+# reward so the bulk still discriminates, low enough to pull in the tail.
+#
+#   term   median  hard ceiling  top-5% share of U   -> with cap below
+#   theta   218      1000            14.5%              10.3%
+#   phi       7.8    1000            49.2%              14.1%
+#   E        27.6     100            12.9%               9.3%
+#
+# phi is the genuinely concentrated one (the recon is poor at phi: median error
+# 0.36 rad), so it gets a much tighter cap; its median is far below 50 so the
+# bulk is untouched. theta/phi share U_angle but need different caps.
+CAP_THETA = 500.0
+CAP_PHI   = 50.0
+CAP_E     = 50.0
+
 # GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
 # the configured mesh, else the absolute path) and re-exported here for callers
 # (04 DE / DE-pop) that import it from opt_core.
@@ -117,9 +134,9 @@ def utility_of_xy(x_det: torch.Tensor,
         layout_threshold=LAYOUT_THRESHOLD,
         reconstruct_threshold=RECONSTRUCT_THRESHOLD,
     )
-    u_theta = U_angle(theta_pred, theta_true, r)
-    u_phi   = U_angle(phi_pred,   phi_true,   r)
-    u_e     = U_E    (E_pred_phys, E_true,    r)
+    u_theta = U_angle(theta_pred, theta_true, r, cap=CAP_THETA)
+    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI)
+    u_e     = U_E    (E_pred_phys, E_true,    r, cap=CAP_E)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
     return U, r, dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV, u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)
