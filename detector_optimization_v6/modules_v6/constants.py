@@ -53,7 +53,7 @@ AZIMUTH_MIN  = 0.0   # degrees
 AZIMUTH_MAX  = 360.0 # degrees
 
 
-RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/06_100k_primaires_meanvar"
+RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/07_750k_primaires_meanvar"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
@@ -68,10 +68,25 @@ TRAIN_FRACTION = 1.00
 # represented. 1.0 is ~501 GB dense and OOMs at --mem=100g.
 DATASET_FRACTION = 1.00
 
-# NUM_SHOWERS = 5_000_000 / 500_000 / 1_000 / 100
-NUM_SHOWERS = 100_000
+# Descriptive only (also the synthetic-primaries fallback count in Step 0).
+# With USE_TAU_PRIMARIES the real event count comes from tau_wholesky_n750k.h5
+# (~751,931 surviving events) minus the HOLDOUT_FRAC reserve below; Step 1's
+# MAX_SHOWERS no longer derives from this (see 01_build_dataset_northeast.py),
+# so an approximate value here can't silently truncate the corpus.
+NUM_SHOWERS = 750_000
 BATCH_SIZE  = 60
 BATCH_SIZE_TRAIN  = 20
+
+# ── Held-out final-eval reserve ───────────────────────────────────────────────
+# A fixed fraction of PHYSICAL EVENTS, split off in Step 0 before generation and
+# written to its own corpus file/sidecars. Steps 1-4 (all FNN/recon train+val
+# splits and the stage-4 layout optimizer) only ever read the main corpus below;
+# this reserve is exclusively for eval_true_utility.py's final scoring, so a
+# layout is never evaluated on the same events used to fit it or train the
+# surrogate/recon. Independent seed — unrelated to FNN's (seed 0) or recon's
+# (seed 1) own val splits, which stay internal to the main (non-holdout) pool.
+HOLDOUT_FRAC = 0.05
+HOLDOUT_SEED = 999
 
 # ── Dual-species (paired) pipeline ────────────────────────────────────────────
 # Step 0 samples NUM_SHOWERS primaries ONCE and generates both components: rows i
@@ -100,6 +115,12 @@ DUAL_SHOWER_CACHE_PATH = (
 #                   placement and the primary encoding's rel_E/N/U.
 DUAL_SPECIES_IDS_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_species.pt"
 DUAL_POSITIONS_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_positions.pt"
+
+# Held-out corpus (HOLDOUT_FRAC of events, see above) — same file layout as the
+# main corpus/sidecars, written by Step 0, read only by eval_true_utility.py.
+HELDOUT_SHOWER_CACHE_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_heldout.pt"
+HELDOUT_SPECIES_IDS_PATH  = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_species.pt"
+HELDOUT_POSITIONS_PATH    = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_positions.pt"
 
 # 02 log-compresses T targets as log1p(T*T_LOG_SCALE); dual_surrogate.py must
 # invert the same transform, so the scale lives here.

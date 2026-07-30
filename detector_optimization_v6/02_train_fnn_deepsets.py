@@ -72,6 +72,8 @@ SEED                = 0
 NUM_WORKERS         = 0
 DEVICE              = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+RESUME_CKPT_INTERVAL = 10   # save a rolling resume checkpoint every N Adam epochs
+
 # DeepSets shape (parameter-light vs the 6.7M flat MLP).
 DS_HIDDEN   = 256
 DS_CONTEXT  = 64
@@ -274,6 +276,23 @@ def train_species(tag:        str,
     curves_name = f"fnn_{tag}_train_curves.png"
     tvp_name    = f"fnn_{tag}_target_vs_pred.png"
 
+    # Resume state, read once here and applied to the model further down (the
+    # model/optimizer/scheduler don't exist yet at this point).
+    #   {"species_done": True} -> this species is fully finished; skip it.
+    #     main() trains electron THEN muon in one process, so without this a
+    #     preemption during muon would retrain electron from scratch — hours of
+    #     redundant work at the 750k scale. Same convention as
+    #     pipeline_status.json: delete the file to force a retrain.
+    #   {"adam_done": True}    -> Adam finished, jump straight to L-BFGS.
+    #   full state             -> mid-Adam; resume at ["epoch"].
+    resume_path = os.path.join(OUTPUT_FOLDER, f"fnn_{tag}_resume.pt")
+    resume_state = (torch.load(resume_path, map_location=DEVICE)
+                    if os.path.exists(resume_path) else None)
+    if resume_state is not None and resume_state.get("species_done"):
+        print(f"[{tag}] already fully trained "
+              f"(delete {resume_path} to force a retrain) — skipping")
+        return
+
     print("=" * 72)
     print(f"[{tag}] DeepSets surrogate on {primary.shape[0]} rows")
     print("=" * 72)
@@ -343,8 +362,24 @@ def train_species(tag:        str,
     print(f"[{tag}] NLL warm-start: {n_warmup_epochs} mean-only epochs, "
           f"then {n_epochs - n_warmup_epochs} full-NLL epochs")
 
+    # Apply the resume state read at the top of this function (mirrors
+    # 03_train_recon_deepsets.py's recon_resume.pt pattern).
+    adam_done   = False
+    start_epoch = 0
+    if resume_state is not None:
+        if resume_state.get("adam_done"):
+            adam_done = True
+            print(f"[{tag} resume] Adam done, jumping to L-BFGS")
+        else:
+            model.load_state_dict(resume_state["state_dict"])
+            optimizer.load_state_dict(resume_state["optimizer"])
+            scheduler.load_state_dict(resume_state["scheduler"])
+            start_epoch, log = resume_state["epoch"], resume_state["log"]
+            best_val, best_epoch = resume_state["best_val"], resume_state["best_epoch"]
+            print(f"[{tag} resume] epoch {start_epoch}  best_val={best_val:.6f}")
+
     # ── Phase 1: Adam (no permutation augmentation) ──────────────────────
-    for epoch in range(n_epochs):
+    for epoch in range(start_epoch if not adam_done else n_epochs, n_epochs):
         is_warmup = epoch < n_warmup_epochs
         if epoch == n_warmup_epochs and n_warmup_epochs > 0:
             print(f"[{tag}] warm-start done — switching to full Gaussian NLL")
@@ -441,18 +476,28 @@ def train_species(tag:        str,
                 "config": _ckpt_config(tag)
                 }, os.path.join(OUTPUT_FOLDER, ckpt_name))
 
-    with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
-        json.dump({
-            "log": log,
-            "best_val_total": best_val,
-            "best_epoch": best_epoch,
-            "config": dict(
-                batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN,
-                val_frac=VAL_FRAC, seed=SEED, **_ckpt_config(tag)
-                ),
-                }, f, indent=2)
-    _plot_curves(log, os.path.join(OUTPUT_FOLDER, curves_name))
-    print(f"[{tag} adam done] best val {best_val:.4f} at epoch {best_epoch}")
+        if (epoch + 1) % RESUME_CKPT_INTERVAL == 0:
+            torch.save({
+                "state_dict": model.state_dict(), "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+                "epoch": epoch + 1, "log": log,
+                "best_val": best_val, "best_epoch": best_epoch,
+            }, resume_path)
+
+    if not adam_done:
+        with open(os.path.join(OUTPUT_FOLDER, log_name), "w") as f:
+            json.dump({
+                "log": log,
+                "best_val_total": best_val,
+                "best_epoch": best_epoch,
+                "config": dict(
+                    batch_size=BATCH_SIZE, n_epochs=n_epochs, lr=LR,lr_max=LR_MAX, lr_min=LR_MIN,
+                    val_frac=VAL_FRAC, seed=SEED, **_ckpt_config(tag)
+                    ),
+                    }, f, indent=2)
+        _plot_curves(log, os.path.join(OUTPUT_FOLDER, curves_name))
+        print(f"[{tag} adam done] best val {best_val:.4f} at epoch {best_epoch}")
+        torch.save({"adam_done": True}, resume_path)
 
     # ── Phase 2: L-BFGS fine-tuning (full-batch) ────────────────────────────
     print("\n" + "=" * 72)
@@ -656,6 +701,10 @@ def train_species(tag:        str,
             output_path=os.path.join(OUTPUT_FOLDER, tvp_name))
     except Exception as exc:
         print(f"[plot-tvp] skipped ({exc!r})")
+
+    # Mark this species finished (see the marker check at the top). Replaces the
+    # resume state so a restart skips the species instead of retraining it.
+    torch.save({"species_done": True}, resume_path)
 
 
 def main():

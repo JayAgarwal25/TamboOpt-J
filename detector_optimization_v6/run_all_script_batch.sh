@@ -40,13 +40,12 @@ run_step () {
     python -c "import json,os; d=json.load(open('$STATUS_FILE')); d['$step']='done'; json.dump(d, open('$STATUS_FILE.tmp','w'), indent=2); os.replace('$STATUS_FILE.tmp','$STATUS_FILE')"
 }
 
-# # Step-0 resume: continue the a crashed run (slurm-21376182) into the existing
-# # corpus file from this row — electron block complete + 20k muons = last
-# # logged "file offset". Set to 0 for a FRESH corpus (re-preallocates the
-# # file)
-# RESUME_ROW=520000
-
-run_step 00_generate_data_dual_species.py --n-pairs 100000
+# Step 0 now resumes automatically (progress.json next to each output corpus,
+# per species) — a preempted run just needs the same command re-run, no manual
+# row/offset bookkeeping. --n-pairs 0 = all in-band tau events (~751,931);
+# Step 0 itself splits off HOLDOUT_FRAC (5%) into a separate corpus before
+# generating, so this is 750k-scale total, not 750k into training.
+run_step 00_generate_data_dual_species.py --n-pairs 0
 run_step 01_build_dataset_northeast.py
 run_step 02_train_fnn_deepsets.py
 run_step 03_train_recon_deepsets.py

@@ -37,7 +37,7 @@ import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 import showerdata
-from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
+from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu, encode_primary
 from modules_v6.dual_surrogate import combine_species_outputs
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
@@ -46,7 +46,8 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, T_LOG_SCALE,
-    DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH, TRAINING_DATASET_FOLDER, OPT_FOLDER,
+    HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,
+    OPT_FOLDER,
 )
 
 # LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
@@ -78,27 +79,47 @@ class KernelDualLabels:
         return combine_species_outputs(pred_e, pred_mu)
 
 
-def load_events(n_events, device):
-    """Load and PLACE the first `n_events` events' electron + muon clouds.
+def load_events(n_events, device, mountain):
+    """Load and PLACE the first `n_events` events' electron + muon clouds, and
+    build their matching `primary_batch` — all from the SAME heldout corpus.
 
-    The tau dual corpus is [electron block | muon block] with event i at row i and
-    row n_pairs+i (paired, sharing the primary → same decay vertex + direction).
-    Placement uses the pipeline's C8 `place_clouds_enu` at the real vertex."""
-    positions_all = torch.load(DUAL_POSITIONS_PATH)              # (M, 3) ENU E,N,U
+    Reads the HELDOUT corpus (HOLDOUT_FRAC of physical events, split off by
+    Step 0 before generation) — NOT the main training corpus. Steps 1-4 (FNN
+    train+val, recon train+val, and the stage-4 layout optimizer, which sweeps
+    the ENTIRE main corpus with no split of its own) never see these events,
+    so "first B rows" here is genuinely unseen by everything upstream, unlike
+    reading from DUAL_SHOWER_CACHE_PATH.
+
+    `primary_batch` is built here (via `encode_primary`, identical to Step 1)
+    rather than sliced from TRAINING_DATASET_FOLDER/primary.pt — that file only
+    ever covers the main corpus, so slicing its first B rows would pair the
+    heldout clouds with the WRONG events' ground-truth direction/energy labels,
+    not just reintroduce leakage.
+
+    The heldout corpus is [electron block | muon block] with event i at row i
+    and row n_pairs+i (paired, sharing the primary → same decay vertex +
+    direction). Placement uses the pipeline's C8 `place_clouds_enu` at the
+    real vertex."""
+    positions_all = torch.load(HELDOUT_POSITIONS_PATH)           # (M, 3) ENU E,N,U
     n_pairs = positions_all.shape[0] // 2
     B = min(n_events, n_pairs)
 
-    e_sub = showerdata.load(DUAL_SHOWER_CACHE_PATH, start=0, stop=B)
-    m_sub = showerdata.load(DUAL_SHOWER_CACHE_PATH, start=n_pairs, stop=n_pairs + B)
+    e_sub = showerdata.load(HELDOUT_SHOWER_CACHE_PATH, start=0, stop=B)
+    m_sub = showerdata.load(HELDOUT_SHOWER_CACHE_PATH, start=n_pairs, stop=n_pairs + B)
     elec = torch.as_tensor(e_sub.points, dtype=torch.float32)
     muon = torch.as_tensor(m_sub.points, dtype=torch.float32)
     dirs = torch.as_tensor(e_sub.directions, dtype=torch.float32)
     dirs = dirs / dirs.norm(dim=1, keepdim=True).clamp(min=1e-12)
+    energies = torch.as_tensor(e_sub.energies, dtype=torch.float32)
+    pdg      = torch.as_tensor(e_sub.pdg,      dtype=torch.long)
     pos = positions_all[:B].float()
 
     place_clouds_enu(elec, pos, dirs, east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX)
     place_clouds_enu(muon, pos, dirs, east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX)
-    return elec, muon, B, n_pairs
+
+    array_center = torch.as_tensor(mountain.centroids_ENU, dtype=torch.float32).mean(dim=0)
+    primary_batch = encode_primary(dirs, energies, pdg, pos, array_center).to(device)
+    return elec, muon, B, n_pairs, primary_batch
 
 
 def _snap(mountain, e, n):
@@ -147,19 +168,18 @@ def main():
     print("true-utility evaluator — kernel vs surrogate on the SAME recon + weights")
     print("=" * 72)
     print(f"device      : {device}")
-    print(f"corpus      : {DUAL_SHOWER_CACHE_PATH}")
+    print(f"corpus      : {HELDOUT_SHOWER_CACHE_PATH}  (held-out, unseen by Steps 1-4)")
     print(f"layout(opt) : {LAYOUT_PATH}")
 
     mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
                                 east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
                                 n_planes=N_PLANES)
     surface = SurfaceUpMap.from_mountain(mountain).to(device)
-    elec, muon, B, n_pairs = load_events(args.n_events, device)
+    elec, muon, B, n_pairs, prim = load_events(args.n_events, device, mountain)
     print(f"events      : {B} of {n_pairs} pairs")
     kernel_fnn = KernelDualLabels(elec, muon, surface, device)
 
     fnn, recon = load_models(device)
-    prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
 
     e_o, n_o = load_layout(mountain)
     if args.grid_layout:

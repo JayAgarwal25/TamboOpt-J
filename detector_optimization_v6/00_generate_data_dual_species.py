@@ -22,6 +22,7 @@ Key design decisions:
 """
 import argparse
 import glob
+import json
 import os
 import shutil
 import sys
@@ -45,6 +46,7 @@ from modules_v6.constants import (
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
     SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE,
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, DUAL_SHOWER_CACHE_PATH,
+    HOLDOUT_FRAC, HOLDOUT_SEED, HELDOUT_SHOWER_CACHE_PATH,
 )
 from modules_v6.tau_showers import load_tau_primaries
 
@@ -286,29 +288,120 @@ def _gen_chunk(gen, pcfm, cfg, energies, directions, labels, shower_ids, target_
     )
 
 
+def _load_progress(progress_path):
+    """{"electron": rows_done, "muon": rows_done}, or {} if no checkpoint yet."""
+    if os.path.exists(progress_path):
+        with open(progress_path) as f:
+            return json.load(f)
+    return {}
+
+
+def _save_progress(progress_path, state):
+    tmp = progress_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, progress_path)
+
+
+def _generate_corpus(tag, out_path, energies_all, directions_all, labels_all,
+                     event_ids_all, positions_all, target_P, chunk_size):
+    """Generate one full paired electron+muon corpus at `out_path`, resuming
+    automatically from `<out_path>.progress.json` if a prior attempt was
+    preempted mid-run (gpu_requeue). `tag` is a log label ("train"/"holdout").
+
+    Progress is tracked per-species (rows written so far); a chunk is only
+    counted done AFTER `showerdata.save_batch` returns, so a kill mid-chunk
+    just re-does that one chunk on restart — no partial rows on disk get
+    silently treated as complete."""
+    n_pairs = int(energies_all.shape[0])
+    total   = 2 * n_pairs
+    progress_path = out_path + ".progress.json"
+
+    if os.path.exists(out_path):
+        state = _load_progress(progress_path)
+        print(f"[{tag}] resuming into existing {out_path}  progress={state}")
+    else:
+        state = {}
+        showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
+        print(f"[{tag}] preallocated {out_path} ({total}x{target_P}x5, "
+              f"≈{total * target_P * 5 * 4 / 1e9:.1f} GB)")
+
+    # e/µ species + real-position sidecars: cheap, derived purely from n_pairs/
+    # positions_all, so always safe to (re)write regardless of resume state.
+    species_ids = torch.cat([torch.zeros(n_pairs, dtype=torch.int64),
+                             torch.ones(n_pairs, dtype=torch.int64)])
+    species_path = os.path.splitext(out_path)[0] + "_species.pt"
+    torch.save(species_ids, species_path)
+    if positions_all is not None:
+        positions_dual = torch.cat([positions_all, positions_all], dim=0)
+        positions_path = os.path.splitext(out_path)[0] + "_positions.pt"
+        torch.save(positions_dual, positions_path)
+        print(f"[{tag}/positions] wrote sidecar {positions_path} {tuple(positions_dual.shape)}")
+    print(f"[{tag}/species] wrote sidecar {species_path} "
+          f"({n_pairs} electron + {n_pairs} muon rows)")
+
+    t0 = time.time()
+    for i, (name, cfg) in enumerate(SPECIES.items()):
+        block_start = i * n_pairs
+        done = int(state.get(name, 0))
+        if done >= n_pairs:
+            print(f"[{tag}/{name}] block already complete ({done}/{n_pairs}) — skipping")
+            continue
+        print("=" * 72)
+        print(f"[{tag}/{name}] {n_pairs - done} of {n_pairs} showers  "
+              f"(max_points={cfg['max_points']}"
+              f"{f', resuming at row {done}' if done else ''})")
+        print("=" * 72)
+        staged_dir, pcfm = stage_run_dir(name, cfg)
+        gen = Generator(run_dir=staged_dir, num_timesteps=NUM_TIMESTEPS,
+                        compile=True, solver=SOLVER)
+        gen.max_points = int(cfg["max_points"])
+
+        while done < n_pairs:
+            c = min(chunk_size, n_pairs - done)
+            sh = _gen_chunk(
+                gen, pcfm, cfg,
+                energies_all[done:done + c], directions_all[done:done + c],
+                labels_all[done:done + c], event_ids_all[done:done + c], target_P,
+            )
+            showerdata.save_batch(sh, out_path, start=block_start + done)
+            done += c
+            state[name] = done
+            _save_progress(progress_path, state)
+            del sh
+            torch.cuda.empty_cache()
+            print(f"[{tag}/{name}] wrote {done}/{n_pairs}  "
+                  f"(file offset {block_start + done}/{total})  {time.time()-t0:.0f}s")
+        del gen
+        torch.cuda.empty_cache()
+
+    print(f"[{tag}/done] {total} rows = {n_pairs} paired events "
+          f"(electron rows 0..{n_pairs-1}, muon rows {n_pairs}..{total-1}) "
+          f"in {time.time()-t0:.0f}s -> {out_path}")
+    if os.path.exists(progress_path):
+        os.remove(progress_path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     # Streamed in chunks → peak RAM is one chunk, not the whole corpus, so the
     # pair count can scale freely (disk is the only limit). Muons are capped at
     # 25088 points; the file is preallocated at that P and electrons are padded up.
     ap.add_argument("--n-pairs", type=int, default=0,
-                    help="number of paired events; the corpus holds 2*n_pairs rows "
-                         "(electron block rows 0..N-1, muon block rows N..2N-1, "
-                         "row i and row N+i share the same primary). 0 = all "
-                         "available (all in-band tau events with USE_TAU_PRIMARIES, "
-                         "else NUM_SHOWERS synthetic).")
+                    help="number of paired events BEFORE the holdout split (see "
+                         "HOLDOUT_FRAC); 0 = all available (all in-band tau "
+                         "events with USE_TAU_PRIMARIES, else NUM_SHOWERS "
+                         "synthetic).")
     ap.add_argument("--seed", type=int, default=0,
                     help="primary-sampling seed (deterministic corpus)")
     ap.add_argument("--chunk", type=int, default=CHUNK_SIZE,
                     help="showers per streamed write-batch (bounds peak RAM)")
     ap.add_argument("--out", type=str, default=None,
-                    help="output .pt path (default: DUAL_SHOWER_CACHE_PATH from "
-                         "constants — the tau corpus when USE_TAU_PRIMARIES)")
-    ap.add_argument("--resume-at-row", type=int, default=0,
-                    help="continue a crashed run into the EXISTING output file, "
-                         "skipping rows < this (use the last logged 'file offset'). "
-                         "--n-pairs/--seed must match the original run so the "
-                         "regenerated primaries pair with the rows already on disk.")
+                    help="MAIN (train-pool) output .pt path (default: "
+                         "DUAL_SHOWER_CACHE_PATH from constants). The holdout "
+                         "corpus always goes to HELDOUT_SHOWER_CACHE_PATH — it "
+                         "isn't overridable, so eval_true_utility.py can always "
+                         "find it.")
     args = ap.parse_args()
 
     os.makedirs(SHOWER_CACHE, exist_ok=True)
@@ -340,13 +433,24 @@ def main():
     energies_all, directions_all = prim["energies"], prim["directions"]
     # Per-event EM/hadronic primary class (0/1); both species blocks reuse it so paired rows share the class.
     labels_all = prim["labels"]
-    n_pairs = int(energies_all.shape[0])
-    total   = 2 * n_pairs
-    # Paired-event ids: the electron row e and the muon row n_pairs+e are the two
-    # components of one physical event.
-    event_ids_all = torch.arange(n_pairs, dtype=torch.int64)
+    n_total = int(energies_all.shape[0])
+    event_ids_all = torch.arange(n_total, dtype=torch.int64)   # global event id (informational)
 
-    out_path = args.out or DUAL_SHOWER_CACHE_PATH
+    # ── Holdout split — PHYSICAL EVENT level, before any generation ──────────
+    # Deterministic seeded permutation of the n_total events (independent of
+    # --seed, which only drives the EM/hadronic label draw): HOLDOUT_FRAC go to
+    # a separate corpus that Steps 1-4 never read, reserved for
+    # eval_true_utility.py. Sorting each half keeps rows in file order (cheap,
+    # not required for correctness, just tidier logs/debugging).
+    g = torch.Generator().manual_seed(HOLDOUT_SEED)
+    perm = torch.randperm(n_total, generator=g)
+    n_holdout = max(1, int(round(HOLDOUT_FRAC * n_total)))
+    holdout_idx = perm[:n_holdout].sort().values
+    train_idx   = perm[n_holdout:].sort().values
+    n_train     = n_total - n_holdout
+
+    out_path     = args.out or DUAL_SHOWER_CACHE_PATH
+    heldout_path = HELDOUT_SHOWER_CACHE_PATH
 
     print("=" * 72)
     print("v6/00_generate_data_dual_species.py — paired electron + muon corpus (streamed)")
@@ -354,101 +458,28 @@ def main():
     print(f"device      : {DEVICE}")
     print(f"primaries   : {f'REAL tau ({os.path.basename(TAU_WHOLESKY_PATH)}, ENU position + direction)' if USE_TAU_PRIMARIES else 'synthetic sample_primary_particles'}")
     if USE_TAU_PRIMARIES:
-        print(f"            : {n_pairs} in-band taus in [1e{LOG_E_MIN:g}, 1e{LOG_E_MAX:g}] GeV "
+        print(f"            : {n_total} in-band taus in [1e{LOG_E_MIN:g}, 1e{LOG_E_MAX:g}] GeV "
               f"(East {positions_all[:,0].min():.0f}..{positions_all[:,0].max():.0f}, "
               f"North {positions_all[:,1].min():.0f}..{positions_all[:,1].max():.0f}, "
               f"Up {positions_all[:,2].min():.0f}..{positions_all[:,2].max():.0f} m)")
-    print(f"pairs       : {n_pairs} events -> {total} rows (seed={args.seed})")
+    print(f"total events: {n_total}  (seed={args.seed})")
+    print(f"holdout     : {n_holdout} events ({100*HOLDOUT_FRAC:.1f}%, seed={HOLDOUT_SEED}) "
+          f"-> {heldout_path}  [eval_true_utility.py ONLY]")
+    print(f"train pool  : {n_train} events -> {out_path}  [Steps 1-4]")
     for name in SPECIES:
         print(f"{name:12s} : max_points={SPECIES[name]['max_points']}")
     print(f"chunk       : {args.chunk}  -> peak RAM ≈ "
           f"{args.chunk * target_P * 5 * 4 / 1e9:.2f} GB/chunk")
-    print(f"output      : {out_path}  (preallocated {total}×{target_P}×5, "
-          f"≈{total * target_P * 5 * 4 / 1e9:.1f} GB on disk)")
 
-    t0 = time.time()
-    resume = int(args.resume_at_row)
-    if resume > 0:
-        # Continue into the existing preallocated file. Primaries are seeded,
-        # so the regenerated slices pair exactly with the rows already on disk
-        # (as long as --n-pairs/--seed match the original run).
-        if not (0 < resume < total):
-            raise SystemExit(f"--resume-at-row {resume} outside (0, {total})")
-        if not os.path.exists(out_path):
-            raise SystemExit(f"--resume-at-row given but {out_path} does not exist")
-        print(f"[resume] continuing into existing file from row {resume}/{total}")
-    else:
-        # Preallocate the HDF5 once; each chunk is written at its row offset.
-        showerdata.create_empty_file(out_path, shape=(total, target_P, 5), overwrite=True)
+    def _slice(idx):
+        pos = positions_all[idx] if positions_all is not None else None
+        return energies_all[idx], directions_all[idx], labels_all[idx], event_ids_all[idx], pos
 
-    # e/µ species sidecar (the "tag"): electron block rows [0, n_pairs) = 0,
-    # muon block rows [n_pairs, 2*n_pairs) = 1. Fully determined by n_pairs, so
-    # written unconditionally (resume-safe); Row-aligned with the corpus.
-    species_ids = torch.cat([
-        torch.zeros(n_pairs, dtype=torch.int64),
-        torch.ones(n_pairs, dtype=torch.int64),
-    ])
-    # Derived from out_path (not the constant) so a custom --out keeps the
-    # sidecar paired — the Step-1 builders apply the same `<corpus>_species.pt`
-    # rule to whatever corpus path they are pointed at.
-    species_path = os.path.splitext(out_path)[0] + "_species.pt"
-    torch.save(species_ids, species_path)
-    # Real ENU decay position sidecar (M, 3) columns (East, North, Up), duplicated
-    # across the electron+muon blocks (paired rows share the primary → same
-    # position). Step 1 places each cloud at this position instead of re-centering.
-    # Only written for real-primary (tau) runs; the synthetic path has no position.
-    if positions_all is not None:
-        positions_dual = torch.cat([positions_all, positions_all], dim=0)   # (2N, 3)
-        positions_path = os.path.splitext(out_path)[0] + "_positions.pt"
-        torch.save(positions_dual, positions_path)
-        print(f"[positions] wrote sidecar {positions_path}  "
-              f"({tuple(positions_dual.shape)}, ENU East/North/Up)")
-    print(f"[species] wrote sidecar {species_path} "
-          f"({n_pairs} electron + {n_pairs} muon rows)")
+    e_tr, d_tr, l_tr, id_tr, pos_tr = _slice(train_idx)
+    e_ho, d_ho, l_ho, id_ho, pos_ho = _slice(holdout_idx)
 
-    for i, (name, cfg) in enumerate(SPECIES.items()):
-        block_start = i * n_pairs              # this species' rows: [block_start, block_start + n_pairs)
-        done = min(max(resume - block_start, 0), n_pairs)   # rows of this block already on disk
-        if done >= n_pairs:
-            print(f"[{name}] block already on disk "
-                  f"(rows {block_start}..{block_start + n_pairs - 1}) — skipping")
-            continue
-        print("=" * 72)
-        print(f"[{name}] {n_pairs - done} of {n_pairs} showers  "
-              f"(max_points={cfg['max_points']}, "
-              f"{(n_pairs - done + args.chunk - 1) // args.chunk} chunks"
-              f"{f', resuming at block row {done}' if done else ''})")
-        print("=" * 72)
-        staged_dir, pcfm = stage_run_dir(name, cfg)
-        gen = Generator(run_dir=staged_dir, num_timesteps=NUM_TIMESTEPS,
-                        compile=True, solver=SOLVER)
-        gen.max_points = int(cfg["max_points"])
-
-        while done < n_pairs:
-            c = min(args.chunk, n_pairs - done)
-            sh = _gen_chunk(
-                gen, pcfm, cfg,
-                energies_all[done:done + c], directions_all[done:done + c],
-                labels_all[done:done + c],
-                event_ids_all[done:done + c],
-                target_P,
-            )
-            showerdata.save_batch(sh, out_path, start=block_start + done)
-            done += c
-            del sh
-            torch.cuda.empty_cache()
-            print(f"[{name}] wrote {done}/{n_pairs}  "
-                  f"(file offset {block_start + done}/{total})  "
-                  f"{time.time()-t0:.0f}s")
-        del gen
-        torch.cuda.empty_cache()
-
-    # Species are contiguous blocks sharing primaries (electron then muon); the
-    # training shower-level split randperms showers, so no global shuffle here.
-    print(f"[done] {total} rows = {n_pairs} paired events "
-          f"(electron rows 0..{n_pairs-1}, muon rows {n_pairs}..{total-1}; "
-          f"corpus pdg = EM/hadronic class, e/µ species in {species_path}) "
-          f"in {time.time()-t0:.0f}s -> {out_path}")
+    _generate_corpus("train",   out_path,     e_tr, d_tr, l_tr, id_tr, pos_tr, target_P, args.chunk)
+    _generate_corpus("holdout", heldout_path, e_ho, d_ho, l_ho, id_ho, pos_ho, target_P, args.chunk)
 
 
 if __name__ == "__main__":

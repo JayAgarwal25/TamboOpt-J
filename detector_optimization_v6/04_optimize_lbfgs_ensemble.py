@@ -212,7 +212,7 @@ def _build_chain_inits(init_x: torch.Tensor, init_y: torch.Tensor,
 
 def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
                          mountain, fnn, recon, primary_all, n_total_primaries,
-                         init_center=None):
+                         init_center=None, resume_path=None):
     """K pre-Adam perturbations of the scheme init → K Adam runs.
 
     Returns (adam_bests, adam_logs, perturbed_inits, adam_grads), each length K.
@@ -221,7 +221,28 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
     If init_center is a (N_DETECTORS, 2) tensor with (East, North) per detector,
     all K chains are warm-started from that layout with small N(0, 10m) per-chain
     diversity perturbations instead of using the normal scheme initialization.
+
+    If `resume_path` is given, progress is checkpointed after every completed
+    chain (gpu_requeue can preempt mid-ensemble — losing 14/15 already-finished
+    5000-epoch chains to redo just the last one would be the expensive
+    mistake). The file is intentionally NEVER deleted on success: it doubles as
+    the persisted per-scheme Adam-chain cache that a "combined" run (or a
+    resumed main() that finds this scheme's layout_best.pt already on disk)
+    reads instead of recomputing.
     """
+    if resume_path and os.path.exists(resume_path):
+        _ck = torch.load(resume_path, map_location="cpu", weights_only=False)
+        adam_bests, adam_logs = _ck["adam_bests"], _ck["adam_logs"]
+        perturbed_inits, adam_grads = _ck["perturbed_inits"], _ck["adam_grads"]
+        if len(adam_bests) >= K:
+            print(f"[resume] {resume_path}: all {K} chains already done "
+                  "(reusing cached Adam results, not recomputing)")
+            return adam_bests[:K], adam_logs[:K], perturbed_inits[:K], adam_grads[:K]
+        print(f"[resume] {resume_path}: {len(adam_bests)}/{K} chains already done")
+    else:
+        adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
+    k_start = len(adam_bests)
+
     if init_center is not None:
         e_t = init_center[:, 0].float()
         n_t = init_center[:, 1].float()
@@ -236,8 +257,9 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
         n_t = torch.as_tensor(n_np, dtype=torch.float32)
         chains_init = _build_chain_inits(e_t, n_t, K, generator)              # (K, D)
 
-    adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
     for k in range(K):
+        if k < k_start:
+            continue
         xk = chains_init[k, :N_DETECTORS].cpu()
         yk = chains_init[k, N_DETECTORS:].cpu()
         xk, yk = project_to_mountain_ne(mountain, xk, yk)
@@ -251,6 +273,12 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
         adam_bests.append((bx, by))
         adam_logs.append(log)
         adam_grads.append(ghist)
+
+        if resume_path:
+            _tmp = resume_path + ".tmp"
+            torch.save({"adam_bests": adam_bests, "adam_logs": adam_logs,
+                       "perturbed_inits": perturbed_inits, "adam_grads": adam_grads}, _tmp)
+            os.replace(_tmp, resume_path)
     return adam_bests, adam_logs, perturbed_inits, adam_grads
 
 
@@ -367,8 +395,26 @@ def _run_one_scheme(scheme: str,
 
     # Stage 2: L-BFGS refine every Adam-best, sweeping sequentially over ALL
     # chunks (i.e. the whole corpus) — several L-BFGS runs chained per Adam-best.
-    refined, lbfgs_logs, refined_U, all_lbfgs_grads = [], [], [], []
+    #
+    # gpu_requeue can preempt mid-ensemble; lbfgs_resume.pt checkpoints the
+    # chains refined so far (after each FULL chain, not each chunk — a chunk is
+    # cheap enough relative to a 15-chain ensemble that per-chain granularity is
+    # the right cost/robustness trade), so a restart skips straight to the
+    # first unrefined chain instead of redoing the whole ensemble.
+    lbfgs_resume_path = os.path.join(opt_dir, "lbfgs_resume.pt")
+    if os.path.exists(lbfgs_resume_path):
+        _ck = torch.load(lbfgs_resume_path, map_location="cpu", weights_only=False)
+        refined, lbfgs_logs = _ck["refined"], _ck["lbfgs_logs"]
+        refined_U, all_lbfgs_grads = _ck["refined_U"], _ck["all_lbfgs_grads"]
+        k_start = len(refined)
+        print(f"[resume] {lbfgs_resume_path}: {k_start}/{len(all_bests)} chains already refined")
+    else:
+        refined, lbfgs_logs, refined_U, all_lbfgs_grads = [], [], [], []
+        k_start = 0
+
     for k, (bx, by) in enumerate(all_bests):
+        if k < k_start:
+            continue
         print(f"[lbfgs] refine {k+1}/{len(all_bests)}  (src={source_per_run[k]})  "
               f"over {n_chunks} chunk(s)")
         xp, yp = bx, by
@@ -385,6 +431,11 @@ def _run_one_scheme(scheme: str,
         all_lbfgs_grads.append(run_grads)
         print(f"  [lbfgs] refine {k} DONE  final U={Up:+.3f}  "
               f"({sum(len(lg) for lg in [run_logs])} total closure calls)")
+
+        _tmp = lbfgs_resume_path + ".tmp"
+        torch.save({"refined": refined, "lbfgs_logs": lbfgs_logs,
+                   "refined_U": refined_U, "all_lbfgs_grads": all_lbfgs_grads}, _tmp)
+        os.replace(_tmp, lbfgs_resume_path)
 
     # Per-run consecutive-step gradient cosine distance (Adam + L-BFGS phases),
     # W-step vector-averaged to suppress minibatch-noise inflation.
@@ -483,6 +534,8 @@ def _run_one_scheme(scheme: str,
 
     print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")
+    if os.path.exists(lbfgs_resume_path):
+        os.remove(lbfgs_resume_path)
     return dict(scheme=scheme, best_U=refined_U[ref_idx],
                 best_x=best_x, best_y=best_y,
                 mean_std_x=float(std_xy[:, 0].mean()),
@@ -578,11 +631,37 @@ def main():
         print(f"init scheme: {scheme}"
               f"{'  (warm-start from --init_from)' if init_center is not None else ''}")
         print("=" * 72)
+        opt_dir = OPT_DIR_TEMPLATE.format(scheme=scheme)
+        os.makedirs(opt_dir, exist_ok=True)
+        adam_resume_path = os.path.join(opt_dir, "adam_resume.pt")
+        layout_best_path = os.path.join(opt_dir, "layout_best.pt")
+
+        # gpu_requeue can preempt between schemes too (this is what forced a
+        # full grid+center redo before this checkpoint existed): a scheme
+        # whose layout_best.pt is already on disk is fully done — skip both
+        # phases and just reload its cached Adam-chain results (still needed
+        # for a "combined" run over multiple schemes).
+        if os.path.exists(layout_best_path) and os.path.exists(adam_resume_path):
+            print(f"[skip] scheme={scheme} already complete ({layout_best_path}); "
+                  "reloading cached Adam results for combined use")
+            _ck = torch.load(adam_resume_path, map_location="cpu", weights_only=False)
+            per_scheme[scheme] = (_ck["adam_bests"], _ck["adam_logs"],
+                                  _ck["perturbed_inits"], _ck["adam_grads"])
+            # best_x/best_y/best_U/opt_dir are all the summary print below
+            # reads; mean_std_x/y aren't recoverable without re-aligning the
+            # ensemble, so they're reported as n/a for a skipped scheme.
+            _lb = torch.load(layout_best_path, map_location="cpu", weights_only=False)
+            results.append(dict(scheme=scheme, best_U=_lb["U"],
+                                best_x=_lb["x"], best_y=_lb["y"],
+                                mean_std_x=float("nan"), mean_std_y=float("nan"),
+                                opt_dir=opt_dir))
+            continue
+
         #torch.manual_seed(SEED); np.random.seed(SEED)
         g = torch.Generator()#.manual_seed(SEED)
         per_scheme[scheme] = _perturbed_adam_runs(
             scheme, N_CHAINS, g, mountain, fnn, recon, primary_all, n_total_primaries,
-            init_center=init_center,
+            init_center=init_center, resume_path=adam_resume_path,
         )
         results.append(_run_one_scheme(
             scheme, mountain, fnn, recon, primary_all, n_total_primaries,
