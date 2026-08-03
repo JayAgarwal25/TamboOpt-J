@@ -236,7 +236,8 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
     vmin_s = (1, 1, 1, 1)
     # vmax_s = (350, 350, 250, 600)
-    vmax_s = (200, 200, 200, 400)
+    # vmax_s = (200, 200, 200, 400)
+    vmax_s = (100, 100, 100, 200)
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
     for i, name in enumerate(labels):
         _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i]) # TODO

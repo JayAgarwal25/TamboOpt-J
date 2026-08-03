@@ -41,9 +41,46 @@ W_E     = 2.5e2
 W_PR    = 5e5
 W_DIV   = 1e3
 
-# Reconstructability thresholds — match 04_optimize.py
-LAYOUT_THRESHOLD      = 5e-2
-RECONSTRUCT_THRESHOLD = 10.0
+# Reconstructability thresholds.
+#
+# LAYOUT_THRESHOLD was 5e-2, which is not a physical hit criterion (a detector
+# "seeing" 0.05 particles) and, worse, sits far inside the soft indicator's own
+# transition width (~1/tau_layout = 0.2): sigmoid(5*(0 - 0.05)) = 0.44, so a
+# COMPLETELY DARK detector contributed 0.44 to the count and 100 dark detectors
+# floored the count at ~44/100. Measured counts never fell below 61 and r
+# pinned at exactly 1.0000 for every event, making the whole term (and U_PR)
+# a layout-independent constant with zero gradient.
+#
+# 1.0 = "detector saw at least one particle": dark -> 0.0067, floor 0.67/100.
+# The detector count then spans p10=13 / p50=48 / p90=82, so the 10-detector
+# minimum below is finally a binding constraint rather than a vacuous one.
+LAYOUT_THRESHOLD      = 1.0
+RECONSTRUCT_THRESHOLD = 10.0   # physical minimum detectors to reconstruct
+
+# tau_reconstruct=5.0 (the upstream default) makes r a step function: it swings
+# 0->1 within ~+-1 detector, so almost no event sits in the transition and the
+# term hands back no gradient. 0.2 spreads the transition over ~20 detectors
+# (n=10 -> r=0.5, n=20 -> 0.88, n=30 -> 0.98), giving r std ~0.20 across the
+# population instead of ~0.
+TAU_LAYOUT      = 5.0
+TAU_RECONSTRUCT = 0.2
+
+# Soft caps on the per-event 1/(err^2 + eps) reward, sized from the measured
+# reward distribution on the trained nets (20k events, grid layout) rather than
+# from the eps ceiling alone. Rule: keep the cap well above the term's MEDIAN
+# reward so the bulk still discriminates, low enough to pull in the tail.
+#
+#   term   median  hard ceiling  top-5% share of U   -> with cap below
+#   theta   218      1000            14.5%              10.3%
+#   phi       7.8    1000            49.2%              14.1%
+#   E        27.6     100            12.9%               9.3%
+#
+# phi is the genuinely concentrated one (the recon is poor at phi: median error
+# 0.36 rad), so it gets a much tighter cap; its median is far below 50 so the
+# bulk is untouched. theta/phi share U_angle but need different caps.
+CAP_THETA = 500.0
+CAP_PHI   = 50.0
+CAP_E     = 50.0
 
 # GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
 # the configured mesh, else the absolute path) and re-exported here for callers
@@ -123,11 +160,13 @@ def utility_of_xy(x_det: torch.Tensor,
     r = reconstructability(
         torch.expm1(E_pred_det),
         layout_threshold=LAYOUT_THRESHOLD,
+        tau_layout=TAU_LAYOUT,
         reconstruct_threshold=reconstruct_threshold,
+        tau_reconstruct=TAU_RECONSTRUCT,
     )
-    u_theta = U_angle(theta_pred, theta_true, r)
-    u_phi   = U_angle(phi_pred,   phi_true,   r)
-    u_e     = U_E    (E_pred_phys, E_true,    r)
+    u_theta = U_angle(theta_pred, theta_true, r, cap=CAP_THETA)
+    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI)
+    u_e     = U_E    (E_pred_phys, E_true,    r, cap=CAP_E)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
     return U, r, dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV, u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)

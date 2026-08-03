@@ -49,9 +49,8 @@ from modules_v6.constants import (
     DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH, TRAINING_DATASET_FOLDER, OPT_FOLDER,
 )
 
-# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_grid", "layout_best.pt")
-# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_center", "layout_best.pt")
-LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
+# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
+LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_center", "layout_best.pt")
 
 class KernelDualLabels:
     """Drop-in for the dual surrogate: same ``(primary_batch, xy_batch) -> (B, n_det, 2)``
