@@ -74,7 +74,7 @@ def U_E(E_preds, E_trues, r, cap=None):
     return u
 
 
-def U_angle(angle_preds, angle_trues, r, cap=None):
+def U_angle(angle_preds, angle_trues, r, cap=None, period=None):
     """Utility term for angular performance , weighted by reconstructability.
 
     Parameters:
@@ -85,11 +85,26 @@ def U_angle(angle_preds, angle_trues, r, cap=None):
             1/(err^2 + .001), whose hard ceiling is 1000. None = uncapped
             (original behaviour). theta and phi need very different values —
             their error distributions are not comparable.
+        period (float | None): wrap the difference into [-period/2, +period/2]
+            before squaring, for angles that live on a circle. Pass 2*pi for
+            azimuth; leave None for zenith, which is confined to [0, pi] and has
+            no wrap-around.
+
+            Without this, a prediction and a truth that sit either side of the
+            branch cut are scored as if they were almost a full turn apart: with
+            phi mapped into [0, 2*pi), a true 0.023 rad error reads as 6.26 rad,
+            so the reward collapses from ~650 to 0.026. Those events then look
+            catastrophically mis-reconstructed and drag the whole term down,
+            which also means any cap tuned on the unwrapped distribution is
+            calibrated against that distortion.
 
     Returns:
         torch.Tensor: scalar utility contribution.
     """
-    inv_err = 1.0 / ((angle_preds - angle_trues) ** 2 + .001)
+    d = angle_preds - angle_trues
+    if period is not None:
+        d = torch.remainder(d + 0.5 * period, period) - 0.5 * period
+    inv_err = 1.0 / (d ** 2 + .001)
     if cap is not None:
         inv_err = _soft_cap(inv_err, cap)
     u = torch.mean(r * inv_err)

@@ -90,12 +90,27 @@ CAP_E     = 50.0
 # ── Objective helpers ─────────────────────────────────────────────────────────
 def primary_to_physical_labels(primary: torch.Tensor):
     """(B, 5) -> (E_GeV, θ_rad, φ_rad). Matches 04_optimize.py."""
-    dir_x = primary[:, 0]
-    dir_y = primary[:, 1]
-    dir_z = primary[:, 2].clamp(-1.0, 1.0)
+    # Normalize before reading off angles. The true primary is already a unit
+    # vector, but this is also called on the RECON's raw regression output, whose
+    # norm shrinks toward the population mean under MSE training. Taking
+    # arccos(dir_z) off an un-normalized vector then biases zenith toward 90 deg:
+    # a predicted direction of norm 0.721 reads as 66.4 deg where its actual polar
+    # angle is 56.3 deg. Azimuth is scale-invariant so atan2 is unaffected either
+    # way. This matches how `plots/eval_recon_resolution.py` measures the angle.
+    d = primary[:, 0:3]
+    d = d / d.norm(dim=1, keepdim=True).clamp(min=1e-12)
+    dir_x = d[:, 0]
+    dir_y = d[:, 1]
+    dir_z = d[:, 2].clamp(-1.0, 1.0)
     log_e_norm = primary[:, 3]
     log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
-    E_gev = torch.exp(log_e) - 1.0
+    # `encode_primary` stores log10(E), so the inverse is 10**log_e. This was
+    # torch.exp(log_e) - 1.0, which returned 147..1097 GeV for a 1e5..1e7 GeV band.
+    # U_E takes log10 of this, so the mismatch rescaled every energy error by
+    # log10(e) = 0.4343 and its square by 5.3 — meaning eps=0.01, sized to floor
+    # the reward at 0.1 dex, actually floored it at 0.23 dex, and CAP_E was tuned
+    # against the compressed scale.
+    E_gev = torch.pow(10.0, log_e)
     theta = torch.arccos(dir_z)
     phi   = torch.atan2(dir_y, dir_x)
     two_pi = 2.0 * math.pi
@@ -165,7 +180,12 @@ def utility_of_xy(x_det: torch.Tensor,
         tau_reconstruct=TAU_RECONSTRUCT,
     )
     u_theta = U_angle(theta_pred, theta_true, r, cap=CAP_THETA)
-    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI)
+    # Azimuth is periodic and primary_to_physical_labels maps it into [0, 2*pi),
+    # so the difference has to be wrapped or events straddling the branch cut are
+    # scored as nearly a full turn wrong. Zenith lives in [0, pi] and must NOT be
+    # wrapped. NOTE: CAP_PHI was calibrated on the unwrapped distribution and is
+    # due a recalibration now that the tail it was sized against is gone.
+    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI, period=2.0 * math.pi)
     u_e     = U_E    (E_pred_phys, E_true,    r, cap=CAP_E)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
