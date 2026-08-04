@@ -62,34 +62,90 @@ class KernelDualLabels:
     are combined into the surrogate's own output space with
     `dual_surrogate.combine_species_outputs` (log1p(N_tot), log1p(t_tot*T_LOG_SCALE)),
     so the frozen recon sees inputs in the space it was trained on. `primary_batch`
-    is ignored: the clouds already fix which events this is."""
+    is ignored: the clouds already fix which events this is.
 
-    def __init__(self, elec_clouds, muon_clouds, surface, device):
-        self.elec = elec_clouds.to(device)
-        self.muon = muon_clouds.to(device)
+    Clouds are kept on the HOST and streamed to the device a chunk at a time. The
+    kernel materializes (events, points, detectors) intermediates, so a few hundred
+    events is already tens of GB; holding every cloud resident on top of that caps
+    the event count far below the available validation set. `chunk` bounds the
+    resident slice, and since the kernel is per-event independent (sum/mean over the
+    point axis) chunking is numerically exact, not an approximation.
+
+    `offset` lets a caller score a sub-batch of the stored events, so an outer loop
+    can chunk the FNN and recon passes over the same windows."""
+
+    needs_offset = True     # tells chunking callers this labeller is windowed
+
+    def __init__(self, elec_clouds, muon_clouds, surface, device, chunk=None):
+        self.elec = elec_clouds            # host-resident; sliced per call
+        self.muon = muon_clouds
         self.surface = surface
+        self.device = device
+        n = int(elec_clouds.shape[0])
+        self.chunk = int(chunk) if chunk else n
 
-    def __call__(self, primary_batch, xy_batch):
+    def _labels(self, clouds, e_det, n_det):
+        E, T = compute_labels_batch(clouds, e_det, n_det, self.surface)
+        return torch.stack([torch.log1p(E), torch.log1p(T * T_LOG_SCALE)], dim=-1)
+
+    def __call__(self, primary_batch, xy_batch, offset=0):
         e_det, n_det = xy_batch[0, :, 0], xy_batch[0, :, 1]      # layout shared across batch
-        E_e, T_e = compute_labels_batch(self.elec, e_det, n_det, self.surface)
-        E_mu, T_mu = compute_labels_batch(self.muon, e_det, n_det, self.surface)
-        pred_e = torch.stack([torch.log1p(E_e), torch.log1p(T_e * T_LOG_SCALE)], dim=-1)
-        pred_mu = torch.stack([torch.log1p(E_mu), torch.log1p(T_mu * T_LOG_SCALE)], dim=-1)
-        return combine_species_outputs(pred_e, pred_mu)
+        B = int(primary_batch.shape[0])
+        outs = []
+        for lo in range(0, B, self.chunk):
+            hi = min(lo + self.chunk, B)
+            el = self.elec[offset + lo: offset + hi].to(self.device, non_blocking=True)
+            mu = self.muon[offset + lo: offset + hi].to(self.device, non_blocking=True)
+            pred_e  = self._labels(el, e_det, n_det)
+            pred_mu = self._labels(mu, e_det, n_det)
+            outs.append(combine_species_outputs(pred_e, pred_mu))
+            del el, mu, pred_e, pred_mu
+        return outs[0] if len(outs) == 1 else torch.cat(outs, dim=0)
 
 
-def load_events(n_events, device):
+def _corpus_paths(corpus_override):
+    """(corpus, positions) paths — the constants pair, or an override plus its
+    own `<corpus>_positions.pt` sidecar (same naming rule Step 1 uses)."""
+    if not corpus_override:
+        return DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH
+    return corpus_override, os.path.splitext(corpus_override)[0] + "_positions.pt"
+
+
+def build_primaries(corpus_path, B, mountain):
+    """Encode the first `B` events' primaries straight from a shower corpus.
+
+    `primary.pt` in TRAINING_DATASET_FOLDER is row-aligned with the corpus Step 1
+    consumed, so it cannot be used for a DIFFERENT corpus (e.g. a held-out one).
+    This rebuilds the same 8-column encoding from the corpus metadata plus the
+    decay-position sidecar, mirroring `build_training_pairs_ne`, so the held-out
+    path stays byte-comparable with the training path."""
+    from modules_v6.fnn_surrogate_ne import _load_positions_sidecar
+    from modules_v6.fnn_surrogate import encode_primary
+
+    meta = showerdata.load_inc_particles(corpus_path)
+    keep = np.arange(0, B)                       # electron block; the muon row shares the primary
+    dirs   = torch.as_tensor(meta.directions[keep], dtype=torch.float32)
+    energs = torch.as_tensor(meta.energies[keep],   dtype=torch.float32)
+    pdg    = torch.as_tensor(meta.pdg[keep],        dtype=torch.long)
+    positions = _load_positions_sidecar(corpus_path, keep)
+    array_center = torch.as_tensor(mountain.centroids_ENU,
+                                   dtype=torch.float32).mean(dim=0)
+    return encode_primary(dirs, energs, pdg, positions, array_center)
+
+
+def load_events(n_events, device, corpus_override=None):
     """Load and PLACE the first `n_events` events' electron + muon clouds.
 
     The tau dual corpus is [electron block | muon block] with event i at row i and
     row n_pairs+i (paired, sharing the primary → same decay vertex + direction).
     Placement uses the pipeline's C8 `place_clouds_enu` at the real vertex."""
-    positions_all = torch.load(DUAL_POSITIONS_PATH)              # (M, 3) ENU E,N,U
+    corpus_path, positions_path = _corpus_paths(corpus_override)
+    positions_all = torch.load(positions_path)                   # (M, 3) ENU E,N,U
     n_pairs = positions_all.shape[0] // 2
     B = min(n_events, n_pairs)
 
-    e_sub = showerdata.load(DUAL_SHOWER_CACHE_PATH, start=0, stop=B)
-    m_sub = showerdata.load(DUAL_SHOWER_CACHE_PATH, start=n_pairs, stop=n_pairs + B)
+    e_sub = showerdata.load(corpus_path, start=0, stop=B)
+    m_sub = showerdata.load(corpus_path, start=n_pairs, stop=n_pairs + B)
     elec = torch.as_tensor(e_sub.points, dtype=torch.float32)
     muon = torch.as_tensor(m_sub.points, dtype=torch.float32)
     dirs = torch.as_tensor(e_sub.directions, dtype=torch.float32)
@@ -145,6 +201,12 @@ def main():
     ap.add_argument("--layout", type=str, default=None,
                     help="Path to the OPTIMIZED layout_best.pt to score against the "
                          "baseline (default: the constants full_corpus_grid layout).")
+    ap.add_argument("--corpus", type=str, default=None,
+                    help="Score a DIFFERENT shower corpus than the constants one, "
+                         "e.g. the held-out set. Its `<corpus>_positions.pt` sidecar "
+                         "is used, and primaries are re-encoded from the corpus "
+                         "metadata since primary.pt is row-aligned with the training "
+                         "corpus only.")
     args = ap.parse_args()
     if args.layout:
         global LAYOUT_PATH
@@ -152,24 +214,28 @@ def main():
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    corpus_path, _ = _corpus_paths(args.corpus)
 
     print("=" * 72)
     print("true-utility evaluator — kernel vs surrogate on the SAME recon + weights")
     print("=" * 72)
     print(f"device      : {device}")
-    print(f"corpus      : {DUAL_SHOWER_CACHE_PATH}")
+    print(f"corpus      : {corpus_path}{'  (HELD-OUT / override)' if args.corpus else ''}")
     print(f"layout(opt) : {LAYOUT_PATH}")
 
     mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
                                 east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
                                 n_planes=N_PLANES)
     surface = SurfaceUpMap.from_mountain(mountain).to(device)
-    elec, muon, B, n_pairs = load_events(args.n_events, device)
+    elec, muon, B, n_pairs = load_events(args.n_events, device, corpus_override=args.corpus)
     print(f"events      : {B} of {n_pairs} pairs")
     kernel_fnn = KernelDualLabels(elec, muon, surface, device)
 
     fnn, recon = load_models(device, recon_dir=args.recon_dir)
-    prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
+    if args.corpus:
+        prim = build_primaries(corpus_path, B, mountain).to(device)
+    else:
+        prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
 
     e_o, n_o = load_layout(mountain)
     if args.grid_layout:

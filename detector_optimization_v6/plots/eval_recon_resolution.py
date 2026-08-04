@@ -102,12 +102,32 @@ def _resolutions(pred, primary, has_vertex):
 
 
 @torch.no_grad()
-def _recon_pred(e_det, n_det, primary_batch, labeller, recon, device):
-    B = primary_batch.shape[0]
-    xy = torch.stack([e_det.to(device), n_det.to(device)], -1).unsqueeze(0).expand(B, -1, -1)
-    ET = labeller(primary_batch, xy)
-    feats = torch.stack([xy[..., 0], xy[..., 1], ET[..., 0], ET[..., 1]], dim=-1)
-    return recon(feats)
+def _recon_pred(e_det, n_det, primary_batch, labeller, recon, device, chunk=None):
+    """Predictions for every event, computed in event-chunks.
+
+    Both label paths blow up with the event count: the kernel materializes
+    (events, points, detectors), and the FNN/recon carry (events, detectors,
+    hidden) activations. Chunking keeps peak memory flat in the event count, which
+    is what lets this be scored on tens of thousands of held-out events instead of
+    a few hundred. Every stage here is per-event independent, so the chunked result
+    is identical to the single-shot one.
+
+    A labeller advertising `needs_offset` is windowed over stored per-event data
+    (the kernel holds the clouds), so it is told where the chunk starts."""
+    B = int(primary_batch.shape[0])
+    chunk = int(chunk) if chunk else B
+    windowed = bool(getattr(labeller, "needs_offset", False))
+    e_d, n_d = e_det.to(device), n_det.to(device)
+    outs = []
+    for lo in range(0, B, chunk):
+        hi = min(lo + chunk, B)
+        prim_c = primary_batch[lo:hi]
+        xy = torch.stack([e_d, n_d], -1).unsqueeze(0).expand(hi - lo, -1, -1)
+        ET = labeller(prim_c, xy, offset=lo) if windowed else labeller(prim_c, xy)
+        feats = torch.stack([xy[..., 0], xy[..., 1], ET[..., 0], ET[..., 1]], dim=-1)
+        outs.append(recon(feats))
+        del xy, ET, feats
+    return outs[0] if len(outs) == 1 else torch.cat(outs, dim=0)
 
 
 def _prior_pred(primary_all, B, has_vertex, device):
@@ -139,6 +159,14 @@ def main():
                     help="'grid', 'center', or path to a layout_best.pt")
     ap.add_argument("--all-events", action="store_true",
                     help="score the first N events (old behaviour) instead of held-out val")
+    ap.add_argument("--corpus", type=str, default=None,
+                    help="Score a separate held-out shower corpus. Every event in it "
+                         "is held out from ALL stages (not just the recon's val "
+                         "split), and they can be read contiguously, so this is both "
+                         "the stronger test and the one that scales to large N.")
+    ap.add_argument("--chunk", type=int, default=256,
+                    help="events per forward chunk; bounds peak memory so --n-events "
+                         "can be large. Results are identical to a single shot.")
     args = ap.parse_args()
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,7 +176,14 @@ def main():
     surf = SurfaceUpMap.from_mountain(mtn).to(dev)
     primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()
 
-    if args.all_events:
+    if args.corpus:
+        # Every event here is held out from all stages, so take them contiguously.
+        # primary.pt is row-aligned with the TRAINING corpus, so re-encode instead.
+        elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev,
+                                                  corpus_override=args.corpus)
+        prim = _etu.build_primaries(args.corpus, B, mtn).to(dev)
+        ev_desc = f"{B} of {n_pairs} events from a corpus held out from ALL stages"
+    elif args.all_events:
         elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev)
         prim = primary_all[:B].to(dev)
         ev_desc = f"first {B} events (INCLUDES training)"
@@ -156,9 +191,9 @@ def main():
         idx = heldout_event_indices(args.n_events)
         elec, muon, B, n_pairs = load_events_indices(idx, dev)
         prim = primary_all[idx].to(dev)
-        ev_desc = f"{B} HELD-OUT (val) events"
+        ev_desc = f"{B} events held out from the RECON only (stage-2 split differs)"
 
-    kfn = _etu.KernelDualLabels(elec, muon, surf, dev)
+    kfn = _etu.KernelDualLabels(elec, muon, surf, dev, chunk=args.chunk)
     fnn, recon = load_models(dev, recon_dir=args.recon_dir)
     has_vertex = int(getattr(recon, "output_dim", 4)) == 7
 
@@ -184,7 +219,7 @@ def main():
     print(f"  {'PRIOR (predict mean)':20s}  {_fmt(pres, has_vertex)}")
 
     for name, lab in (("surrogate (FNN)", fnn), ("true (KERNEL)", kfn)):
-        pred = _recon_pred(e_l, n_l, prim, lab, recon, dev)
+        pred = _recon_pred(e_l, n_l, prim, lab, recon, dev, chunk=args.chunk)
         res = _resolutions(pred, prim, has_vertex)
         print(f"  {name:20s}  {_fmt(res, has_vertex)}")
 
@@ -192,7 +227,7 @@ def main():
         prior_std = primary_all[:, 5:8].std(0)   # (E,N,U) prior spread [m]
         print("\n  vertex per-axis (median |Δ| [m]  |  skill = median|Δ|/prior_std):")
         for name, lab in (("surrogate (FNN)", fnn), ("true (KERNEL)", kfn)):
-            pred = _recon_pred(e_l, n_l, prim, lab, recon, dev)
+            pred = _recon_pred(e_l, n_l, prim, lab, recon, dev, chunk=args.chunk)
             res = _resolutions(pred, prim, has_vertex)
             parts = []
             for i, a in enumerate(("E", "N", "U")):
