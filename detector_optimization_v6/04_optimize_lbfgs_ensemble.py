@@ -84,7 +84,7 @@ _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(
 
 # ── Config ───────────────────────────────────────────────────────────────────
 INIT_SCHEMES         = ("grid", "center")
-RUN_COMBINED         = True
+RUN_COMBINED         = False # True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_full_corpus_{scheme}"
 # Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
@@ -115,9 +115,20 @@ LBFGS_LR             = 1.0
 LBFGS_HISTORY_SIZE   = 20
 LBFGS_BATCH_PRIMARIES = 15000    # FIXED batch → deterministic objective for line search
 
+# Cap on how many corpus primaries the L-BFGS sweep covers (0 = the whole
+# corpus). The sweep visits ceil(n_primaries / LBFGS_BATCH_PRIMARIES) chunks per
+# chain, so its cost is LINEAR in corpus size: 67 chunks at the 1M-row corpus
+# (measured 6.35 h/scheme) becomes 477 at 7.14M rows (~45 h/scheme). That growth
+# buys nothing statistically — the layout is only 2*N_DETECTORS = 200 free
+# parameters, and the corpus was enlarged for the SURROGATE (Steps 2/3), which
+# still trains on every row. A fixed seeded subsample keeps the objective's
+# per-chunk determinism (what the line search needs) while holding the sweep at
+# the measured cost.
+LBFGS_MAX_SWEEP_PRIMARIES = 1_000_000
+
 # Composite weights (W_*) + reconstructability thresholds are imported from
 # modules_v6/opt_core.py (shared across the 04 optimizers).
-SEED   = 42
+SEED   = 4200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Density heatmap colorbar upper limit (plots [0, DENSITY_VMAX]); keeps faint
@@ -381,13 +392,29 @@ def _run_one_scheme(scheme: str,
             all_adam_grads.append(ag)
             source_per_run.append(src)
 
-    # Split the FULL corpus into shuffled chunks of LBFGS_BATCH_PRIMARIES so
-    # every primary is eventually seen — even though each L-BFGS closure can
-    # only hold one batch in memory at a time. The same chunk order is reused
-    # for every Adam-best so all refinements stay directly comparable.
-    g = torch.Generator()  # .manual_seed(SEED)
-    perm = torch.randperm(n_total_primaries, generator=g)
-    n_chunks = math.ceil(n_total_primaries / LBFGS_BATCH_PRIMARIES)
+    # Split the corpus into shuffled chunks of LBFGS_BATCH_PRIMARIES, so each
+    # L-BFGS closure holds one batch while the sweep still covers the pool. The
+    # same chunk order is reused for every Adam-best so all refinements stay
+    # directly comparable.
+    #
+    # LBFGS_MAX_SWEEP_PRIMARIES caps the pool (see its definition): the sweep's
+    # cost is linear in pool size and the 200-parameter layout doesn't need the
+    # whole 7M-row corpus.
+    #
+    # SEEDED (it wasn't before): with per-chain resume, an unseeded permutation
+    # would re-draw a different order — and, under the cap, a different SUBSET —
+    # after a preemption, so chains refined before and after the restart would
+    # be optimized against different data and the aligned ensemble would mix
+    # them. Seeding makes the pool and chunk order identical across resubmits.
+    n_sweep = n_total_primaries
+    if LBFGS_MAX_SWEEP_PRIMARIES and LBFGS_MAX_SWEEP_PRIMARIES < n_total_primaries:
+        n_sweep = int(LBFGS_MAX_SWEEP_PRIMARIES)
+    g = torch.Generator().manual_seed(SEED)
+    perm = torch.randperm(n_total_primaries, generator=g)[:n_sweep]
+    n_chunks = math.ceil(n_sweep / LBFGS_BATCH_PRIMARIES)
+    print(f"[lbfgs] sweep pool={n_sweep} of {n_total_primaries} primaries "
+          f"-> {n_chunks} chunk(s) of {LBFGS_BATCH_PRIMARIES}"
+          f"{'  (capped)' if n_sweep < n_total_primaries else ''}")
     primary_chunks = [
         primary_all[perm[i * LBFGS_BATCH_PRIMARIES:(i + 1) * LBFGS_BATCH_PRIMARIES]].to(DEVICE)
         for i in range(n_chunks)
