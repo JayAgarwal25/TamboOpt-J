@@ -56,6 +56,7 @@ from modules_v6.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     TRAINING_DATASET_FOLDER,
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
+    T_LOG_SCALE,
 )
 from modules_v4.tr_geometry       import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -73,7 +74,6 @@ _spec00 = _ilu.spec_from_file_location(
 gen00 = _ilu.module_from_spec(_spec00); _spec00.loader.exec_module(gen00)
 sample_primary_particles = gen00.sample_primary_particles   # re-export
 
-T_LOG_SCALE = 1.0e8          # must match 02_train_fnn*.py
 FIRE_EPS    = 1.0e-3         # log1p(E) above this ⇒ detector "fired" this shower
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -105,7 +105,7 @@ def _describe(x: torch.Tensor) -> dict:
 
 def _corpus_label_stats() -> dict:
     """Corpus label distributions in the trainer's log space (E = log1p(E),
-    T = log1p(T*1e8)): full _describe (min/max/mean/std + z-range) over ALL
+    T = log1p(T*T_LOG_SCALE)): full _describe (min/max/mean/std + z-range) over ALL
     detectors and over the FIRED subset (E > FIRE_EPS). The `std` fields are the
     floor's z-score denominators; the min/max/mean give the range to read the std
     against. (Fired std differs from global std because the global also includes

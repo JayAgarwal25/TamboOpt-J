@@ -61,11 +61,12 @@ RECON_VAL_SEED = 1
 VAL_FRAC       = 0.10
 BATCH          = 1024
 
-# Mirror the log-T transform applied inside 02_train_fnn.py — the FNN was
-# trained with log1p(T * 1e8) as its canonical T target, so the ground-truth
-# T tensor must be passed through the same transform before the FNN scatter
-# is apples-to-apples.
-T_LOG_SCALE = 1.0e8
+# Mirror the log-T transform applied inside 02_train_fnn.py: the FNN is
+# trained with log1p(T * T_LOG_SCALE) as its canonical T target, so the
+# ground-truth T tensor must be passed through the same transform before the
+# FNN scatter is apples-to-apples. Imported from constants so this cannot go
+# stale against the trainer.
+from modules_v6.constants import T_LOG_SCALE
 
 
 def shower_level_val_idx(strategy_ids: torch.Tensor,

@@ -24,6 +24,15 @@ becomes 1 for all layer-20 points and 0 for the rest, reproducing filter_plane=2
 
 Post-processing (SmearN, TimeAverage_vectorized) is identical to v3 — the
 callables are imported from v3's modules.detector_response and passed in.
+
+Return convention: local_intensity is the raw kernel-weighted energy sum
+(matches v3's GetCounts_differentiable, no post-processing). arrival_time is
+the kernel-weighted MEAN arrival time sum(t*K)/sum(K) per THEORY.md, i.e. it
+is normalized by the kernel weight actually landing on each detector, not by
+the padded point count; the two only agree when every padded row happens to
+carry zero kernel weight AND the live kernel weight sums to the point count,
+which is not the general case. The legacy (pre-fix) unnormalized form is kept
+available via time_normalized=False for reproducing historical numbers.
 """
 
 import torch
@@ -38,6 +47,7 @@ def GetCounts_planeaware(
     fluxB_e:  torch.Tensor,
     TimeAverage_vectorized_fn,
     sigma:   float = 200.0,
+    time_normalized: bool = True,
 ) -> tuple:
     """Plane-aware differentiable count extraction.
 
@@ -56,10 +66,21 @@ def GetCounts_planeaware(
         fluxB_e               : accepted for interface compatibility, not called.
         TimeAverage_vectorized_fn : accepted for interface compatibility, not called.
         sigma    : Gaussian spatial kernel width [m] (default 200 m, same as v3).
+        time_normalized : if True (default), arrival_time is the kernel-weighted
+                   MEAN arrival time sum(t*K)/sum(K), per THEORY.md. If False,
+                   reproduces the legacy form sum(t*K)/P (P = padded point count,
+                   a constant that does not track how much kernel weight actually
+                   lands on the detector) for reproducing historical numbers.
 
     Returns:
-        (local_intensity, et) : each (B, n_det), differentiable in x_det, y_det, z_cont.
-        Matches v3's GetCounts_differentiable return convention (raw values, no post-processing).
+        (local_intensity, arrival_time) : each (B, n_det), differentiable in
+        x_det, y_det, z_cont. local_intensity is the raw kernel-weighted energy
+        sum, matching v3's GetCounts_differentiable convention. Padding rows
+        (energy=0) carry zero weight in local_intensity by construction and
+        additionally carry zero kernel weight through the plane term whenever
+        their layer_index sits outside every detector's ±1 window (the usual
+        padding convention), so they cannot move arrival_time under either
+        form: dividing a fixed zero contribution by sum(K) or by P is still zero.
     """
     point_x = samples[..., 0]    # (B, P)
     point_y = samples[..., 1]    # (B, P)
@@ -83,13 +104,17 @@ def GetCounts_planeaware(
     energy_kernel = point_e.unsqueeze(2) * kernel                 # (B, P, n_det)
 
     local_intensity = energy_kernel.sum(dim=1)                    # (B, n_det)
-    arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
-    # et = (
-    #     (point_t.unsqueeze(2) * energy_kernel).sum(dim=1)
-    #     / local_intensity.clamp(min=1e-8)
-    # )                                                              # (B, n_det)
+    if time_normalized:
+        # Kernel-weighted mean arrival time, per THEORY.md. Detectors with zero
+        # total kernel weight (nothing near them) get T=0 rather than 0/0.
+        arrival_time = (point_t.unsqueeze(2) * kernel).sum(dim=1) / kernel.sum(dim=1).clamp(min=1e-12)
+    else:
+        # Legacy unnormalized form: kernel-weighted sum divided by the padded
+        # point count P, not by the kernel weight actually landing on the
+        # detector. Kept for reproducing historical numbers.
+        arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
 
-    # Return raw (local_intensity, et), matching v3's GetCounts_differentiable
+    # Return (local_intensity, arrival_time), matching v3's GetCounts_differentiable
     # behaviour.  SmearN_fn / TimeAverage_vectorized_fn are accepted for
     # interface compatibility but not called — v3 also accepts them as kwargs
     # without calling them.
