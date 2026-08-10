@@ -92,7 +92,7 @@ OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_full_corpus_{scheme}"
 RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.
-N_CHAINS            = 15
+N_CHAINS            = 8
 INIT_OVERDISP_SIGMA = 100.0  # metres — per-restart init spread around scheme init
 
 # Adam warm-start
@@ -109,11 +109,24 @@ ADAM_LOG_EVERY      = 100
 # 1 = no averaging (raw, noisy).
 GRAD_COS_WINDOW     = 10
 
+# Detector-position trajectory logging. The optimizer used to persist only
+# scalar U per step, so a layout animation had to be reconstructed by replaying
+# Adam from the stored gradients. Recording (East, North) directly makes the
+# path a first-class artifact: `trajectory.pt` per scheme, plus the same arrays
+# inside the resume checkpoints so a preemption doesn't lose them.
+#
+# Stride keeps the cost small: at every 5th step a chain is 1000 frames x 200
+# floats x 4 B = 800 KB, ~12 MB per scheme for K=15 (adam_resume.pt is already
+# ~66 MB). Set to 1 for every step.
+POS_LOG_EVERY = 5
+
 # L-BFGS refinement (stage 2)
 LBFGS_MAX_ITER       = 1_500
 LBFGS_LR             = 1.0
 LBFGS_HISTORY_SIZE   = 20
-LBFGS_BATCH_PRIMARIES = 15000    # FIXED batch → deterministic objective for line search
+# LBFGS_BATCH_PRIMARIES = 15000
+# LBFGS_BATCH_PRIMARIES = 8000
+LBFGS_BATCH_PRIMARIES = 6000
 
 # Cap on how many corpus primaries the L-BFGS sweep covers (0 = the whole
 # corpus). The sweep visits ceil(n_primaries / LBFGS_BATCH_PRIMARIES) chunks per
@@ -144,10 +157,14 @@ def adam_warm_start(scheme: str,
                     n_total_primaries: int,
                     init_override):
     """N_ADAM_EPOCHS of Adam with mountain projection. Returns:
-       (best_x, best_y, init_x, init_y, log, grad_hist). `init_override=(x, y)`
-       is the (already mountain-projected) starting layout; `scheme` is a log
-       label. `grad_hist` is a (N_ADAM_EPOCHS, 2*n_det) CPU tensor of the flat
-       parameter gradient at each step (for cross-run gradient diagnostics)."""
+       (best_x, best_y, init_x, init_y, log, grad_hist, pos_hist).
+       `init_override=(x, y)` is the (already mountain-projected) starting
+       layout; `scheme` is a log label. `grad_hist` is a (N_ADAM_EPOCHS,
+       2*n_det) CPU tensor of the flat parameter gradient at each step (for
+       cross-run gradient diagnostics). `pos_hist` is a (n_frames, 2*n_det) CPU
+       tensor of the flat (East|North) layout recorded every POS_LOG_EVERY
+       steps AFTER the mountain projection — i.e. the positions the next step
+       actually starts from — with the initial layout as frame 0."""
     e_init, n_init = init_override          # (East, North): first coord is East
     e_init = e_init.float()
     n_init = n_init.float()
@@ -159,6 +176,9 @@ def adam_warm_start(scheme: str,
 
     log = []
     grad_hist = []
+    # Frame 0 = the starting layout, so the trajectory is self-contained (no
+    # need to pair it with perturbed_inits to know where it began).
+    pos_hist = [torch.cat([e_init.reshape(-1), n_init.reshape(-1)]).clone()]
     best_u = -float("inf")
     best_x = e_init.clone()
     best_y = n_init.clone()
@@ -189,6 +209,11 @@ def adam_warm_start(scheme: str,
             e_new, n_new = project_to_mountain_ne(mountain, e_cpu, n_cpu)
             xy_module.x.data.copy_(e_new.to(DEVICE).to(xy_module.x.dtype))
             xy_module.y.data.copy_(n_new.to(DEVICE).to(xy_module.y.dtype))
+            # Post-projection layout: what the next step starts from. Always
+            # record the last step too, so pos_hist ends at the final layout.
+            if (epoch + 1) % POS_LOG_EVERY == 0 or epoch == N_ADAM_EPOCHS - 1:
+                pos_hist.append(
+                    torch.cat([e_new.reshape(-1), n_new.reshape(-1)]).float().clone())
 
         u_val = float(U.item())
         if u_val > best_u:
@@ -208,7 +233,8 @@ def adam_warm_start(scheme: str,
 
     print(f"[adam] best U={best_u:+.3f}")
     grad_hist = torch.stack(grad_hist, dim=0) if grad_hist else torch.zeros(0)
-    return best_x, best_y, e_init, n_init, log, grad_hist
+    pos_hist  = torch.stack(pos_hist,  dim=0) if pos_hist  else torch.zeros(0)
+    return best_x, best_y, e_init, n_init, log, grad_hist, pos_hist
 
 
 def _build_chain_inits(init_x: torch.Tensor, init_y: torch.Tensor,
@@ -226,8 +252,10 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
                          init_center=None, resume_path=None):
     """K pre-Adam perturbations of the scheme init → K Adam runs.
 
-    Returns (adam_bests, adam_logs, perturbed_inits, adam_grads), each length K.
-    adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step gradient history.
+    Returns (adam_bests, adam_logs, perturbed_inits, adam_grads, adam_positions),
+    each length K. adam_grads[k] is the (N_ADAM_EPOCHS, 2*n_det) per-step
+    gradient history; adam_positions[k] is the (n_frames, 2*n_det) layout
+    trajectory (see POS_LOG_EVERY).
 
     If init_center is a (N_DETECTORS, 2) tensor with (East, North) per detector,
     all K chains are warm-started from that layout with small N(0, 10m) per-chain
@@ -245,13 +273,23 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
         _ck = torch.load(resume_path, map_location="cpu", weights_only=False)
         adam_bests, adam_logs = _ck["adam_bests"], _ck["adam_logs"]
         perturbed_inits, adam_grads = _ck["perturbed_inits"], _ck["adam_grads"]
+        # Older checkpoints predate position logging; treat them as empty so a
+        # resumed run still completes (those chains just have no trajectory).
+        adam_positions = _ck.get("adam_positions", [])
+        if len(adam_positions) < len(adam_bests):
+            adam_positions = adam_positions + [torch.zeros(0)] * (
+                len(adam_bests) - len(adam_positions))
+            print(f"[resume] {resume_path}: checkpoint predates position logging — "
+                  f"{len(adam_bests)} chain(s) will have no trajectory")
         if len(adam_bests) >= K:
             print(f"[resume] {resume_path}: all {K} chains already done "
                   "(reusing cached Adam results, not recomputing)")
-            return adam_bests[:K], adam_logs[:K], perturbed_inits[:K], adam_grads[:K]
+            return (adam_bests[:K], adam_logs[:K], perturbed_inits[:K],
+                    adam_grads[:K], adam_positions[:K])
         print(f"[resume] {resume_path}: {len(adam_bests)}/{K} chains already done")
     else:
         adam_bests, adam_logs, perturbed_inits, adam_grads = [], [], [], []
+        adam_positions = []
     k_start = len(adam_bests)
 
     if init_center is not None:
@@ -276,7 +314,7 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
         xk, yk = project_to_mountain_ne(mountain, xk, yk)
         perturbed_inits.append((xk.float().clone(), yk.float().clone()))
         print(f"\n[perturb→adam] scheme={scheme}  chain {k+1}/{K}")
-        bx, by, _, _, log, ghist = adam_warm_start(
+        bx, by, _, _, log, ghist, phist = adam_warm_start(
             scheme=scheme, mountain=mountain, fnn=fnn, recon=recon,
             primary_all=primary_all, n_total_primaries=n_total_primaries,
             init_override=(xk, yk),
@@ -284,13 +322,15 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
         adam_bests.append((bx, by))
         adam_logs.append(log)
         adam_grads.append(ghist)
+        adam_positions.append(phist)
 
         if resume_path:
             _tmp = resume_path + ".tmp"
             torch.save({"adam_bests": adam_bests, "adam_logs": adam_logs,
-                       "perturbed_inits": perturbed_inits, "adam_grads": adam_grads}, _tmp)
+                       "perturbed_inits": perturbed_inits, "adam_grads": adam_grads,
+                       "adam_positions": adam_positions}, _tmp)
             os.replace(_tmp, resume_path)
-    return adam_bests, adam_logs, perturbed_inits, adam_grads
+    return adam_bests, adam_logs, perturbed_inits, adam_grads, adam_positions
 
 
 def lbfgs_refine(init_x: torch.Tensor,
@@ -303,9 +343,17 @@ def lbfgs_refine(init_x: torch.Tensor,
 
     Runs unconstrained (the line search needs a smooth objective), then
     projects the optimum back onto the mountain and re-scores it on the same
-    fixed batch. Returns (x_proj, y_proj, U_proj, iter_log, grad_hist) where
-    grad_hist is a (n_closure_calls, 2*n_det) CPU tensor of the flat gradient
-    at each closure evaluation (for cross-run gradient diagnostics)."""
+    fixed batch. Returns (x_proj, y_proj, U_proj, iter_log, grad_hist,
+    pos_hist). grad_hist is a (n_closure_calls, 2*n_det) CPU tensor of the flat
+    gradient at each closure evaluation (for cross-run gradient diagnostics);
+    pos_hist is the matching (n_closure_calls, 2*n_det) layout at each
+    evaluation, with the mountain-projected optimum appended as the last frame.
+
+    Note these are CLOSURE evaluations, not accepted iterates: strong-Wolfe
+    probes points it then rejects, so the path includes line-search trials and
+    is not monotonic in U. It is also unprojected until that final frame (the
+    optimizer runs free and projects once at the end), unlike the Adam
+    trajectory which is projected every step."""
     xy = torch.cat([init_x.to(DEVICE), init_y.to(DEVICE)], dim=0).detach().clone()
     xy.requires_grad_(True)
 
@@ -317,6 +365,7 @@ def lbfgs_refine(init_x: torch.Tensor,
 
     iter_log = []
     grad_hist = []
+    pos_hist = []
 
     class _NonFiniteLoss(Exception):
         pass
@@ -331,6 +380,9 @@ def lbfgs_refine(init_x: torch.Tensor,
             raise _NonFiniteLoss
         loss.backward()
         grad_hist.append(xy.grad.detach().reshape(-1).cpu())   # (2*n_det,)
+        # grad_hist was just appended, so len-1 is this closure's 0-based index.
+        if (len(grad_hist) - 1) % POS_LOG_EVERY == 0:
+            pos_hist.append(xy.detach().reshape(-1).float().cpu().clone())
         iter_log.append(dict(
             iter=len(iter_log), U=float(U.item()), r_mean=float(r.mean().item()),
             u_theta=float(parts["u_theta"].item()),
@@ -361,8 +413,13 @@ def lbfgs_refine(init_x: torch.Tensor,
         U_proj, _, _ = utility_of_xy(
             x_proj.to(DEVICE), y_proj.to(DEVICE), primary_fixed, fnn, recon,
         )
+    # Final frame = the mountain-projected optimum actually returned, so the
+    # trajectory ends where the next chunk (or the ensemble) picks up.
+    pos_hist.append(torch.cat([x_proj.reshape(-1), y_proj.reshape(-1)]).float().cpu())
     grad_hist = torch.stack(grad_hist, dim=0) if grad_hist else torch.zeros(0)
-    return x_proj.float(), y_proj.float(), float(U_proj.item()), iter_log, grad_hist
+    pos_hist  = torch.stack(pos_hist,  dim=0) if pos_hist  else torch.zeros(0)
+    return (x_proj.float(), y_proj.float(), float(U_proj.item()),
+            iter_log, grad_hist, pos_hist)
 
 
 def _run_one_scheme(scheme: str,
@@ -385,11 +442,13 @@ def _run_one_scheme(scheme: str,
 
     # Flatten Adam-bests across all sources (track which source each came from).
     all_bests, all_adam_logs, all_adam_grads, source_per_run = [], [], [], []
-    for src, (bests, logs, _inits, agrads) in per_source.items():
-        for (bx, by), log, ag in zip(bests, logs, agrads):
+    all_adam_pos = []
+    for src, (bests, logs, _inits, agrads, apos) in per_source.items():
+        for (bx, by), log, ag, ap in zip(bests, logs, agrads, apos):
             all_bests.append((bx, by))
             all_adam_logs.append(log)
             all_adam_grads.append(ag)
+            all_adam_pos.append(ap)
             source_per_run.append(src)
 
     # Split the corpus into shuffled chunks of LBFGS_BATCH_PRIMARIES, so each
@@ -433,10 +492,15 @@ def _run_one_scheme(scheme: str,
         _ck = torch.load(lbfgs_resume_path, map_location="cpu", weights_only=False)
         refined, lbfgs_logs = _ck["refined"], _ck["lbfgs_logs"]
         refined_U, all_lbfgs_grads = _ck["refined_U"], _ck["all_lbfgs_grads"]
+        all_lbfgs_pos = _ck.get("all_lbfgs_pos", [])          # pre-logging checkpoints
+        if len(all_lbfgs_pos) < len(refined):
+            all_lbfgs_pos = all_lbfgs_pos + [torch.zeros(0)] * (
+                len(refined) - len(all_lbfgs_pos))
         k_start = len(refined)
         print(f"[resume] {lbfgs_resume_path}: {k_start}/{len(all_bests)} chains already refined")
     else:
         refined, lbfgs_logs, refined_U, all_lbfgs_grads = [], [], [], []
+        all_lbfgs_pos = []
         k_start = 0
 
     for k, (bx, by) in enumerate(all_bests):
@@ -445,23 +509,27 @@ def _run_one_scheme(scheme: str,
         print(f"[lbfgs] refine {k+1}/{len(all_bests)}  (src={source_per_run[k]})  "
               f"over {n_chunks} chunk(s)")
         xp, yp = bx, by
-        run_logs, run_grads = [], []
+        run_logs, run_grads, run_pos = [], [], []
         for c, primary_chunk in enumerate(primary_chunks):
-            xp, yp, Up, lg, ghist = lbfgs_refine(xp, yp, fnn, recon, primary_chunk, mountain)
+            xp, yp, Up, lg, ghist, phist = lbfgs_refine(
+                xp, yp, fnn, recon, primary_chunk, mountain)
             run_logs.extend(lg)
             run_grads.extend(ghist)
+            run_pos.extend(phist)          # chunks run back-to-back -> one path
             print(f"  [lbfgs] refine {k} chunk {c+1}/{n_chunks}  U={Up:+.3f}  "
                   f"({len(lg)} closure calls)")
         refined.append((xp, yp))
         refined_U.append(Up)
         lbfgs_logs.append(run_logs)
         all_lbfgs_grads.append(run_grads)
+        all_lbfgs_pos.append(torch.stack(run_pos, dim=0) if run_pos else torch.zeros(0))
         print(f"  [lbfgs] refine {k} DONE  final U={Up:+.3f}  "
               f"({sum(len(lg) for lg in [run_logs])} total closure calls)")
 
         _tmp = lbfgs_resume_path + ".tmp"
         torch.save({"refined": refined, "lbfgs_logs": lbfgs_logs,
-                   "refined_U": refined_U, "all_lbfgs_grads": all_lbfgs_grads}, _tmp)
+                   "refined_U": refined_U, "all_lbfgs_grads": all_lbfgs_grads,
+                   "all_lbfgs_pos": all_lbfgs_pos}, _tmp)
         os.replace(_tmp, lbfgs_resume_path)
 
     # Per-run consecutive-step gradient cosine distance (Adam + L-BFGS phases),
@@ -501,6 +569,23 @@ def _run_one_scheme(scheme: str,
                 "source_per_run": source_per_run,
                 "ref_idx": ref_idx},
                os.path.join(opt_dir, "layouts_all.pt"))
+
+    # Layout trajectories, for post-hoc animation/inspection. Per chain:
+    #   adam[k]  : (n_frames, 2*n_det) every POS_LOG_EVERY Adam steps,
+    #              post-projection, frame 0 = the chain's starting layout.
+    #   lbfgs[k] : (n_frames, 2*n_det) every POS_LOG_EVERY L-BFGS CLOSURE calls
+    #              (line-search probes included, so not monotonic in U),
+    #              concatenated across chunks, ending on the projected optimum.
+    # Split x/y with t[:, :n_det] = East, t[:, n_det:] = North.
+    torch.save({"adam": all_adam_pos,
+                "lbfgs": all_lbfgs_pos,
+                "source_per_run": source_per_run,
+                "refined_U": refined_U,
+                "ref_idx": ref_idx,
+                "n_det": N_DETECTORS,
+                "pos_log_every": POS_LOG_EVERY,
+                "adam_epochs": N_ADAM_EPOCHS},
+               os.path.join(opt_dir, "trajectory.pt"))
 
     with open(os.path.join(opt_dir, "optimize_log.json"), "w") as f:
         json.dump({
@@ -572,11 +657,19 @@ def _run_one_scheme(scheme: str,
 
 def main():
     global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX
+    global INIT_SCHEMES
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--chains", type=int, default=N_CHAINS)
     ap.add_argument("--adam-epochs", type=int, default=N_ADAM_EPOCHS)
     ap.add_argument("--lbfgs-iters", type=int, default=LBFGS_MAX_ITER)
+    ap.add_argument("--schemes", type=str, default=",".join(INIT_SCHEMES),
+                    help="comma-separated init schemes to run (choices: grid, "
+                         "center, random; default: all of "
+                         f"'{','.join(INIT_SCHEMES)}'). Each scheme writes its own "
+                         "OPT_DIR_TEMPLATE folder, so passing ONE scheme per "
+                         "process is how the schemes get split across parallel "
+                         "jobs instead of running back-to-back in one.")
     ap.add_argument("--density-vmax", type=float, default=DENSITY_VMAX,
                     help="density heatmap colorbar upper limit (plots [0, vmax]); "
                          "pass <=0 to auto-scale (default from config)")
@@ -600,6 +693,13 @@ def main():
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
     DENSITY_VMAX = float(args.density_vmax)
+
+    _valid = ("grid", "center", "random")   # sample_initial_layout_ne schemes
+    INIT_SCHEMES = tuple(s.strip() for s in args.schemes.split(",") if s.strip())
+    _bad = [s for s in INIT_SCHEMES if s not in _valid]
+    if _bad or not INIT_SCHEMES:
+        raise SystemExit(f"--schemes: unknown {_bad or '(empty)'}; "
+                         f"choose from {_valid}")
 
     print("=" * 72)
     print("v6/04_optimize_lbfgs_ensemble.py — Adam warm-start + L-BFGS ensemble")
@@ -672,8 +772,10 @@ def main():
             print(f"[skip] scheme={scheme} already complete ({layout_best_path}); "
                   "reloading cached Adam results for combined use")
             _ck = torch.load(adam_resume_path, map_location="cpu", weights_only=False)
+            _apos = _ck.get("adam_positions", [])      # pre-logging checkpoints
+            _apos = _apos + [torch.zeros(0)] * (len(_ck["adam_bests"]) - len(_apos))
             per_scheme[scheme] = (_ck["adam_bests"], _ck["adam_logs"],
-                                  _ck["perturbed_inits"], _ck["adam_grads"])
+                                  _ck["perturbed_inits"], _ck["adam_grads"], _apos)
             # best_x/best_y/best_U/opt_dir are all the summary print below
             # reads; mean_std_x/y aren't recoverable without re-aligning the
             # ensemble, so they're reported as n/a for a skipped scheme.

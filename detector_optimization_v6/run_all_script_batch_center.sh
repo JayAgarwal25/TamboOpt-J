@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH -p gpu_test
 #SBATCH --mem=64g        			
-#SBATCH --time=03:15:00
+#SBATCH --time=12:00:00
 #SBATCH -c 8
 #SBATCH --gres=gpu:1
 #SBATCH --open-mode=append
-#SBATCH -J run_all_script_batch
+#SBATCH -J run_all_script_batch_center
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 
 module load python
@@ -23,7 +23,7 @@ export PYTHONUNBUFFERED=1
 # between open(...,"w") truncating it and json.dump refilling it). -f accepted
 # the 0-byte file, so every json.load below threw and no step was ever marked
 # done -- the whole pipeline re-ran from scratch every time.
-STATUS_FILE="pipeline_status.json"
+STATUS_FILE="pipeline_status_center.json"
 [ -s "$STATUS_FILE" ] || echo '{}' > "$STATUS_FILE"
 
 run_step () {
@@ -48,6 +48,6 @@ run_step 00_generate_data_dual_species.py --n-pairs 0
 run_step 01_build_dataset_northeast.py
 run_step 02_train_fnn_deepsets.py
 run_step 03_train_recon_deepsets.py
-run_step 04_optimize_lbfgs_ensemble.py
+run_step 04_optimize_lbfgs_ensemble.py --schemes center
 
 

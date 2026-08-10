@@ -29,7 +29,11 @@ The recon scatter uses the combined DualSpeciesSurrogate on the full corpus,
 exactly as 03_train_recon.py does. Outputs:
     FNN_FOLDER/fnn_electron_target_vs_pred.png
     FNN_FOLDER/fnn_muon_target_vs_pred.png
-    RECON_FOLDER/recon_target_vs_pred.png
+    RECON_FOLDER_deepsets/recon_target_vs_pred.png
+
+Note the recon folder: 03_train_recon_deepsets.py writes to
+RECON_FOLDER + "_deepsets", so that is where --dual reads recon.pt and writes
+its scatter. Plain RECON_FOLDER belongs to the older flat-MLP 03_train_recon.py.
 """
 import os
 import sys
@@ -50,10 +54,15 @@ from modules_v6.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
     N_DETECTORS, PRIMARY_DIM,
 )
-from modules_v6.reconstruction import Reconstruction
+from modules_v6.reconstruction import build_recon_from_ckpt
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# 03_train_recon_deepsets.py writes to RECON_FOLDER + "_deepsets" (its line 50),
+# not RECON_FOLDER — that plain folder only exists for the older flat-MLP
+# 03_train_recon.py run.
+RECON_DEEPSETS_FOLDER = RECON_FOLDER + "_deepsets"
 
 # Seeds match 02_train_fnn.py and 03_train_recon.py
 FNN_VAL_SEED   = 0
@@ -89,7 +98,7 @@ def shower_level_val_idx(strategy_ids: torch.Tensor,
     return torch.nonzero(val_mask).squeeze(-1)
 
 
-def _scatter(ax, x, y, title: str, vmin=None, vmax=None):
+def _scatter(ax, x, y, title: str, vmin=None, vmax=None, lo=None, hi=None):
     """Density-coloured target-vs-prediction panel.
 
     Hexbin with a log-scale colour normalization so the heavy bulk near
@@ -97,19 +106,19 @@ def _scatter(ax, x, y, title: str, vmin=None, vmax=None):
     empty bins blank so the y = x reference line stays readable. Pass
     `vmin` / `vmax` (in raw counts) to pin the colour scale across plots."""
     from matplotlib.colors import LogNorm, Normalize
-    lo = 0.0
-    hi = float(max(x.max(), y.max()))
-    # norm = LogNorm(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else LogNorm()
+    lo = 0.0 if lo is None else lo
+    hi = float(max(x.max(), y.max())) if hi is None else hi
+    # norm = LogNorm(vmin=1, vmax=vmax) 
     norm = Normalize(vmin=vmin, vmax=vmax) if (vmin is not None or vmax is not None) else Normalize()
     hb = ax.hexbin(x, y, gridsize=80, cmap="viridis", norm=norm,
                    mincnt=1, extent=(lo, hi, lo, hi))
     plt.colorbar(hb, ax=ax, label="count", pad=0.02, fraction=0.046)
-    ax.plot([lo, hi], [lo, hi], color="red", linestyle="--", linewidth=1.0,
+    ax.plot([lo, hi], [lo, hi], color="red", linestyle="--", linewidth=2.0,
             alpha=0.85, label="y = x")
     ax.set_xlabel("target"); ax.set_ylabel("prediction")
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
     ax.set_title(title)
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
+    ax.legend(loc="upper left", fontsize=8, framealpha=1)
 
 
 def load_fnn() -> FNNSurrogate:
@@ -153,27 +162,21 @@ def fnn_predict(fnn: FNNSurrogate,
     return E_pred, T_pred
 
 
-def load_recon() -> Reconstruction:
+def load_recon(folder: str = RECON_DEEPSETS_FOLDER):
     """Mirror of load_fnn() for the recon checkpoint. Used by the standalone
-    CLI path; training scripts pass an already-trained Reconstruction in."""
-    recon_ckpt = torch.load(os.path.join(RECON_FOLDER, "recon.pt"), map_location=DEVICE)
-    cfg = recon_ckpt.get("config", {})
-    recon = Reconstruction(
-        n_det=int(recon_ckpt["num_detectors"]),
-        input_features=int(recon_ckpt["input_features"]),
-        output_dim=int(cfg.get("output_dim", 4)),
-        hidden=int(cfg.get("hidden", 512)),
-        dropout=float(cfg.get("dropout", 0.1)),
-    ).to(DEVICE)
-    recon.load_state_dict(recon_ckpt["state_dict"])
-    recon.set_normalization(
-        in_mean  = recon_ckpt["input_mean" ].to(DEVICE),
-        in_std   = recon_ckpt["input_std"  ].to(DEVICE),
-        out_mean = recon_ckpt["target_mean"].to(DEVICE),
-        out_std  = recon_ckpt["target_std" ].to(DEVICE),
-    )
-    recon.eval()
-    print(f"[load] recon.pt  epoch={recon_ckpt.get('epoch','?')}  "
+    CLI path; training scripts pass an already-trained recon in.
+
+    Dispatches on the checkpoint's own config["model_type"] via
+    build_recon_from_ckpt, so flat-MLP ("mlp") and DeepSets ("deepsets")
+    checkpoints both load. Hardcoding Reconstruction here predated
+    03_train_recon_deepsets.py and died on a state_dict shape mismatch
+    against its checkpoints."""
+    recon_ckpt = torch.load(os.path.join(folder, "recon.pt"),
+                            map_location=DEVICE, weights_only=False)
+    recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
+    print(f"[load] {folder}/recon.pt  "
+          f"model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
+          f"epoch={recon_ckpt.get('epoch','?')}  "
           f"val={recon_ckpt.get('val_total','?')} "
           f"lbfgs_iter={recon_ckpt.get('lbfgs_iter','?')}")
     return recon
@@ -251,12 +254,13 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
 
     labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
     vmin_s = (1, 1, 1, 1)
-    # vmax_s = (350, 350, 250, 600)
-    # vmax_s = (200, 200, 200, 400)
-    vmax_s = (100, 100, 100, 200)
+    # vmax_s = (100, 100, 100, 200)
+    vmax_s = (80, 200, 200, 200)
+    # vmax_s = (200, 300, 300, 500)
+    hi = (1, 1, 0.5, 1)
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
     for i, name in enumerate(labels):
-        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i]) # TODO
+        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i], hi=hi[i]) # TODO
     fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
     fig.tight_layout()
     fig.savefig(output_path, dpi=130)
@@ -319,11 +323,16 @@ def plot_fnn_only(*, fnn=None,
 def plot_recon_only(*, fnn=None, recon=None,
                     primary=None, xy=None,
                     val_idx=None,
-                    output_path=None):
+                    output_path=None,
+                    recon_folder=RECON_DEEPSETS_FOLDER):
     """Render recon_target_vs_pred.png. Like `plot_fnn_only`, every argument
     is optional. Training-script callers (03_train_recon.py) pass fnn +
     recon (best weights reloaded) + primary + xy + val_idx; no disk I/O for
-    those is then performed."""
+    those is then performed.
+
+    `recon_folder` is where a None `recon` is loaded from and where a None
+    `output_path` lands — keep the checkpoint and its scatter in the same
+    run folder."""
     if primary is None or xy is None:
         primary, xy, _E, _T, strat_ids_disk = _load_corpus()
     else:
@@ -337,17 +346,17 @@ def plot_recon_only(*, fnn=None, recon=None,
     if fnn is None:
         fnn = load_fnn()
     if recon is None:
-        recon = load_recon()
+        recon = load_recon(recon_folder)
     if output_path is None:
-        os.makedirs(RECON_FOLDER, exist_ok=True)
-        output_path = os.path.join(RECON_FOLDER, "recon_target_vs_pred.png")
+        os.makedirs(recon_folder, exist_ok=True)
+        output_path = os.path.join(recon_folder, "recon_target_vs_pred.png")
     _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path)
 
 
 # Per-species hexbin colour (count) limits for the dual FNN scatters:
 # (vmin_E, vmax_E, vmin_T, vmax_T). Muon signals are denser than electron.
 FNN_DUAL_VLIM = {
-    "electron": dict(vmin_E=0, vmax_E=500,  vmin_T=0, vmax_T=500),
+    "electron": dict(vmin_E=0, vmax_E=2000,  vmin_T=0, vmax_T=2000),
     "muon":     dict(vmin_E=0, vmax_E=3000, vmin_T=0, vmax_T=1000),
 }
 
@@ -381,14 +390,15 @@ def plot_fnn_dual(output_dir=None):
                             **FNN_DUAL_VLIM[tag])
 
 
-def plot_recon_dual(output_path=None):
+def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER):
     """Recon scatter for the dual-species surrogate. The combined
     DualSpeciesSurrogate (fnn_electron.pt + fnn_muon.pt) feeds the recon on the
     FULL corpus — identical to 03_train_recon.py. recon.pt itself is a single
     (non-per-species) net, so load_recon() is reused unchanged."""
     from modules_v6.dual_surrogate import load_dual_surrogate
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
-    plot_recon_only(fnn=dual, output_path=output_path)
+    plot_recon_only(fnn=dual, output_path=output_path,
+                    recon_folder=recon_folder)
 
 
 def main():

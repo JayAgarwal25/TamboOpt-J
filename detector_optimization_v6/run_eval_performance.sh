@@ -5,6 +5,7 @@
 #SBATCH -c 32            			
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=a100
+#SBATCH --exclude=holygpu8a31105
 #SBATCH -J run_eval_performance
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 
