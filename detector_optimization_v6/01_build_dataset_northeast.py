@@ -232,6 +232,13 @@ def main():
                          "Default: 1000 -> ~300k total pairs for n_infill_layouts=300.")
     ap.add_argument("--round", type=int, default=1,
                     help="Adaptive-loop round number used in the output folder name.")
+    ap.add_argument("--output_folder", type=str, default=None,
+                    help="Override the normal-mode output directory (default: "
+                         "TRAINING_DATASET_FOLDER). So a rebuild never clobbers "
+                         "the existing run world. Normal mode only.")
+    ap.add_argument("--max_showers", type=int, default=None,
+                    help="Override the module-level MAX_SHOWERS cap. For mini "
+                         "validation builds that need a row cap. Normal mode only.")
     args = ap.parse_args()
 
     print("=" * 72)
@@ -296,11 +303,13 @@ def main():
         print(f"[build] infill pairs in {time.time() - t0:.1f}s")
     else:
         # ── Normal mode ────────────────────────────────────────────────────
-        output_folder = TRAINING_DATASET_FOLDER
-        print(f"mode         : NORMAL (7 fixed strategies)")
+        from modules_v6.detector_strategies_ne import _STRATEGIES
+        output_folder = args.output_folder if args.output_folder else TRAINING_DATASET_FOLDER
+        max_showers = args.max_showers if args.max_showers is not None else MAX_SHOWERS
+        print(f"mode         : NORMAL ({len(_STRATEGIES)} fixed strategies)")
         print(f"output dir   : {output_folder}")
         print(f"batch size   : {BATCH_SIZE}")
-        print(f"max showers  : {MAX_SHOWERS}")
+        print(f"max showers  : {max_showers}")
 
         t0 = time.time()
         primary, xy, E, T, strat, species = build_training_pairs(
@@ -308,7 +317,7 @@ def main():
             surface=surface,
             shower_cache_path=DUAL_SHOWER_CACHE_PATH,
             batch_size=BATCH_SIZE,
-            max_showers=MAX_SHOWERS,
+            max_showers=max_showers,
             seed=SEED,
             device=DEVICE,
             verbose=True,

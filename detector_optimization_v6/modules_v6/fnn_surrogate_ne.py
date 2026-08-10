@@ -29,6 +29,21 @@ from .fnn_surrogate import (encode_primary, compute_normalization,  # noqa: F401
                             _load_species_sidecar)
 
 
+def _batch_layout_rng(seed: int, s_idx: int, b_idx: int):
+    """Generator for one (strategy, batch) detector-layout draw.
+
+    The electron row and the muon row of the same event must land under the
+    same layout, but `build_training_pairs` streams the electron block and
+    then the muon block through a single loop body; a shared running rng
+    would have advanced by the whole electron pass before the muon pass even
+    starts, so the two rows would draw different layouts. Keying the draw on
+    (seed, strategy index, batch index within the species block) instead of
+    consuming a shared state makes each draw a pure function of "where in the
+    species block are we", which is identical for both passes.
+    `np.random.default_rng` accepts a sequence as the seed."""
+    return np.random.default_rng((int(seed), int(s_idx), int(b_idx)))
+
+
 def _positions_sidecar_path(shower_cache_path: str) -> str:
     """Path of the Step-0 ENU decay-position sidecar paired with a dual corpus
     .pt (`…_dual.pt` -> `…_dual_positions.pt`). Written by
@@ -220,11 +235,14 @@ def build_training_pairs(mountain, surface,
     overhead to roughly one write per interval regardless of scale, at the cost
     of re-doing up to `resume_every_s` of work after a preemption.
 
-    Caveat: the per-chunk detector-layout `rng` draws are NOT part of the
-    checkpoint (only the tiny scalar chunk-counter is), so a resumed run draws
-    fresh layouts for the remaining chunks rather than bit-reproducing an
-    uninterrupted run — harmless (still a valid random draw from the same
-    strategies), just not bit-identical.
+    Resume is bit-reproducible: each layout draw is keyed by
+    (seed, strategy index, batch index within the species block) via
+    `_batch_layout_rng` rather than drawn from a shared running rng, so it
+    depends only on where a batch sits in its species block, not on how many
+    draws came before it in this process. A resumed run therefore draws the
+    same layouts for the remaining chunks as an uninterrupted run would have,
+    and (by the same token) the electron and muon rows of one event always
+    share a layout no matter which pass runs first.
 
     Returns:
         primaries : (N_pairs, PRIMARY_DIM) float32
@@ -306,7 +324,6 @@ def build_training_pairs(mountain, surface,
         out_strat   = torch.empty((n_pairs,),              dtype=torch.int64)
         out_species = torch.empty((n_pairs,),              dtype=torch.int64)
 
-    rng = np.random.default_rng(seed)
     n_sanitized = 0
 
     def _save_resume_ckpt(n_done):
@@ -350,7 +367,15 @@ def build_training_pairs(mountain, surface,
                 sb_hi = min(sb_lo + batch_size, csz)
                 B = sb_hi - sb_lo
 
-                e_det, n_det_xy = fn(mountain, n_det=n_det, rng=rng, **kwargs)  # (East, North)
+                # Batch index within the species block: the "e" and "mu" halves of
+                # chunk_list walk identical (c_lo, sb_lo) grids (load_chunk was
+                # rounded to a multiple of batch_size above), so this lines up the
+                # electron and muon passes onto the same (s_idx, b_idx) draw and
+                # hence the same layout for both rows of one event.
+                b_idx = (c_lo + sb_lo) // batch_size
+                e_det, n_det_xy = fn(mountain, n_det=n_det,
+                                     rng=_batch_layout_rng(seed, s_idx, b_idx),
+                                     **kwargs)  # (East, North)
                 e_det     = e_det.float().to(device)
                 n_det_xy  = n_det_xy.float().to(device)
 
