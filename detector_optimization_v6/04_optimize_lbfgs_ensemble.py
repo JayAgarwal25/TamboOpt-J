@@ -93,7 +93,7 @@ RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.
 N_CHAINS            = 15
-INIT_OVERDISP_SIGMA = 1000.0  # metres — per-restart init spread around scheme init
+INIT_OVERDISP_SIGMA = 100.0  # metres — per-restart init spread around scheme init
 
 # Adam warm-start
 N_ADAM_EPOCHS       = 5_000
