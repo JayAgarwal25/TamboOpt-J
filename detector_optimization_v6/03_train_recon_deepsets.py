@@ -54,10 +54,15 @@ from modules_v6.constants import (
 OUTPUT_FOLDER = RECON_FOLDER + "_deepsets"
 
 # ── Architecture ─────────────────────────────────────────────────────────────
+# 3 -> 6 layers each (2026-07-30). Cost is asymmetric: the encoder runs
+# PER DETECTOR (x100) while the decoder runs once per event after the pool, so
+# deepening the encoder is ~100x more expensive than deepening the decoder.
+# n_enc 3->6 raises encoder FLOPs ~2.5x (5 hidden matmuls vs 2); n_dec 3->6 is
+# nearly free. Params 298k -> 693k.
 HIDDEN   = 256
 CONTEXT  = 128
-N_ENC    = 3
-N_DEC    = 3
+N_ENC    = 4
+N_DEC    = 4
 POOL     = "maxmean"   # "mean" or "maxmean"; maxmean doubles context_proj input
 
 # ── Training ─────────────────────────────────────────────────────────────────

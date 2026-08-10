@@ -65,12 +65,18 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 # ── Config ───────────────────────────────────────────────────────────────────
 # Dedicated output dir (notable name) — never overwrite the (North, Up) corpus.
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
-# Paired dual-species corpus holds 2*NUM_SHOWERS rows (electron block then muon
+# Paired dual-species corpus holds 2*n_pairs rows (electron block then muon
 # block, same primaries); 02 splits them per species via the species_ids.pt
 # sidecar (the primary pdg feature now carries the EM/hadronic class).
 # DATASET_FRACTION caps how many rows are loaded (split evenly across species) so
 # the build fits in RAM — see modules_v6/constants.py.
-MAX_SHOWERS = int(DATASET_FRACTION * 2 * NUM_SHOWERS)
+#
+# At DATASET_FRACTION=1.0 this is 0 ("no cap" — build_training_pairs then uses
+# every row actually in the corpus file). NUM_SHOWERS is only a rough written-
+# in-comments scale, not the real event count (Step 0's holdout split makes the
+# exact count data-dependent); deriving the cap from it here risked silently
+# truncating the corpus back down whenever the real count ran ahead of NUM_SHOWERS.
+MAX_SHOWERS = 0 if DATASET_FRACTION >= 1.0 else int(DATASET_FRACTION * 2 * NUM_SHOWERS)
 SEED        = 0
 DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -311,6 +317,11 @@ def main():
             # uses the same calibration as the kernel.
             east_entry=EAST_ENTRY,
             layer_east_dx=LAYER_EAST_DX,
+            # gpu_requeue can preempt mid-build; resume picks up from the last
+            # checkpointed chunk instead of restarting the whole corpus. Keyed to
+            # output_folder, so an infill round never resumes from the normal
+            # build's checkpoint (different layouts, different row count).
+            resume_path=os.path.join(output_folder, "build_resume.pt"),
         )
         print(f"[build] training pairs in {time.time() - t0:.1f}s")
     print(f"  primary : {tuple(primary.shape)}  dtype={primary.dtype}")

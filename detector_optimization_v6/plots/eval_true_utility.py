@@ -37,7 +37,7 @@ import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 import showerdata
-from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
+from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu, encode_primary
 from modules_v6.dual_surrogate import combine_species_outputs
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
@@ -46,7 +46,8 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, T_LOG_SCALE,
-    DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH, TRAINING_DATASET_FOLDER, OPT_FOLDER,
+    HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,
+    OPT_FOLDER,
 )
 
 # LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
@@ -104,10 +105,15 @@ class KernelDualLabels:
 
 
 def _corpus_paths(corpus_override):
-    """(corpus, positions) paths — the constants pair, or an override plus its
-    own `<corpus>_positions.pt` sidecar (same naming rule Step 1 uses)."""
+    """(corpus, positions) paths — the HELD-OUT pair by default, or an override
+    plus its own `<corpus>_positions.pt` sidecar (same naming rule Step 1 uses).
+
+    The default is the held-out corpus rather than the training one because every
+    upstream stage reads the training corpus: the FNN and recon both split it
+    internally, and the stage-4 sweep has no split at all, so scoring a layout
+    there scores it on the events that produced it."""
     if not corpus_override:
-        return DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH
+        return HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH
     return corpus_override, os.path.splitext(corpus_override)[0] + "_positions.pt"
 
 
@@ -115,12 +121,16 @@ def build_primaries(corpus_path, B, mountain):
     """Encode the first `B` events' primaries straight from a shower corpus.
 
     `primary.pt` in TRAINING_DATASET_FOLDER is row-aligned with the corpus Step 1
-    consumed, so it cannot be used for a DIFFERENT corpus (e.g. a held-out one).
-    This rebuilds the same 8-column encoding from the corpus metadata plus the
-    decay-position sidecar, mirroring `build_training_pairs_ne`, so the held-out
-    path stays byte-comparable with the training path."""
+    consumed, so it cannot be used for a DIFFERENT corpus (e.g. a held-out one) —
+    slicing its first B rows would pair held-out clouds with the wrong events'
+    ground truth, which is worse than leakage. This rebuilds the same 8-column
+    encoding from the corpus metadata plus the decay-position sidecar, mirroring
+    `build_training_pairs_ne`, so the held-out path stays byte-comparable with the
+    training path (verified: max abs diff 0 on all 8 columns).
+
+    Kept separate from `load_events` so any corpus can be encoded on its own, which
+    is what the standalone evaluators in ~/v6_runs rely on."""
     from modules_v6.fnn_surrogate_ne import _load_positions_sidecar
-    from modules_v6.fnn_surrogate import encode_primary
 
     meta = showerdata.load_inc_particles(corpus_path)
     keep = np.arange(0, B)                       # electron block; the muon row shares the primary
@@ -136,9 +146,15 @@ def build_primaries(corpus_path, B, mountain):
 def load_events(n_events, device, corpus_override=None):
     """Load and PLACE the first `n_events` events' electron + muon clouds.
 
-    The tau dual corpus is [electron block | muon block] with event i at row i and
-    row n_pairs+i (paired, sharing the primary → same decay vertex + direction).
-    Placement uses the pipeline's C8 `place_clouds_enu` at the real vertex."""
+    Defaults to the HELD-OUT corpus (see `_corpus_paths`), so "first B rows" is
+    genuinely unseen by every upstream stage. The dual corpus is
+    [electron block | muon block] with event i at row i and row n_pairs+i (paired,
+    sharing the primary → same decay vertex + direction). Placement uses the
+    pipeline's C8 `place_clouds_enu` at the real vertex.
+
+    Returns clouds only; pair it with `build_primaries(corpus_path, B, mountain)`
+    for the matching ground truth — never with a slice of `primary.pt`, which is
+    row-aligned to the TRAINING corpus alone."""
     corpus_path, positions_path = _corpus_paths(corpus_override)
     positions_all = torch.load(positions_path)                   # (M, 3) ENU E,N,U
     n_pairs = positions_all.shape[0] // 2
@@ -220,7 +236,8 @@ def main():
     print("true-utility evaluator — kernel vs surrogate on the SAME recon + weights")
     print("=" * 72)
     print(f"device      : {device}")
-    print(f"corpus      : {corpus_path}{'  (HELD-OUT / override)' if args.corpus else ''}")
+    print(f"corpus      : {corpus_path}"
+          f"{'  (override)' if args.corpus else '  (held-out, unseen by Steps 1-4)'}")
     print(f"layout(opt) : {LAYOUT_PATH}")
 
     mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
@@ -232,10 +249,9 @@ def main():
     kernel_fnn = KernelDualLabels(elec, muon, surface, device)
 
     fnn, recon = load_models(device, recon_dir=args.recon_dir)
-    if args.corpus:
-        prim = build_primaries(corpus_path, B, mountain).to(device)
-    else:
-        prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(device)
+    # Always re-encoded from the corpus being scored: primary.pt only ever lines up
+    # with the TRAINING corpus, and the default corpus here is the held-out one.
+    prim = build_primaries(corpus_path, B, mountain).to(device)
 
     e_o, n_o = load_layout(mountain)
     if args.grid_layout:
