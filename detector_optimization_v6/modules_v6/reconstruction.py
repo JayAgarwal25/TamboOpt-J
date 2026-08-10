@@ -95,19 +95,21 @@ class DeepSetsRecon(nn.Module):
     """
 
     def __init__(self,
-                 n_det:          int = N_DETECTORS,
-                 input_features: int = 4,
-                 output_dim:     int = 4,
-                 hidden:         int = 256,
-                 context:        int = 128,
-                 n_enc:          int = 3,
-                 n_dec:          int = 2,
-                 pool:           str = "mean"):
+                 n_det:               int = N_DETECTORS,
+                 input_features:      int = 4,
+                 output_dim:          int = 4,
+                 hidden:              int = 256,
+                 context:             int = 128,
+                 n_enc:               int = 3,
+                 n_dec:               int = 2,
+                 pool:                str = "mean",
+                 sparsify_threshold:  float = 0.0):
         super().__init__()
-        self.n_det          = n_det
-        self.input_features = input_features
-        self.output_dim     = output_dim
-        self.pool           = pool
+        self.n_det              = n_det
+        self.input_features     = input_features
+        self.output_dim         = output_dim
+        self.pool               = pool
+        self.sparsify_threshold = float(sparsify_threshold)
 
         pool_dim = hidden * 2 if pool == "maxmean" else hidden
         self.encoder      = _mlp(input_features, hidden, hidden, n_enc)
@@ -129,10 +131,39 @@ class DeepSetsRecon(nn.Module):
         self.out_mean.copy_(out_mean)
         self.out_std.copy_(out_std)
 
+    def _sparsify(self, x: torch.Tensor) -> torch.Tensor:
+        """Zero (E, T) on detectors carrying less than the firing threshold.
+
+        The surrogate is a regression FROM the primary, so it emits a smooth
+        non-zero field over the WHOLE array — measured at ~37x the kernel's energy
+        on slots the kernel leaves empty (mean |E| 0.82 vs 0.033 in log1p units).
+        A recon trained on surrogate output therefore learns to read the answer off
+        that background, which simply is not there at deployment: dark slots hold
+        26% of the input's total |E| in training and 1.2% under the kernel. The
+        measured cost is the whole sparse-illumination failure -- swapping ONLY the
+        dark slots between the two sources moves the 5-14-fired band from 48.4 to
+        19.5 deg one way and from 3.2 to 40.5 deg the other.
+
+        Applying the same gate on both sides removes that channel. It is deliberately
+        self-gating (thresholding the input's own E, never the kernel's), because
+        that is the only form available at deployment and hence the only one that
+        makes the two conditions match. On kernel input it is nearly a no-op, so any
+        change it produces comes from what the network LEARNS, not from cleaner
+        inputs. Note for stage 4: this is a hard mask, so the objective picks up a
+        discontinuity at the threshold; a soft gate would be needed before trusting
+        it inside a line search.
+        """
+        if self.sparsify_threshold <= 0.0:
+            return x
+        keep = (torch.expm1(x[..., 2]) > self.sparsify_threshold).unsqueeze(-1)
+        et = torch.where(keep, x[..., 2:4], torch.zeros_like(x[..., 2:4]))
+        return torch.cat([x[..., 0:2], et], dim=-1)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Args: x of shape (B, n_det, input_features) in raw units.
         Returns: (B, output_dim) in raw primary-encoding units.
         """
+        x     = self._sparsify(x)
         x_n   = (x - self.in_mean) / self.in_std        # broadcast (input_features,)
         h     = self.encoder(x_n)                        # (B, n_det, hidden)
         if self.pool == "maxmean":
@@ -165,6 +196,10 @@ def build_recon_from_ckpt(ckpt: dict, n_det: int, device=None):
             n_enc=int(cfg.get("n_enc", 3)),
             n_dec=int(cfg.get("n_dec", 2)),
             pool=cfg.get("pool", "mean"),
+            # Persisted in the checkpoint so every consumer (evaluators, stage 4)
+            # applies the same input gate the model was trained under. Absent =>
+            # 0.0 => the transform is a no-op, so old checkpoints are unchanged.
+            sparsify_threshold=float(cfg.get("sparsify_threshold", 0.0)),
         )
     else:
         model = Reconstruction(

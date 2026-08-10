@@ -269,6 +269,7 @@ def _save_ckpt(path: str,
             hidden=HIDDEN, context=CONTEXT,
             n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
             output_dim=recon.output_dim,
+            sparsify_threshold=recon.sparsify_threshold,
         ),
         **extra,
     }, path)
@@ -360,6 +361,15 @@ def main():
                          "residual row (preserves cross-detector + E-T correlations "
                          "and tails), stratified by shower brightness. Bootstrap is "
                          "the physically honest arm; gaussian is the amplitude sweep.")
+    ap.add_argument("--sparsify", type=float, default=0.0,
+                    help="Zero the recon's (E,T) input on detectors carrying less "
+                         "than this many counts, applied identically in training and "
+                         "at deployment (the gate lives inside DeepSetsRecon and is "
+                         "saved in the checkpoint). 1.0 matches the utility's firing "
+                         "threshold. 0 = off, byte-identical to previous runs. This "
+                         "closes the train/deploy gap in the DARK slots, where the "
+                         "surrogate paints ~37x the kernel's energy and the recon "
+                         "learns to read the primary off that non-physical field.")
     ap.add_argument("--normalize_loss", action="store_true",
                     help="Compute the per-axis MSE in z-scored (normalized) space so "
                          "every output axis contributes comparably. Needed for the "
@@ -372,6 +382,7 @@ def main():
     noise_scale    = float(args.noise_scale)
     noise_mode     = args.noise_mode
     normalize_loss = bool(args.normalize_loss)
+    sparsify       = float(args.sparsify)
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
     if args.fnn_folder:
         global FNN_FOLDER
@@ -503,6 +514,7 @@ def main():
     recon = DeepSetsRecon(
         n_det=N_DETECTORS, input_features=RECON_INPUT_FEATURES, output_dim=output_dim,
         hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
+        sparsify_threshold=sparsify,
     ).to(DEVICE)
     recon.set_normalization(
         in_mean  = in_mean.to(DEVICE),
@@ -626,7 +638,7 @@ def main():
                     batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, lr=LR,
                     grad_clip=GRAD_CLIP, val_frac=VAL_FRAC, seed=SEED,
                     hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
-                    output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss,
+                    output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss, sparsify=sparsify,
                 ),
             }, f, indent=2)
         _plot_curves(log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"))
@@ -760,7 +772,7 @@ def main():
                 lbfgs_lr=LBFGS_LR, lbfgs_max_iter=LBFGS_MAX_ITER,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
                 hidden=HIDDEN, context=CONTEXT, n_enc=N_ENC, n_dec=N_DEC, pool=POOL,
-                output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss,
+                output_dim=output_dim, label_source=label_source, noise_scale=noise_scale, noise_mode=noise_mode, normalize_loss=normalize_loss, sparsify=sparsify,
             ),
         }, f, indent=2)
     _plot_curves(full_log, os.path.join(OUTPUT_FOLDER, "recon_train_curves.png"),
