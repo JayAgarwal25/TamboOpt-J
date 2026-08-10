@@ -365,6 +365,16 @@ def lbfgs_refine(init_x: torch.Tensor,
     return x_proj.float(), y_proj.float(), float(U_proj.item()), iter_log, grad_hist
 
 
+def select_best_on_common_batch(refined, score_fn):
+    """Return (best_idx, scores) where scores[k] = score_fn(x_k, y_k).
+
+    The chunk sweep leaves each chain's last-chunk utility, which is
+    not comparable across chains (different data); selecting the
+    reference layout requires one common batch."""
+    scores = [float(score_fn(xp, yp)) for xp, yp in refined]
+    return int(max(range(len(scores)), key=lambda i: scores[i])), scores
+
+
 def _run_one_scheme(scheme: str,
                     mountain,
                     fnn: DualSpeciesSurrogate,
@@ -475,19 +485,45 @@ def _run_one_scheme(scheme: str,
     layouts_xy = np.stack(
         [np.stack([xp.numpy(), yp.numpy()], axis=-1) for xp, yp in refined], axis=0,
     )                                                                # (K, n_det, 2)
-    ref_idx = int(np.argmax(refined_U))                              # best-U run = reference
+
+    # refined_U[k] is chain k's utility on ITS OWN final chunk, which is not the
+    # same primaries across chains, so argmax(refined_U) compares chains on
+    # different data. Re-score every chain on one common batch (the first
+    # seeded chunk) before picking the reference/best layout.
+    def _score(xp, yp):
+        with torch.no_grad():
+            U, _, _ = utility_of_xy(xp.to(DEVICE), yp.to(DEVICE), primary_chunks[0], fnn, recon)
+        return float(U.item())
+    ref_idx, common_U = select_best_on_common_batch(refined, _score)    # best-U run = reference
     aligned, perms = align_to_reference(layouts_xy, ref_idx)
     mean_xy = aligned.mean(axis=0)                                   # (n_det, 2)
     std_xy  = aligned.std(axis=0)                                    # (n_det, 2)
 
     best_x, best_y = refined[ref_idx]
     best_src = source_per_run[ref_idx]
-    print(f"[ensemble] K={len(refined)}  best U={refined_U[ref_idx]:+.3f} "
+    print(f"[ensemble] K={len(refined)}  best U={common_U[ref_idx]:+.3f} (common batch)  "
           f"(run {ref_idx}, src={best_src})  "
           f"mean σx={std_xy[:,0].mean():.1f}m σy={std_xy[:,1].mean():.1f}m")
 
+    # Minimum pairwise detector separation of the selected layout, and how many
+    # pairs sit closer than 1m (optimized layouts have contained exactly
+    # coincident detectors, which nothing previously reported).
+    with torch.no_grad():
+        _dx = best_x.unsqueeze(0) - best_x.unsqueeze(1)
+        _dy = best_y.unsqueeze(0) - best_y.unsqueeze(1)
+        _dist = torch.sqrt(_dx ** 2 + _dy ** 2)
+        _n = _dist.shape[0]
+        _upper_mask = torch.triu(torch.ones(_n, _n, dtype=torch.bool), diagonal=1)
+        _offdiag = _dist[~torch.eye(_n, dtype=torch.bool)]
+        best_layout_min_separation_m = float(_offdiag.min().item())
+        best_layout_pairs_below_1m = int((_dist[_upper_mask] < 1.0).sum().item())
+    print(f"[ensemble] best-layout min pairwise separation="
+          f"{best_layout_min_separation_m:.3f}m  "
+          f"pairs<1m={best_layout_pairs_below_1m}")
+
     # ── Persist artifacts ───────────────────────────────────────────────────
-    torch.save({"x": best_x, "y": best_y, "U": refined_U[ref_idx],
+    torch.save({"x": best_x, "y": best_y, "U": common_U[ref_idx],
+                "U_last_chunk": refined_U[ref_idx],
                 "run": ref_idx, "source": best_src},
                os.path.join(opt_dir, "layout_best.pt"))
     torch.save({"mean_x": torch.as_tensor(mean_xy[:, 0]),
@@ -498,6 +534,7 @@ def _run_one_scheme(scheme: str,
     torch.save({"aligned": torch.as_tensor(aligned),          # (K, n_det, 2)
                 "perms": torch.as_tensor(perms),
                 "utilities": torch.as_tensor(refined_U),
+                "common_U": common_U,
                 "source_per_run": source_per_run,
                 "ref_idx": ref_idx},
                os.path.join(opt_dir, "layouts_all.pt"))
@@ -510,7 +547,12 @@ def _run_one_scheme(scheme: str,
             "ref_idx": ref_idx,
             "ref_source": best_src,
             "refined_U": refined_U,
-            "best_U": refined_U[ref_idx],
+            "common_U": common_U,
+            "common_batch": "chunk0",
+            "best_U": common_U[ref_idx],
+            "best_U_last_chunk": refined_U[ref_idx],
+            "best_layout_min_separation_m": best_layout_min_separation_m,
+            "best_layout_pairs_below_1m": best_layout_pairs_below_1m,
             "ensemble_stats": dict(
                 mean_std_x=float(std_xy[:, 0].mean()),
                 mean_std_y=float(std_xy[:, 1].mean()),
@@ -559,11 +601,11 @@ def _run_one_scheme(scheme: str,
     except Exception as exc:
         print(f"[plot] ensemble/density skipped ({exc!r})")
 
-    print(f"[done] scheme={scheme}  best U={refined_U[ref_idx]:+.3f}  "
+    print(f"[done] scheme={scheme}  best U={common_U[ref_idx]:+.3f}  "
           f"σ̄=({std_xy[:,0].mean():.1f}, {std_xy[:,1].mean():.1f}) m  ({opt_dir})")
     if os.path.exists(lbfgs_resume_path):
         os.remove(lbfgs_resume_path)
-    return dict(scheme=scheme, best_U=refined_U[ref_idx],
+    return dict(scheme=scheme, best_U=common_U[ref_idx],
                 best_x=best_x, best_y=best_y,
                 mean_std_x=float(std_xy[:, 0].mean()),
                 mean_std_y=float(std_xy[:, 1].mean()),

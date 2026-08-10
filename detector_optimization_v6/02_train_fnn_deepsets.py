@@ -172,6 +172,15 @@ def mse_mean_only(mean_raw, E_tgt, T_tgt, out_mean, out_std):
     return 0.5 * (mse_E + mse_T), mse_E, mse_T
 
 
+def mse_normalized(pred_raw, E_tgt, T_tgt, out_mean, out_std):
+    """Point-estimate z-scored MSE for fine-tuning a mean-only forward pass.
+
+    Identical math to mse_mean_only, named separately because the finetune
+    path predates the mean/variance split.
+    """
+    return mse_mean_only(pred_raw, E_tgt, T_tgt, out_mean, out_std)
+
+
 def gaussian_nll_normalized(mean_raw, logvar_z, E_tgt, T_tgt, out_mean, out_std):
     """beta-NLL (Seitzer et al. 2022) in the z-score space the model
     normalizes to: each element's NLL is weighted by var.detach()**NLL_BETA,

@@ -152,11 +152,18 @@ def build_kernel_combined_labels(E_raw: torch.Tensor, T_raw: torch.Tensor,
                                  ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Combine per-species KERNEL labels into the recon's (E,T) input space.
 
-    `E_raw`/`T_raw` are the stored ground-truth kernel labels (raw counts / times),
-    one SINGLE-SPECIES shower per row. The recon input space is the physically
+    `E_raw`/`T_raw` are the stored ground-truth kernel labels, one SINGLE-SPECIES
+    shower per row, in their on-disk spaces: `E_raw` is ALREADY log1p(counts)
+    (stage 01 applies log1p before saving E.pt), `T_raw` is the raw kernel time
+    in seconds (T.pt is saved unlogged). The recon input space is the physically
     combined electron+muon signal — `combine_species_outputs` applied to
     log1p(counts) / log1p(time*T_LOG_SCALE) — the same space the dual surrogate
     emits and that `eval_true_utility.KernelDualLabels` builds at eval time.
+    Because `E_raw` is already log1p(counts), it is passed through unchanged as
+    channel 0; only `T_raw` gets the log1p(time*T_LOG_SCALE) transform here. An
+    earlier version of this function applied log1p to `E_raw` a second time,
+    which corrupted every kernel-label training arm and every noise-augmentation
+    residual bank (`R_E`) built from this function's output.
 
     Row layout (from build_training_pairs): rows are blocked by strategy; within
     each strategy block the first k_sp rows are electron showers 0..k_sp-1 and the
@@ -165,6 +172,9 @@ def build_kernel_combined_labels(E_raw: torch.Tensor, T_raw: torch.Tensor,
     s*rows_per_strat + j, muon row = + k_sp. BOTH duplicated rows of an event map
     to the same combined label, so the row set and the train/val split are byte
     identical to the FNN-prediction path — only the (E,T) VALUES change (clean A/B).
+    This e/mu row pairing assumes both rows share a layout, which only holds for
+    datasets built after the shared-layout fix in stage 01 (a parallel change in
+    modules_v6/fnn_surrogate_ne.py); not verified here.
     """
     N, n_det = E_raw.shape
     n_strat = int(strat_ids.max().item()) + 1
@@ -187,9 +197,9 @@ def build_kernel_combined_labels(E_raw: torch.Tensor, T_raw: torch.Tensor,
     for lo in range(0, N, chunk):
         hi = min(lo + chunk, N)
         er, mr = e_row[lo:hi], mu_row[lo:hi]
-        pe = torch.stack([torch.log1p(E_raw[er].to(device)),
+        pe = torch.stack([E_raw[er].to(device),
                           torch.log1p(T_raw[er].to(device) * T_LOG_SCALE)], dim=-1)
-        pm = torch.stack([torch.log1p(E_raw[mr].to(device)),
+        pm = torch.stack([E_raw[mr].to(device),
                           torch.log1p(T_raw[mr].to(device) * T_LOG_SCALE)], dim=-1)
         comb = combine_species_outputs(pe, pm)          # (b, n_det, 2)
         E_comb[lo:hi] = comb[..., 0].cpu()
