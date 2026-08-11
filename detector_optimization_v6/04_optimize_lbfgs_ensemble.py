@@ -75,8 +75,10 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.opt_core import (
     utility_of_xy, align_to_reference, consecutive_cos_distance, load_models,
     W_THETA, W_PHI, W_E, W_PR, W_DIV,
-    LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD,
+    LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD, OFFMESH_PENALTY_W,
+    PENALTY_ONSET_FRAC,
 )
+from modules_v6.tr_geometry_ne import _ne_max_gap
 _plt_spec = importlib.util.spec_from_file_location(
     "opt_plotting", os.path.join(_HERE, "plots", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
@@ -115,10 +117,41 @@ GRAD_COS_WINDOW     = 10
 # path a first-class artifact: `trajectory.pt` per scheme, plus the same arrays
 # inside the resume checkpoints so a preemption doesn't lose them.
 #
-# Stride keeps the cost small: at every 5th step a chain is 1000 frames x 200
-# floats x 4 B = 800 KB, ~12 MB per scheme for K=15 (adam_resume.pt is already
-# ~66 MB). Set to 1 for every step.
-POS_LOG_EVERY = 5
+# 1 = every step. The stride used to be 5 to keep the file small (a chain is
+# 1000 frames x 200 floats x 4 B = 800 KB at stride 5, ~12 MB per scheme for
+# K=15, next to a ~66 MB adam_resume.pt), but it is the binding limit on how
+# smooth the layout animation can be: at stride 5 the L-BFGS line search moves
+# the layout 402 m between CONSECUTIVE logged frames at p90, so the GIF
+# teleports no matter how it is resampled. At stride 1 a single chain costs
+# 5001 Adam frames + ~14.5k L-BFGS closure frames x 200 floats x 4 B = ~16 MB
+# per scheme, which is nothing. Raise it again if K goes back up.
+POS_LOG_EVERY = 1
+
+# Off-mesh penalty weight, in units of U (0 = off, restoring the old behaviour
+# where nothing in the objective knew the mountain existed). See
+# opt_core.offmesh_penalty for why: L-BFGS is projected only ONCE per sweep
+# chunk, so it spent 66% of its closures with detectors outside the 91.3 m snap
+# radius, optimising a surrogate that has no training data out there — and one
+# center run returned U=+16.18 with 28 detectors stacked on a single centroid
+# after the end-of-chunk snap. The penalty is 0 inside the snap radius, so an
+# in-band layout scores exactly as it did before.
+OFFMESH_PENALTY = OFFMESH_PENALTY_W
+
+_MESH_CACHE = {}
+
+
+def _penalty_args(mountain):
+    """(mesh_en on DEVICE, r0) for utility_of_xy, built once per mountain.
+
+    r0 is PENALTY_ONSET_FRAC of the max_gap the projection uses — the wall
+    starts INSIDE the snap radius, so the equilibrium it creates sits in-band
+    rather than just outside it (see opt_core.PENALTY_ONSET_FRAC)."""
+    key = id(mountain)
+    if key not in _MESH_CACHE:
+        cen = torch.as_tensor(mountain.centroids_ENU[:, :2], dtype=torch.float32)
+        _MESH_CACHE[key] = (cen.to(DEVICE),
+                            float(_ne_max_gap(mountain)) * PENALTY_ONSET_FRAC)
+    return _MESH_CACHE[key]
 
 # L-BFGS refinement (stage 2)
 LBFGS_MAX_ITER       = 1_500
@@ -188,7 +221,10 @@ def adam_warm_start(scheme: str,
         primary_batch = primary_all[idx].to(DEVICE)
 
         x_det, y_det = xy_module()
-        U, r, parts = utility_of_xy(x_det, y_det, primary_batch, fnn, recon)
+        _mesh, _r0 = _penalty_args(mountain)
+        U, r, parts = utility_of_xy(x_det, y_det, primary_batch, fnn, recon,
+                                    mesh_en=_mesh, penalty_w=OFFMESH_PENALTY,
+                                    penalty_r0=_r0)
         loss = -U
 
         optimizer.zero_grad(set_to_none=True)
@@ -354,6 +390,7 @@ def lbfgs_refine(init_x: torch.Tensor,
     is not monotonic in U. It is also unprojected until that final frame (the
     optimizer runs free and projects once at the end), unlike the Adam
     trajectory which is projected every step."""
+    mesh_en, pen_r0 = _penalty_args(mountain)
     xy = torch.cat([init_x.to(DEVICE), init_y.to(DEVICE)], dim=0).detach().clone()
     xy.requires_grad_(True)
 
@@ -374,7 +411,9 @@ def lbfgs_refine(init_x: torch.Tensor,
         optimizer.zero_grad()
         x_det = xy[:N_DETECTORS]
         y_det = xy[N_DETECTORS:]
-        U, r, parts = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon)
+        U, r, parts = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon,
+                                    mesh_en=mesh_en, penalty_w=OFFMESH_PENALTY,
+                                    penalty_r0=pen_r0)
         loss = -U
         if not torch.isfinite(loss):
             raise _NonFiniteLoss
@@ -412,6 +451,7 @@ def lbfgs_refine(init_x: torch.Tensor,
         x_proj, y_proj = project_to_mountain_ne(mountain, x_cpu, y_cpu)
         U_proj, _, _ = utility_of_xy(
             x_proj.to(DEVICE), y_proj.to(DEVICE), primary_fixed, fnn, recon,
+            mesh_en=mesh_en, penalty_w=OFFMESH_PENALTY, penalty_r0=pen_r0,
         )
     # Final frame = the mountain-projected optimum actually returned, so the
     # trajectory ends where the next chunk (or the ensemble) picks up.
@@ -614,6 +654,7 @@ def _run_one_scheme(scheme: str,
                 adam_lr=ADAM_LR, grad_clip=GRAD_CLIP,
                 lbfgs_max_iter=LBFGS_MAX_ITER, lbfgs_lr=LBFGS_LR,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
+                offmesh_penalty=OFFMESH_PENALTY,
                 lbfgs_batch_primaries=LBFGS_BATCH_PRIMARIES,
                 w_theta=W_THETA, w_phi=W_PHI, w_e=W_E, w_pr=W_PR, w_div=W_DIV,
                 layout_threshold=LAYOUT_THRESHOLD,
@@ -656,7 +697,7 @@ def _run_one_scheme(scheme: str,
 
 
 def main():
-    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX
+    global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX, OFFMESH_PENALTY
     global INIT_SCHEMES
     import argparse
     ap = argparse.ArgumentParser()
@@ -670,6 +711,13 @@ def main():
                          "OPT_DIR_TEMPLATE folder, so passing ONE scheme per "
                          "process is how the schemes get split across parallel "
                          "jobs instead of running back-to-back in one.")
+    ap.add_argument("--offmesh-penalty", type=float, default=OFFMESH_PENALTY,
+                    help="weight (in units of U) of the differentiable off-mesh "
+                         "penalty subtracted inside utility_of_xy. 0 disables "
+                         "it, reproducing the old unconstrained behaviour. The "
+                         "penalty is exactly 0 inside the snap radius, so an "
+                         "in-band layout scores identically either way "
+                         f"(default: {OFFMESH_PENALTY:g})")
     ap.add_argument("--density-vmax", type=float, default=DENSITY_VMAX,
                     help="density heatmap colorbar upper limit (plots [0, vmax]); "
                          "pass <=0 to auto-scale (default from config)")
@@ -693,6 +741,7 @@ def main():
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
     DENSITY_VMAX = float(args.density_vmax)
+    OFFMESH_PENALTY = float(args.offmesh_penalty)
 
     _valid = ("grid", "center", "random")   # sample_initial_layout_ne schemes
     INIT_SCHEMES = tuple(s.strip() for s in args.schemes.split(",") if s.strip())
@@ -707,6 +756,9 @@ def main():
     print(f"device       : {DEVICE}")
     print(f"init schemes : {INIT_SCHEMES}")
     print(f"chains (K)   : {N_CHAINS}  (init σ={INIT_OVERDISP_SIGMA} m)")
+    print(f"offmesh pen  : {OFFMESH_PENALTY:g}"
+          + ("  (U keeps no knowledge of the mountain)" if not OFFMESH_PENALTY
+             else f"  (onset at {PENALTY_ONSET_FRAC:g}x the snap radius)"))
     print(f"Adam epochs  : {N_ADAM_EPOCHS}  (primaries/step={PRIMARIES_PER_STEP})")
     print(f"L-BFGS       : max_iter={LBFGS_MAX_ITER}  batch={LBFGS_BATCH_PRIMARIES}")
 
