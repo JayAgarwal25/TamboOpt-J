@@ -1,16 +1,44 @@
 """Animate the stage-4 detector layout from `trajectory.pt`.
 
 One panel per scheme, in the (East, North) plane the optimizer works in, plus a
-second GIF zoomed on the first --zoom-epochs Adam epochs.
+second video zoomed on the first --zoom-epochs Adam epochs.
 
 Two phases are stored per chain. `adam` frames are mountain-projected every
 step. `lbfgs` frames are closure calls — line-search probes included, so U is
 not monotonic along them — and are projected only at the end of each sweep
 chunk, which is why detectors are seen outside the valid region there.
 
+Run from the v6 folder. The current run (whole trajectory + Adam zoom, mp4):
+
     python plots/04_plot_trajectory_gif.py
+
+An archived run — pass BOTH scheme dirs; output lands beside them:
+
+    R="$(python -c 'import sys; sys.path.insert(0, "."); \\
+        from modules_v6.constants import RUN_LOCATION; print(RUN_LOCATION)')"
+    R="$R/run 6 update energy calc common eval"
+    python plots/04_plot_trajectory_gif.py \\
+        --run-dir "$R/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_center" \\
+                  "$R/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_grid"
+
+One sweep chunk, or a range, zoomed onto the layout. --min-per-chunk 0 because
+the floor is pointless once the range is small; --fit-view drops the off-map
+probes so the axes can fit the detectors:
+
+    python plots/04_plot_trajectory_gif.py --phase lbfgs --lbfgs-chunk 0-9 \\
+        --fit-view --min-per-chunk 0 --zoom-epochs 0 --seconds 20 --fps 60 \\
+        --run-dir "$R/..._center" "$R/..._grid" -o "$R/lbfgs_chunk0-9.mp4"
+
+'first-gain' picks the first chunk whose line search actually raised U (chunk 0
+often returns its input unchanged). Keep --seconds near frames/fps or the
+resampler starts dropping frames rather than holding them:
+
+    python plots/04_plot_trajectory_gif.py --phase lbfgs --lbfgs-chunk first-gain \\
+        --fit-view --min-per-chunk 0 --zoom-epochs 0 --seconds 8 --fps 60
+
+Increasing-U frames only, short enough to stay a GIF:
+
     python plots/04_plot_trajectory_gif.py --monotonic --seconds 20 -o out.gif
-    python plots/04_plot_trajectory_gif.py --run-dir DIR_A DIR_B
 """
 import argparse
 import glob
@@ -166,6 +194,21 @@ def _keep_increasing(U, chunk, score):
     return keep
 
 
+def _first_gain_chunk(U, chunk, tol=0.05):
+    """First sweep chunk whose own line search actually improved U.
+
+    Early chunks routinely return their input unchanged (center chunk 0: 41
+    closures, gain +0.000), so "first chunk" and "first chunk that did
+    something" are not the same thing.
+    """
+    for c in np.unique(chunk):
+        u = U[chunk == c]
+        u = u[np.isfinite(u)]
+        if u.size and u[-1] - u[0] > tol:
+            return int(c)
+    return int(np.unique(chunk)[0])
+
+
 def _bridge(xy, keep, max_jump, cen, hard):
     """Fill gaps where the kept path teleports; returns (positions, src, transit).
 
@@ -214,7 +257,7 @@ def _bridge(xy, keep, max_jump, cen, hard):
     return np.stack(pos), np.array(src), np.array(transit, dtype=bool)
 
 
-def _panel(scheme, traj, k, utils, args, cen, step_limit=0):
+def _panel(scheme, traj, k, utils, args, cen, step_limit=0, chunk_only=None):
     """One panel: frames, per-frame metadata, and the labels the title needs."""
     P = dict(scheme=scheme, k=k, U=float(np.asarray(traj["refined_U"])[k]),
              xy=[], tags=[], u=[], step=[], chunk=[], transit=[], n_chunks={})
@@ -235,6 +278,18 @@ def _panel(scheme, traj, k, utils, args, cen, step_limit=0):
         # Indices into the FULL trajectory throughout, so _bridge can reach
         # back into frames the filters dropped.
         sel = np.arange(t.shape[0])
+        if chunk_only is not None and name == "lbfgs":
+            if chunk_only == "first-gain":
+                want = [_first_gain_chunk(U, chunk)]
+            elif "-" in str(chunk_only):                      # inclusive range
+                a_, b_ = (int(v) for v in str(chunk_only).split("-"))
+                want = list(range(a_, b_ + 1))
+            else:
+                want = [int(chunk_only)]
+            sel = sel[np.isin(chunk[sel], want)]
+            fin = U[sel][np.isfinite(U[sel])]
+            print(f"  [chunk] {name}: chunk(s) {want[0]}-{want[-1]}, {sel.size} "
+                  f"frames, U {fin[0]:+.3f} -> {fin[-1]:+.3f}")
         if step_limit:
             # Truncate BEFORE filtering, so a zoom is judged against its own
             # window rather than emptied by later, better frames.
@@ -271,6 +326,24 @@ def _panel(scheme, traj, k, utils, args, cen, step_limit=0):
         raise SystemExit(f"chain {k}: no data for phase='{args.phase}'")
     for key in ("xy", "u", "step", "chunk", "transit"):
         P[key] = np.concatenate(P[key], axis=0)
+    if args.fit_view:
+        # Drop the frames a strong-Wolfe probe flung off the map before
+        # fitting: they reach hundreds of km, so including them puts every
+        # real layout in one pixel. They are rejected trial points, not
+        # accepted iterates.
+        span = np.ptp(cen[:, :2], axis=0)
+        lo_b, hi_b = cen[:, :2].min(0) - .12 * span, cen[:, :2].max(0) + .12 * span
+        on = ((P["xy"] >= lo_b) & (P["xy"] <= hi_b)).all(axis=(1, 2))
+        if on.sum() < on.size:
+            print(f"  [fit-view] dropped {int((~on).sum())}/{on.size} off-map "
+                  "probe frames")
+        for key in ("xy", "u", "step", "chunk", "transit"):
+            P[key] = P[key][on]
+        P["tags"] = [t for t, o in zip(P["tags"], on) if o]
+        pts = P["xy"].reshape(-1, 2)
+        lo, hi = pts.min(0), pts.max(0)
+        pad = 0.08 * max(hi - lo)
+        P["view"] = (lo - pad, hi + pad)
     print(f"  {scheme:8s} chain {k}  frames={len(P['xy'])}  "
           f"final U={P['U']:+.3f}")
     return P
@@ -376,6 +449,9 @@ def _render(panels, out, cen, tri, title, n_out, fps, region, min_per_chunk=0):
                    label="start", zorder=3)
         sc = ax.scatter(*P["xy"][P["idx"][0]].T, s=28, c=DET_C, edgecolors="white",
                         lw=.5, label="detectors", zorder=5)
+        if P.get("view") is not None:
+            (x0, y0), (x1, y1) = P["view"]
+            ax.set_xlim(x0, x1); ax.set_ylim(y0, y1)
         ax.set_xlabel("East [m]"); ax.set_ylabel("North [m]"); ax.set_aspect("equal")
         ax.legend(loc="upper right", fontsize=8, framealpha=.9)
         arts.append((sc, ax.set_title("", fontsize=10), P))
@@ -430,6 +506,12 @@ def main():
     ap.add_argument("--fps", type=int, default=60,
                     help="GIF stores frame delays in centiseconds, so only "
                          "100/n is exact: 50, 33, 25, 20. 60 is written as 50")
+    ap.add_argument("--lbfgs-chunk", default=None,
+                    help="restrict the L-BFGS phase to one sweep chunk: an "
+                         "index, an inclusive range like 0-4, or 'first-gain' "
+                         "for the first chunk whose line search raised U")
+    ap.add_argument("--fit-view", action="store_true",
+                    help="zoom the axes to the detectors actually shown")
     ap.add_argument("--min-per-chunk", type=int, default=10,
                     help="floor on output frames per L-BFGS sweep chunk, so "
                          "motion WITHIN a chunk is visible (0 = purely "
@@ -482,7 +564,8 @@ def main():
     want = max(1, int(round(args.seconds * args.fps)))
     if args.only in ("both", "full"):
         print(f"[full] phase={args.phase}{'  monotonic' if args.monotonic else ''}")
-        panels = [_panel(s, *v, args, cen) for s, v in loaded.items()]
+        panels = [_panel(s, *v, args, cen, chunk_only=args.lbfgs_chunk)
+                  for s, v in loaded.items()]
         # Never resample below the frame count, or the transit frames --max-jump
         # just inserted get dropped again; capped at 3x so an unfiltered run
         # cannot become a multi-minute, multi-hundred-MB GIF.
