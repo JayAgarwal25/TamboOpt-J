@@ -80,7 +80,7 @@ TAU_RECONSTRUCT = 0.2
 # bulk is untouched. theta/phi share U_angle but need different caps.
 CAP_THETA = 500.0
 CAP_PHI   = 50.0
-CAP_E     = 50.0
+CAP_E     = 80.0
 
 # GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
 # the configured mesh, else the absolute path) and re-exported here for callers
@@ -89,13 +89,13 @@ CAP_E     = 50.0
 
 # ── Objective helpers ─────────────────────────────────────────────────────────
 def primary_to_physical_labels(primary: torch.Tensor):
-    """(B, 5) -> (E_GeV, θ_rad, φ_rad). Matches 04_optimize.py."""
+    """(B, >=4) -> (E_GeV, θ_rad, φ_rad). Inverse of `encode_primary`."""
     dir_x = primary[:, 0]
     dir_y = primary[:, 1]
     dir_z = primary[:, 2].clamp(-1.0, 1.0)
     log_e_norm = primary[:, 3]
     log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
-    E_gev = torch.exp(log_e) - 1.0
+    E_gev = torch.pow(10.0, log_e)
     theta = torch.arccos(dir_z)
     phi   = torch.atan2(dir_y, dir_x)
     two_pi = 2.0 * math.pi
