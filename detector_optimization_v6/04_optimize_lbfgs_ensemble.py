@@ -73,10 +73,11 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 # plots/opt_plotting.py (loaded by path). utility_of_xy is NOT no_grad-wrapped,
 # so Adam / L-BFGS backprop through it here.
 from modules_v6.opt_core import (
-    utility_of_xy, align_to_reference, consecutive_cos_distance, load_models,
+    utility_of_xy, detection_utility_of_xy, offmesh_penalty,
+    align_to_reference, consecutive_cos_distance, load_models,
     W_THETA, W_PHI, W_E, W_PR, W_DIV,
     LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD, OFFMESH_PENALTY_W,
-    PENALTY_ONSET_FRAC,
+    PENALTY_ONSET_FRAC, COMPOSITE_LOG_KEYS, DETECTION_LOG_KEYS,
 )
 from modules_v6.tr_geometry_ne import _ne_max_gap
 _plt_spec = importlib.util.spec_from_file_location(
@@ -157,6 +158,25 @@ def _penalty_args(mountain):
 LBFGS_MAX_ITER       = 1_500
 LBFGS_LR             = 1.0
 LBFGS_HISTORY_SIZE   = 20
+
+# torch.optim.LBFGS's tolerance_grad / tolerance_change are ABSOLUTE
+# thresholds (infinity-norm gradient, and loss change between steps), so they
+# only mean anything relative to the objective's own scale. The composite
+# utility_of_xy sums W_THETA/W_PHI/W_E-weighted per-event rewards capped at
+# CAP_THETA/CAP_PHI/CAP_E (opt_core.py) and lands U in the tens; these two
+# values were tuned against THAT scale. detection_utility_of_xy is r.mean()
+# of a sigmoid soft-indicator, bounded in (0, 1) -- one to two orders of
+# magnitude smaller -- so reusing the composite tolerances would tell L-BFGS
+# "the layout stopped moving" at a gradient/loss-change two orders of
+# magnitude too coarse for detection's own dynamic range, i.e. premature
+# convergence caused purely by the scale mismatch, not by the layout actually
+# being optimal. Scaling both down by 1e-2 keeps the RELATIVE stopping
+# criterion roughly matched across objectives without touching the composite
+# path's tuned values.
+LBFGS_TOL_GRAD_COMPOSITE   = 1e-11
+LBFGS_TOL_CHANGE_COMPOSITE = 1e-13
+LBFGS_TOL_GRAD_DETECTION   = 1e-13
+LBFGS_TOL_CHANGE_DETECTION = 1e-15
 # LBFGS_BATCH_PRIMARIES = 15000
 # LBFGS_BATCH_PRIMARIES = 8000
 LBFGS_BATCH_PRIMARIES = 6000
@@ -194,6 +214,97 @@ SCORING_ACCEPT_TOL = 0.05
 # modules_v6/opt_core.py (shared across the 04 optimizers).
 SEED   = 4200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Which objective drives the optimizer -- see _objective() below. "composite"
+# (the default) is utility_of_xy, unchanged; "detection" is opt_core's
+# detection_utility_of_xy, a much simpler aperture-style comparison arm that
+# drops the reconstruction chain entirely. Set from --objective in main();
+# every call site routes through _objective() instead of choosing directly,
+# so this is the only switch that needs flipping.
+OBJECTIVE = "composite"
+
+# detection objective thresholds (--detect_n / --detect_e). None -> the
+# detection_utility_of_xy defaults (RECONSTRUCT_THRESHOLD / LAYOUT_THRESHOLD).
+# Unused when OBJECTIVE == "composite".
+DETECT_N = None
+DETECT_E = None
+
+
+def _pv(parts: dict, key: str) -> float:
+    """float(parts[key]) if present, else nan.
+
+    Generic dict-get-as-float helper: `key` may legitimately be absent (e.g.
+    the off-mesh penalty's u_raw/u_offmesh only appear when the penalty ran),
+    in which case this reads back as nan instead of raising. `_log_parts`
+    below is what actually decides WHICH keys to ask for, based on the active
+    objective."""
+    v = parts.get(key)
+    return float(v.item()) if v is not None else float("nan")
+
+
+def _log_parts(parts: dict) -> dict:
+    """Per-step log entry, keyed by whichever diagnostics the ACTIVE
+    objective (the module-level OBJECTIVE switch) actually produces.
+
+    composite always logs u_theta/u_phi/u_e/u_pr -- the schema
+    plots/opt_plotting.py and plots/replot_optimize_curves.py read
+    unconditionally, so this keeps that path byte-identical to before.
+
+    detection's `parts` carries entirely different keys (u_det, n_lit_soft,
+    frac_hard -- see opt_core.detection_utility_of_xy). Logging the composite
+    four for a detection run would have every one of them come back nan from
+    `_pv` while u_det/n_lit_soft/frac_hard -- the diagnostics a detection run
+    is actually being run to collect -- were computed every step and then
+    thrown away. COMPOSITE_LOG_KEYS / DETECTION_LOG_KEYS (opt_core.py) are the
+    single source of truth for which keys belong to which objective, so this
+    and plot_components_lbfgs's schema detection can't drift apart."""
+    keys = DETECTION_LOG_KEYS if OBJECTIVE == "detection" else COMPOSITE_LOG_KEYS
+    return {k: _pv(parts, k) for k in keys}
+
+
+def _objective(x_det: torch.Tensor, y_det: torch.Tensor,
+              primary_batch: torch.Tensor, fnn, recon,
+              mesh_en: torch.Tensor = None, penalty_w: float = 0.0,
+              penalty_r0: float = None):
+    """Single dispatch point for whichever objective --objective selected.
+
+    composite (default): utility_of_xy, with the off-mesh penalty applied
+    internally exactly as before -- byte-identical behaviour to the
+    pre-existing code path.
+
+    detection: opt_core.detection_utility_of_xy (no recon call at all), with
+    the SAME off-mesh penalty applied here afterward so a detection run still
+    respects the mountain boundary the way a composite run does; see
+    opt_core.offmesh_penalty for why that boundary matters to the optimizer.
+
+    `recon` is accepted for call-signature parity with utility_of_xy even
+    though the detection branch never touches it -- the recon model is still
+    loaded and used by plotting regardless of which objective drives the
+    optimizer.
+
+    Every optimizer call site (Adam, L-BFGS, scoring, common-batch
+    re-scoring) routes through this one function, so `--objective` only has
+    to be handled here. Returns (U, r, parts) with the same shape as
+    utility_of_xy; parts' keys differ by objective (see _pv above)."""
+    if OBJECTIVE == "composite":
+        return utility_of_xy(x_det, y_det, primary_batch, fnn, recon,
+                             mesh_en=mesh_en, penalty_w=penalty_w,
+                             penalty_r0=penalty_r0)
+    elif OBJECTIVE == "detection":
+        U, r, parts = detection_utility_of_xy(
+            x_det, y_det, primary_batch, fnn,
+            reconstruct_threshold=DETECT_N, layout_threshold=DETECT_E,
+        )
+        if mesh_en is not None and penalty_w > 0.0:
+            r0 = penalty_r0 if penalty_r0 else 1.0
+            pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en, r0)
+            parts = dict(parts)
+            parts["u_raw"] = U          # utility before the boundary cost
+            parts["u_offmesh"] = -pen
+            U = U - pen
+        return U, r, parts
+    else:
+        raise ValueError(f"unknown --objective {OBJECTIVE!r}")
 
 # Density heatmap colorbar upper limit (plots [0, DENSITY_VMAX]); keeps faint
 # structure from being washed out by a few hot cells. <=0 → auto-scale.
@@ -240,9 +351,9 @@ def adam_warm_start(scheme: str,
 
         x_det, y_det = xy_module()
         _mesh, _r0 = _penalty_args(mountain)
-        U, r, parts = utility_of_xy(x_det, y_det, primary_batch, fnn, recon,
-                                    mesh_en=_mesh, penalty_w=OFFMESH_PENALTY,
-                                    penalty_r0=_r0)
+        U, r, parts = _objective(x_det, y_det, primary_batch, fnn, recon,
+                                 mesh_en=_mesh, penalty_w=OFFMESH_PENALTY,
+                                 penalty_r0=_r0)
         loss = -U
 
         optimizer.zero_grad(set_to_none=True)
@@ -277,10 +388,7 @@ def adam_warm_start(scheme: str,
 
         log.append(dict(
             epoch=epoch + 1, U=u_val, r_mean=float(r.mean().item()),
-            u_theta=float(parts["u_theta"].item()),
-            u_phi=float(parts["u_phi"].item()),
-            u_e=float(parts["u_e"].item()),
-            u_pr=float(parts["u_pr"].item()),
+            **_log_parts(parts),
         ))
         if epoch == 0 or (epoch + 1) % ADAM_LOG_EVERY == 0 or epoch == N_ADAM_EPOCHS - 1:
             print(f"  [adam {epoch+1:4d}/{N_ADAM_EPOCHS}] U={u_val:+.3f}")
@@ -405,8 +513,8 @@ def score_on_set(x: torch.Tensor, y: torch.Tensor, scoring_set: torch.Tensor,
     tot, n_tot = 0.0, 0
     for s in range(0, scoring_set.shape[0], step):
         batch = scoring_set[s:s + step].to(DEVICE)
-        U, _, _ = utility_of_xy(x, y, batch, fnn, recon, mesh_en=mesh_en,
-                                penalty_w=OFFMESH_PENALTY, penalty_r0=pen_r0)
+        U, _, _ = _objective(x, y, batch, fnn, recon, mesh_en=mesh_en,
+                             penalty_w=OFFMESH_PENALTY, penalty_r0=pen_r0)
         tot += float(U.item()) * batch.shape[0]
         n_tot += batch.shape[0]
     return (tot / max(n_tot, 1)), x.detach().cpu(), y.detach().cpu()
@@ -437,10 +545,17 @@ def lbfgs_refine(init_x: torch.Tensor,
     xy = torch.cat([init_x.to(DEVICE), init_y.to(DEVICE)], dim=0).detach().clone()
     xy.requires_grad_(True)
 
+    # Tolerances are objective-appropriate, not one-size-fits-all -- see the
+    # LBFGS_TOL_*_COMPOSITE / LBFGS_TOL_*_DETECTION definitions above for why.
+    tol_grad, tol_change = (
+        (LBFGS_TOL_GRAD_DETECTION, LBFGS_TOL_CHANGE_DETECTION)
+        if OBJECTIVE == "detection"
+        else (LBFGS_TOL_GRAD_COMPOSITE, LBFGS_TOL_CHANGE_COMPOSITE)
+    )
     optimizer = torch.optim.LBFGS(
         [xy], lr=LBFGS_LR, max_iter=LBFGS_MAX_ITER,
         history_size=LBFGS_HISTORY_SIZE, line_search_fn="strong_wolfe",
-        tolerance_grad=1e-11,tolerance_change=1e-13,
+        tolerance_grad=tol_grad, tolerance_change=tol_change,
     )
 
     iter_log = []
@@ -454,9 +569,9 @@ def lbfgs_refine(init_x: torch.Tensor,
         optimizer.zero_grad()
         x_det = xy[:N_DETECTORS]
         y_det = xy[N_DETECTORS:]
-        U, r, parts = utility_of_xy(x_det, y_det, primary_fixed, fnn, recon,
-                                    mesh_en=mesh_en, penalty_w=OFFMESH_PENALTY,
-                                    penalty_r0=pen_r0)
+        U, r, parts = _objective(x_det, y_det, primary_fixed, fnn, recon,
+                                 mesh_en=mesh_en, penalty_w=OFFMESH_PENALTY,
+                                 penalty_r0=pen_r0)
         loss = -U
         if not torch.isfinite(loss):
             raise _NonFiniteLoss
@@ -467,10 +582,7 @@ def lbfgs_refine(init_x: torch.Tensor,
             pos_hist.append(xy.detach().reshape(-1).float().cpu().clone())
         iter_log.append(dict(
             iter=len(iter_log), U=float(U.item()), r_mean=float(r.mean().item()),
-            u_theta=float(parts["u_theta"].item()),
-            u_phi=float(parts["u_phi"].item()),
-            u_e=float(parts["u_e"].item()),
-            u_pr=float(parts["u_pr"].item()),
+            **_log_parts(parts),
         ))
         return loss
 
@@ -492,7 +604,7 @@ def lbfgs_refine(init_x: torch.Tensor,
         x_cpu = xy[:N_DETECTORS].detach().cpu()
         y_cpu = xy[N_DETECTORS:].detach().cpu()
         x_proj, y_proj = project_to_mountain_ne(mountain, x_cpu, y_cpu)
-        U_proj, _, _ = utility_of_xy(
+        U_proj, _, _ = _objective(
             x_proj.to(DEVICE), y_proj.to(DEVICE), primary_fixed, fnn, recon,
             mesh_en=mesh_en, penalty_w=OFFMESH_PENALTY, penalty_r0=pen_r0,
         )
@@ -691,7 +803,7 @@ def _run_one_scheme(scheme: str,
     # seeded chunk) before picking the reference/best layout.
     def _score(xp, yp):
         with torch.no_grad():
-            U, _, _ = utility_of_xy(xp.to(DEVICE), yp.to(DEVICE), primary_chunks[0], fnn, recon)
+            U, _, _ = _objective(xp.to(DEVICE), yp.to(DEVICE), primary_chunks[0], fnn, recon)
         return float(U.item())
     ref_idx, common_U = select_best_on_common_batch(refined, _score)    # best-U run = reference
     aligned, perms = align_to_reference(layouts_xy, ref_idx)
@@ -797,6 +909,9 @@ def _run_one_scheme(scheme: str,
                 layout_threshold=LAYOUT_THRESHOLD,
                 reconstruct_threshold=RECONSTRUCT_THRESHOLD,
                 seed=SEED,
+                objective=OBJECTIVE,
+                detect_n=(DETECT_N if DETECT_N is not None else RECONSTRUCT_THRESHOLD),
+                detect_e=(DETECT_E if DETECT_E is not None else LAYOUT_THRESHOLD),
             ),
         }, f, indent=2)
 
@@ -836,7 +951,7 @@ def _run_one_scheme(scheme: str,
 
 def main():
     global N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER, DENSITY_VMAX, SEED
-    global OFFMESH_PENALTY, INIT_SCHEMES
+    global OFFMESH_PENALTY, INIT_SCHEMES, OBJECTIVE, DETECT_N, DETECT_E
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=SEED,
@@ -878,12 +993,39 @@ def main():
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to the output directory name for each "
                          "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER, the source of the "
+                         "primaries the sweep optimizes against. Use to run "
+                         "against a rebuilt dataset without touching the run "
+                         "world the constants point at.")
+    ap.add_argument("--objective", type=str, default="composite",
+                    choices=("composite", "detection"),
+                    help="Which objective drives the optimizer. 'composite' "
+                         "(default) is the existing angle/energy/reconstructability "
+                         "utility_of_xy -- unchanged behaviour. 'detection' swaps "
+                         "in opt_core.detection_utility_of_xy, a much simpler "
+                         "aperture-style comparison arm ('is this event detected "
+                         "at all') that drops the reconstruction chain entirely; "
+                         "off by default so every existing run is unaffected.")
+    ap.add_argument("--detect_n", type=float, default=None,
+                    help="Detection objective only: minimum (soft) detector count "
+                         "threshold N. Default None -> RECONSTRUCT_THRESHOLD.")
+    ap.add_argument("--detect_e", type=float, default=None,
+                    help="Detection objective only: per-detector count threshold "
+                         "E a detector must exceed to count as firing. Default "
+                         "None -> LAYOUT_THRESHOLD.")
     args = ap.parse_args()
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
     DENSITY_VMAX = float(args.density_vmax)
     SEED = int(args.seed)
+    if args.dataset_folder:
+        global TRAINING_DATASET_FOLDER
+        TRAINING_DATASET_FOLDER = args.dataset_folder
     OFFMESH_PENALTY = float(args.offmesh_penalty)
+    OBJECTIVE = args.objective
+    DETECT_N = args.detect_n
+    DETECT_E = args.detect_e
 
     _valid = ("grid", "center", "random")   # sample_initial_layout_ne schemes
     INIT_SCHEMES = tuple(s.strip() for s in args.schemes.split(",") if s.strip())
@@ -897,6 +1039,11 @@ def main():
     print("=" * 72)
     print(f"device       : {DEVICE}")
     print(f"seed         : {SEED}")
+    _det_n = DETECT_N if DETECT_N is not None else RECONSTRUCT_THRESHOLD
+    _det_e = DETECT_E if DETECT_E is not None else LAYOUT_THRESHOLD
+    print(f"objective    : {OBJECTIVE}"
+          + (f"  (detect_n={_det_n:g}, detect_e={_det_e:g})"
+             if OBJECTIVE == "detection" else ""))
     print(f"init schemes : {INIT_SCHEMES}")
     print(f"chains (K)   : {N_CHAINS}  (init σ={INIT_OVERDISP_SIGMA} m)")
     print(f"offmesh pen  : {OFFMESH_PENALTY:g}"
@@ -912,6 +1059,13 @@ def main():
     if args.opt_suffix:
         global OPT_DIR_TEMPLATE
         OPT_DIR_TEMPLATE = OPT_FOLDER + "_lbfgs_ensemble" + args.opt_suffix + "_{scheme}"
+
+    if OBJECTIVE == "detection":
+        # Insert a "_detection" marker right before the per-scheme "_{scheme}"
+        # so a detection run's artifacts can never land in (and overwrite) the
+        # same directory as a composite run's, whether or not --opt_suffix was
+        # also given.
+        OPT_DIR_TEMPLATE = OPT_DIR_TEMPLATE[:-len("_{scheme}")] + "_detection_{scheme}"
 
     if args.fnn_folder:
         import modules_v6.constants as _C

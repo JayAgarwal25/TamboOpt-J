@@ -284,6 +284,114 @@ def utility_of_xy(x_det: torch.Tensor,
     return U, r, parts
 
 
+def detection_utility_of_xy(x_det: torch.Tensor,
+                            y_det: torch.Tensor,
+                            primary_batch: torch.Tensor,
+                            fnn,
+                            reconstruct_threshold: float = None,
+                            layout_threshold: float = None):
+    """Aperture-style objective: is the event detected at all, blind to how
+    well it would be reconstructed.
+
+    Drops the entire reconstruction chain that utility_of_xy runs (no recon,
+    no primary_to_physical_labels, no U_angle / U_E / U_PR): it takes the
+    surrogate's per-detector counts and asks only "did at least
+    `reconstruct_threshold` detectors each cross `layout_threshold` counts",
+    softened into a differentiable score via `reconstructability` (see
+    modules/utility_functions.py). utility_of_xy already folds that same soft
+    aperture condition IN as one ingredient of its composite (the `r` it
+    weights every term by); here it IS the whole objective instead.
+
+    Same call-contract shape as utility_of_xy -- same xy_batch construction,
+    same fnn call, same torch.expm1 recovery of raw counts from the
+    log1p-compressed E channel -- so stage 4 can swap this in as a drop-in
+    alternative objective. This is a COMPARISON ARM, not a replacement for
+    the composite utility: it sits alongside utility_of_xy, off by default,
+    so every existing caller and every existing number is unchanged.
+
+    Deliberately blind to reconstruction quality: a layout that lights up
+    `reconstruct_threshold` detectors with garbage timing/energy response
+    scores exactly as well here as one that lights up the same count with
+    pristine response. That is the whole point of the comparison, not an
+    oversight.
+
+    CRITICAL caveat: the counts driving this objective come from the
+    surrogate, which has been measured to over-report firing relative to the
+    ground-truth kernel -- median +7 lit detectors per event versus the
+    kernel, precision 0.704 at recall 0.942. A layout optimized against this
+    objective is optimizing against an optimistic detector count, not the
+    true one, and MUST be re-scored with kernel labels before any conclusion
+    (e.g. "detection-only beats/matches the composite") is drawn from it.
+
+    NOT decorated with `@torch.no_grad()`, because stage 4's Adam / L-BFGS
+    backprop through it exactly as they do through utility_of_xy.
+
+    Parameters:
+        x_det, y_det (torch.Tensor): (n_det,) detector coordinates, same
+            East/North convention as utility_of_xy.
+        primary_batch (torch.Tensor): (B, PRIMARY_DIM) batch of primaries.
+        fnn: the dual-species surrogate, called as fnn(primary_batch, xy_batch).
+        reconstruct_threshold (float | None): minimum soft detector count N;
+            None uses the module-level RECONSTRUCT_THRESHOLD.
+        layout_threshold (float | None): per-detector count threshold E;
+            None uses the module-level LAYOUT_THRESHOLD.
+
+    Returns:
+        U_det (torch.Tensor): scalar, r.mean() -- the batch-mean detection score.
+        r (torch.Tensor): (B,) per-event soft detection score in (0, 1).
+        parts (dict): u_det (== U_det), n_lit_soft (mean soft detector count
+            per event), frac_hard (diagnostic only, computed under
+            torch.no_grad(): the fraction of events whose HARD detector
+            count above layout_threshold is >= reconstruct_threshold --
+            never enters the autograd graph).
+    """
+    if reconstruct_threshold is None:
+        reconstruct_threshold = RECONSTRUCT_THRESHOLD
+    if layout_threshold is None:
+        layout_threshold = LAYOUT_THRESHOLD
+
+    B = primary_batch.shape[0]
+    xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
+    xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
+
+    pred_ET = fnn(primary_batch, xy_batch)
+    E_pred_det = pred_ET[..., 0]
+    counts = torch.expm1(E_pred_det)
+
+    r = reconstructability(
+        counts,
+        layout_threshold=layout_threshold,
+        tau_layout=TAU_LAYOUT,
+        reconstruct_threshold=reconstruct_threshold,
+        tau_reconstruct=TAU_RECONSTRUCT,
+    )
+    U_det = r.mean()
+
+    # Same soft-detect sigmoid reconstructability computes internally, kept
+    # here only as a diagnostic (mean soft detector count per event) -- not
+    # a reimplementation of reconstructability itself, which stays the sole
+    # source of truth for the actual score `r`.
+    soft_detect = torch.sigmoid(TAU_LAYOUT * (counts - layout_threshold))
+    n_lit_soft = soft_detect.sum(dim=1).mean()
+
+    with torch.no_grad():
+        hard_count = (counts > layout_threshold).sum(dim=1)
+        frac_hard = (hard_count >= reconstruct_threshold).float().mean()
+
+    parts = dict(u_det=U_det, n_lit_soft=n_lit_soft, frac_hard=frac_hard)
+    return U_det, r, parts
+
+
+# Diagnostic keys each objective's `parts` dict carries. Shared here so every
+# caller that needs to know "which keys does this objective log" -- the 04
+# optimizers' per-step logging, plots/opt_plotting.py's schema detection for
+# the utility-components figure -- agrees with what utility_of_xy /
+# detection_utility_of_xy actually return, instead of each keeping its own
+# hardcoded copy of the four composite names.
+COMPOSITE_LOG_KEYS = ("u_theta", "u_phi", "u_e", "u_pr")
+DETECTION_LOG_KEYS = ("u_det", "n_lit_soft", "frac_hard")
+
+
 # ── Ensemble bookkeeping ──────────────────────────────────────────────────────
 def assign(cost: np.ndarray) -> np.ndarray:
     """One-to-one assignment minimizing total cost (Hungarian)."""

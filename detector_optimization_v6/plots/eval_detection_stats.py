@@ -49,8 +49,15 @@ without holding (events, points, detectors) kernel intermediates or
 summation and concatenation over the event axis, both of which are exact, not
 an approximation of the whole-batch result.
 
+With --plot_dir, the same arrays each table above is printed from are also
+drawn into PNG figures (n_lit histogram, n_lit scatter density, confusion
+matrix, efficiency vs energy, efficiency vs vertex distance) written to that
+directory. Plotting never recomputes anything and a plotting failure never
+drops the printed tables.
+
     python plots/eval_detection_stats.py --n-events 8000 --layout grid
-    python plots/eval_detection_stats.py --recon_dir <dir> --layout /path/to/layout_best.pt
+    python plots/eval_detection_stats.py --recon_dir <dir> --layout /path/to/layout_best.pt \
+        --plot_dir /path/to/figures
 """
 import argparse
 import os
@@ -94,12 +101,14 @@ def _report_distribution(name, n_lit):
     print(f"  {name:12s} mean={mean:6.2f}  "
           f"p10={p[0]:5.1f} p25={p[1]:5.1f} p50={p[2]:5.1f} p75={p[3]:5.1f} p90={p[4]:5.1f}  "
           f"frac(n_lit==0)={frac_zero:.4f}")
+    return mean, p, frac_zero
 
 
 def _report_diff(diff):
     med = float(np.median(diff))
     p10, p90 = np.percentile(diff, [10, 90])
     print(f"  n_lit_surrogate - n_lit_kernel : median={med:+.2f}  p10={p10:+.2f}  p90={p90:+.2f}")
+    return med, float(p10), float(p90)
 
 
 def _report_confusion(both, konly, sonly, neither):
@@ -113,6 +122,7 @@ def _report_confusion(both, konly, sonly, neither):
     f1 = 2.0 * precision * recall / max(precision + recall, 1e-12)
     print(f"  precision={precision:.4f}  recall={recall:.4f}  f1={f1:.4f}  "
           f"(surrogate as prediction, kernel as truth)")
+    return precision, recall, f1
 
 
 def _report_bins(label, bin_values, edges, n_lit_kernel, n_thresholds):
@@ -121,22 +131,295 @@ def _report_bins(label, bin_values, edges, n_lit_kernel, n_thresholds):
     `edges` has N_BINS+1 entries; digitize on the interior edges alone gives
     exactly N_BINS bins with the last one closed on the right, so the maximum
     value in `bin_values` always lands in the final bin.
+
+    Returns a dict of the per-bin arrays the printed table above is built
+    from (`centers`, `edges`, `n_events`, `mean_nlit`, `fracs` shaped
+    (n_bins, len(n_thresholds))), so a figure drawn from it can never
+    disagree with the table. Empty bins carry NaN in `mean_nlit`/`fracs`,
+    matching the printed '--'.
     """
     print(f"\n  detection efficiency vs {label}:")
     cols = "  ".join(f"frac(N>={n})" for n in n_thresholds)
     print(f"    {'bin':>24s} {'n_events':>9s} {'mean n_lit':>11s}   {cols}")
     idx = np.digitize(bin_values, edges[1:-1], right=False)
     n_bins = len(edges) - 1
+    n_events = np.zeros(n_bins, dtype=np.int64)
+    mean_nlit = np.full(n_bins, np.nan)
+    fracs = np.full((n_bins, len(n_thresholds)), np.nan)
     for b in range(n_bins):
         mask = idx == b
         ne = int(mask.sum())
+        n_events[b] = ne
         rng = f"[{edges[b]:8.3f}, {edges[b + 1]:8.3f})"
         if ne == 0:
             print(f"    {rng:>24s} {ne:9d}  {'--':>11s}")
             continue
-        mean_nlit = float(n_lit_kernel[mask].mean())
-        fracs = "  ".join(f"{float((n_lit_kernel[mask] >= n).mean()):11.4f}" for n in n_thresholds)
-        print(f"    {rng:>24s} {ne:9d}  {mean_nlit:11.2f}   {fracs}")
+        mean_nlit[b] = float(n_lit_kernel[mask].mean())
+        for t, n in enumerate(n_thresholds):
+            fracs[b, t] = float((n_lit_kernel[mask] >= n).mean())
+        fracs_str = "  ".join(f"{fracs[b, t]:11.4f}" for t in range(len(n_thresholds)))
+        print(f"    {rng:>24s} {ne:9d}  {mean_nlit[b]:11.2f}   {fracs_str}")
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return dict(centers=centers, edges=edges, n_events=n_events,
+                mean_nlit=mean_nlit, fracs=fracs)
+
+
+# ── Figures ──────────────────────────────────────────────────────────────────
+# Every figure below is built ONLY from the arrays/summary values the report
+# functions above already returned, never from a recomputation, so a figure
+# can never disagree with the table printed above it. Each figure imports
+# matplotlib and saves itself independently, guarded by its own try/except:
+# a missing matplotlib, a bad --plot_dir, or a single bad figure only prints
+# a one-line skip message and never drops the tables already printed.
+#
+# Kernel and surrogate always share the same two colors across every figure
+# (C0 blue for kernel, C1 orange for surrogate), plus a second encoding
+# (fill vs dashed step, solid vs dashed line) so the pair stays readable in
+# greyscale and to a red-green colorblind reader, not on hue alone.
+
+_THRESH_STYLE = [("C0", "o"), ("C1", "s"), ("C2", "^"), ("C3", "D")]
+
+
+def _subtitle(layout, n_events, threshold):
+    return f"layout={layout}  events={n_events}  threshold={threshold:g} raw counts"
+
+
+def _plot_nlit_hist(n_lit_kernel, n_lit_surrogate, n_det, med_kernel, med_surrogate,
+                     subtitle, path):
+    """Per-event lit-detector count, kernel vs surrogate, same integer bins.
+
+    Kernel is drawn as a filled step (so its shape reads at a glance) with
+    surrogate as a dashed outline step on top, so the two histograms stay
+    separable even where they overlap. Both medians are marked with a
+    vertical line in the same color/style as their histogram."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] n_lit histogram skipped ({exc!r})")
+        return
+    try:
+        bins = np.arange(0, n_det + 2) - 0.5   # integer-centered bins, 0..n_det
+        fig, ax = plt.subplots(figsize=(9, 5))
+        ax.hist(n_lit_kernel, bins=bins, histtype="stepfilled", color="C0",
+                alpha=0.35, zorder=2, label=f"kernel (median={med_kernel:.1f})")
+        ax.hist(n_lit_kernel, bins=bins, histtype="step", color="C0",
+                linewidth=1.4, zorder=3)
+        ax.hist(n_lit_surrogate, bins=bins, histtype="step", color="C1",
+                linewidth=1.8, linestyle="--", zorder=4,
+                label=f"surrogate (median={med_surrogate:.1f})")
+        ax.axvline(med_kernel, color="C0", linewidth=1.1, alpha=0.9, zorder=5)
+        ax.axvline(med_surrogate, color="C1", linestyle="--", linewidth=1.1,
+                   alpha=0.9, zorder=5)
+        ax.set_xlim(0, n_det)
+        ax.set_xlabel("n_lit (detectors above threshold, per event)")
+        ax.set_ylabel("event count")
+        ax.set_title(f"per-event lit-detector count, kernel vs surrogate\n{subtitle}")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=9)
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] n_lit histogram skipped ({exc!r})")
+
+
+def _plot_nlit_scatter(n_lit_kernel, n_lit_surrogate, n_det, subtitle, path):
+    """Per-event surrogate n_lit against kernel n_lit, as a log-scaled 2D
+    density (hexbin) with the y = x identity line on top.
+
+    This is the per-event companion to the aggregate histogram: two
+    distributions can match in aggregate while individual events still
+    disagree in both directions, and that only shows up here."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] n_lit scatter skipped ({exc!r})")
+        return
+    try:
+        fig, ax = plt.subplots(figsize=(7, 7))
+        hb = ax.hexbin(n_lit_kernel, n_lit_surrogate, gridsize=max(n_det // 4, 10),
+                        extent=(0, n_det, 0, n_det), bins="log", cmap="magma",
+                        mincnt=1)
+        # White-then-black dashed identity line so it stays visible over both
+        # the dark and light ends of the density colormap.
+        ax.plot([0, n_det], [0, n_det], color="white", linewidth=1.8, zorder=3)
+        ax.plot([0, n_det], [0, n_det], color="black", linewidth=0.9,
+                linestyle="--", zorder=4, label="y = x (perfect agreement)")
+        ax.set_xlim(0, n_det)
+        ax.set_ylim(0, n_det)
+        ax.set_aspect("equal")
+        ax.set_xlabel("n_lit, kernel (per event)")
+        ax.set_ylabel("n_lit, surrogate (per event)")
+        ax.set_title(f"per-event detector count, surrogate vs kernel\n{subtitle}")
+        cbar = fig.colorbar(hb, ax=ax)
+        cbar.set_label("event count (log color scale)")
+        ax.legend(fontsize=9, loc="upper left")
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] n_lit scatter skipped ({exc!r})")
+
+
+def _plot_confusion(both, konly, sonly, neither, precision, recall, f1, subtitle, path):
+    """Per-detector confusion between the two sources as a 2x2 matrix.
+
+    Rows = kernel [dark, lit], columns = surrogate [dark, lit], the same
+    both/konly/sonly/neither counts printed in report (c). Cell shading is a
+    single sequential hue (rate), and every cell is annotated with both the
+    raw count and the rate so the numbers never depend on reading the
+    colorbar precisely."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] confusion matrix skipped ({exc!r})")
+        return
+    try:
+        counts = np.array([[neither, sonly],
+                            [konly, both]], dtype=float)
+        total = counts.sum()
+        rates = counts / total
+
+        fig, ax = plt.subplots(figsize=(6, 6))
+        im = ax.imshow(rates, cmap="Blues", vmin=0.0, vmax=float(rates.max()))
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["dark", "lit"])
+        ax.set_yticks([0, 1]); ax.set_yticklabels(["dark", "lit"])
+        ax.set_xlabel("surrogate")
+        ax.set_ylabel("kernel")
+        for i in range(2):
+            for j in range(2):
+                shade = "white" if rates[i, j] > 0.5 * rates.max() else "black"
+                ax.text(j, i, f"{int(counts[i, j]):,}\n({rates[i, j]:.4f})",
+                        ha="center", va="center", color=shade, fontsize=11)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("rate (fraction of all detector-events)")
+        ax.set_title("per-detector confusion, surrogate vs kernel\n"
+                     f"{subtitle}\n"
+                     f"precision={precision:.4f}  recall={recall:.4f}  f1={f1:.4f}",
+                     fontsize=10)
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] confusion matrix skipped ({exc!r})")
+
+
+def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
+                      log_x=False, show_binwidth=False):
+    """Detection efficiency vs a binned quantity, one line per N_DET
+    threshold, plus mean kernel n_lit on a secondary axis.
+
+    `bins` is exactly the dict `_report_bins` returned for the same table,
+    so the lines here reproduce the printed fractions rather than
+    recomputing them. Empty bins carry NaN and are left as gaps.
+
+    `show_binwidth` draws horizontal error bars spanning each bin so
+    unevenly spaced (quantile) bins are not misread as uniform; `log_x`
+    is for a distance/energy-like quantity spanning orders of magnitude.
+
+    The secondary axis is an explicit exception to "one axis per chart":
+    mean n_lit is a different unit than a detected fraction, but it is
+    informative read alongside the fractions, so it is drawn in a visibly
+    distinct style (black, dashed, cross markers) and labelled as its own
+    axis rather than folded into the left-hand color/marker scheme."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] {title} skipped ({exc!r})")
+        return
+    try:
+        centers = bins["centers"]
+        edges = bins["edges"]
+        fracs = bins["fracs"]
+        mean_nlit = bins["mean_nlit"]
+
+        fig, ax = plt.subplots(figsize=(9, 5.5))
+        xerr = None
+        if show_binwidth:
+            xerr = np.stack([centers - edges[:-1], edges[1:] - centers], axis=0)
+
+        for k, n in enumerate(n_thresholds):
+            color, marker = _THRESH_STYLE[k % len(_THRESH_STYLE)]
+            label = f"N_DET >= {n}"
+            if show_binwidth:
+                ax.errorbar(centers, fracs[:, k], xerr=xerr, color=color,
+                            marker=marker, markersize=5, linewidth=1.4,
+                            capsize=3, elinewidth=0.8, alpha=0.9, label=label)
+            else:
+                ax.plot(centers, fracs[:, k], color=color, marker=marker,
+                        markersize=5, linewidth=1.4, alpha=0.9, label=label)
+
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("fraction of events detected (kernel)")
+        if log_x:
+            ax.set_xscale("log")
+        ax.grid(alpha=0.3)
+
+        ax2 = ax.twinx()
+        ax2.plot(centers, mean_nlit, color="black", linestyle="--", marker="x",
+                  markersize=6, linewidth=1.2, alpha=0.85,
+                  label="mean n_lit, kernel (right axis)")
+        ax2.set_ylabel("mean n_lit (kernel)")
+
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="best")
+
+        ax.set_title(f"{title}\n{subtitle}")
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] {title} skipped ({exc!r})")
+
+
+def _make_plots(plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
+                 med_kernel, med_surrogate, both, konly, sonly, neither,
+                 precision, recall, f1, e_bins, v_bins,
+                 layout, n_events, threshold):
+    """Write the five detection-diagnostic figures into `plot_dir`.
+
+    Every array passed in here is one already printed above (n_lit_kernel /
+    n_lit_surrogate from the counting loop, the confusion counts, the
+    per-bin dicts from `_report_bins`), so nothing is recomputed and no
+    figure can disagree with the table it illustrates. `plot_dir` is
+    created if missing; a failure to create it or to import matplotlib
+    skips all five figures with one message and never touches the tables
+    already printed."""
+    try:
+        os.makedirs(plot_dir, exist_ok=True)
+    except Exception as exc:
+        print(f"[plot] could not create {plot_dir!r}, all figures skipped ({exc!r})")
+        return
+
+    sub = _subtitle(layout, n_events, threshold)
+    _plot_nlit_hist(n_lit_kernel, n_lit_surrogate, n_det, med_kernel, med_surrogate,
+                     sub, os.path.join(plot_dir, "detection_nlit_hist.png"))
+    _plot_nlit_scatter(n_lit_kernel, n_lit_surrogate, n_det, sub,
+                        os.path.join(plot_dir, "detection_nlit_scatter.png"))
+    _plot_confusion(both, konly, sonly, neither, precision, recall, f1, sub,
+                     os.path.join(plot_dir, "detection_confusion.png"))
+    _plot_efficiency(e_bins, N_DET_THRESHOLDS, "log10(E / GeV)",
+                      "detection efficiency vs primary energy", sub,
+                      os.path.join(plot_dir, "detection_efficiency_energy.png"),
+                      log_x=False, show_binwidth=False)
+    _plot_efficiency(v_bins, N_DET_THRESHOLDS, "decay vertex horizontal distance [m]",
+                      "detection efficiency vs decay vertex distance", sub,
+                      os.path.join(plot_dir, "detection_efficiency_distance.png"),
+                      log_x=True, show_binwidth=True)
 
 
 def main():
@@ -157,6 +440,10 @@ def main():
     ap.add_argument("--recon_dir", type=str, default=None,
                     help="passed to opt_core.load_models; only the dual surrogate "
                          "it returns is used here, the recon is not called.")
+    ap.add_argument("--plot_dir", type=str, default=None,
+                    help="if given, also write the detection-diagnostic PNG figures "
+                         "here (created if missing), in addition to the printed "
+                         "tables below; a plotting failure never drops the tables.")
     args = ap.parse_args()
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -178,6 +465,7 @@ def main():
         _etu.LAYOUT_PATH = args.layout
         e_l, n_l = _etu.load_layout(mtn)
     e_l, n_l = e_l.to(dev), n_l.to(dev)
+    n_det = int(e_l.shape[0])
 
     print("=" * 72)
     print("detection stats - kernel vs surrogate, same events + layout")
@@ -222,30 +510,37 @@ def main():
             del xy, pred_ET, counts_surrogate, lit_k, lit_s
 
     print("\n  (a) per-event n_lit distribution:")
-    _report_distribution("kernel", n_lit_kernel)
-    _report_distribution("surrogate", n_lit_surrogate)
+    _, p_kernel, _ = _report_distribution("kernel", n_lit_kernel)
+    _, p_surrogate, _ = _report_distribution("surrogate", n_lit_surrogate)
 
     print("\n  (b) per-event over/under-count (surrogate - kernel):")
     _report_diff(n_lit_surrogate - n_lit_kernel)
 
     print("\n  (c) per-detector confusion (aggregated over all events x detectors):")
-    _report_confusion(both, konly, sonly, neither)
+    precision, recall, f1 = _report_confusion(both, konly, sonly, neither)
 
     log_e_norm = prim[:, 3].cpu().numpy()
     log10E = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
     e_edges = np.linspace(LOG_E_MIN, LOG_E_MAX, N_ENERGY_BINS + 1)
-    _report_bins("log10(E/GeV)  [uniform bins]", log10E, e_edges, n_lit_kernel, N_DET_THRESHOLDS)
+    e_bins = _report_bins("log10(E/GeV)  [uniform bins]", log10E, e_edges,
+                          n_lit_kernel, N_DET_THRESHOLDS)
 
     rel_E = prim[:, 5].cpu().numpy()
     rel_N = prim[:, 6].cpu().numpy()
     horiz_dist = np.sqrt(rel_E ** 2 + rel_N ** 2)
     v_edges = np.quantile(horiz_dist, np.linspace(0.0, 1.0, N_VERTEX_BINS + 1))
-    _report_bins("vertex horizontal distance [m]  [quantile bins]",
-                horiz_dist, v_edges, n_lit_kernel, N_DET_THRESHOLDS)
+    v_bins = _report_bins("vertex horizontal distance [m]  [quantile bins]",
+                          horiz_dist, v_edges, n_lit_kernel, N_DET_THRESHOLDS)
 
     print("\n  (f) overall kernel detection fractions:")
     frac_str = "  ".join(f"N>={n}: {float((n_lit_kernel >= n).mean()):.4f}" for n in N_DET_THRESHOLDS)
     print(f"    {frac_str}")
+
+    if args.plot_dir:
+        _make_plots(args.plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
+                    p_kernel[2], p_surrogate[2], both, konly, sonly, neither,
+                    precision, recall, f1, e_bins, v_bins,
+                    args.layout, B, args.threshold)
 
 
 if __name__ == "__main__":

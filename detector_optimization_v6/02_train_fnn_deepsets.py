@@ -993,6 +993,11 @@ def main():
                     help="Override output directory for checkpoints and logs "
                          "(default: FNN_FOLDER from constants.py). Use to avoid "
                          "overwriting existing checkpoints.")
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER: directory holding "
+                         "primary.pt / xy.pt / E.pt / T.pt / strategy_ids.pt / "
+                         "species_ids.pt. Use to train against a rebuilt dataset "
+                         "without touching the run world the constants point at.")
     # Fine-tune mode: load an existing checkpoint and run a short Adam+L-BFGS
     # pass on the combined base + infill dataset at a low learning rate.
     ap.add_argument("--finetune_from", type=str, default=None,
@@ -1009,6 +1014,9 @@ def main():
                     help="Adaptive-loop round number (used in output folder name "
                          "when --finetune_from is set).")
     args = ap.parse_args()
+    if args.dataset_folder:
+        global TRAINING_DATASET_FOLDER
+        TRAINING_DATASET_FOLDER = args.dataset_folder
     wanted = {s.strip() for s in args.species.split(",") if s.strip()}
     unknown = wanted - {tag for tag, _ in SPECIES_TAGS}
     if unknown:

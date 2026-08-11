@@ -31,7 +31,10 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
-from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
+from modules_v6.opt_core import (
+    consecutive_cos_distance, LAYOUT_THRESHOLD,
+    COMPOSITE_LOG_KEYS, DETECTION_LOG_KEYS,
+)
 
 
 # Type scale for the layout figures. They are drawn on a 14-inch-wide canvas
@@ -755,7 +758,15 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
     """L-BFGS ensemble: one subfigure per chain — weighted utility sub-parts
     (θ, φ, E) over the combined Adam→L-BFGS trajectory plus the overall U (bold
     black). Adam phase solid, L-BFGS phase dashed; a vertical divider marks the
-    switch."""
+    switch.
+
+    The composite objective's per-step log entries carry u_theta/u_phi/u_e
+    (COMPOSITE_LOG_KEYS), which this draws as the decomposition above. The
+    detection objective's entries carry different keys entirely (u_det,
+    n_lit_soft, frac_hard; DETECTION_LOG_KEYS) -- and there IS no analogous
+    sub-part decomposition for it (u_det already equals U itself, unlike the
+    composite's weighted sum), so a detection run's logs draw the U line alone
+    instead of KeyError'ing on u_theta/u_phi/u_e."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -768,13 +779,24 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
                                  squeeze=False, sharex=False)
         axes_flat = axes.flatten()
 
-        # The logged u_* are ALREADY the weighted contributions (W_x * u_x / W_DIV;
-        # see utility_of_xy) and sum to U — plot them as-is (weight 1.0).
-        parts = [
-            ("θ", "u_theta", 1.0, "C0"),
-            ("φ", "u_phi",   1.0, "C1"),
-            ("E", "u_e",     1.0, "C2"),
-        ]
+        # Detect which objective produced this log from the first entry seen
+        # (composite and detection never mix within one run). The logged u_*
+        # are ALREADY the weighted contributions (W_x * u_x / W_DIV; see
+        # utility_of_xy) and sum to U — plot them as-is (weight 1.0).
+        sample = next((e for lg in (list(adam_logs) + list(lbfgs_logs)) for e in lg), None)
+        if sample is not None and COMPOSITE_LOG_KEYS[0] in sample:
+            parts = [
+                ("θ", "u_theta", 1.0, "C0"),
+                ("φ", "u_phi",   1.0, "C1"),
+                ("E", "u_e",     1.0, "C2"),
+            ]
+            decomp_label = "weighted θ/φ/E sub-parts"
+        elif sample is not None and DETECTION_LOG_KEYS[0] in sample:
+            parts = []
+            decomp_label = "no sub-part decomposition for the detection objective"
+        else:
+            parts = []
+            decomp_label = "unrecognized log schema"
         adam_switch = max((len(lg) for lg in adam_logs), default=0)
 
         for k in range(K):
@@ -819,8 +841,8 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
         for j in range(K, len(axes_flat)):
             axes_flat[j].axis("off")
 
-        fig.suptitle("per-chain utility decomposition "
-                     "(weighted θ/φ/E sub-parts + overall U; Adam solid, L-BFGS dashed)",
+        fig.suptitle(f"per-chain utility decomposition "
+                     f"({decomp_label} + overall U; Adam solid, L-BFGS dashed)",
                      fontsize=12)
         fig.tight_layout(rect=(0, 0, 1, 0.97))
         fig.savefig(path, dpi=110)

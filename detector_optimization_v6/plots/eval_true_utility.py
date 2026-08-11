@@ -19,10 +19,21 @@ Only the label source is swapped: a kernel-backed stand-in with the FNN's exact
 call signature is passed into the UNMODIFIED `opt_core.utility_of_xy`, guaranteeing
 identical recon path, transforms and composite weights.
 
+`--objective {composite,detection}` selects which utility does the scoring, for
+BOTH the surrogate and the kernel labels, so a layout optimized under
+`04_optimize_lbfgs_ensemble.py --objective detection` can be checked against
+ground truth the same way -- this matters because the surrogate is known to
+over-report detector firing relative to the kernel (see
+opt_core.detection_utility_of_xy's caveat), so a detection-optimized layout's
+apparent gain has to survive the same surrogate-vs-kernel check the composite
+objective already gets here. Default stays `composite`, byte-identical to the
+pre-existing behaviour.
+
 All paths come from constants.py, so this scores whatever run those point at.
 
     cd TambOpt/detector_optimization_v6
     python plots/eval_true_utility.py --n-events 512
+    python plots/eval_true_utility.py --objective detection --layout <detection layout_best.pt>
 """
 import argparse
 import os
@@ -42,7 +53,10 @@ from modules_v6.dual_surrogate import combine_species_outputs
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
 from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
+from modules_v6.opt_core import (
+    utility_of_xy, detection_utility_of_xy, load_models,
+    RECONSTRUCT_THRESHOLD, LAYOUT_THRESHOLD,
+)
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, T_LOG_SCALE,
@@ -194,11 +208,27 @@ def center_layout(mountain):
 
 
 @torch.no_grad()
-def score(e_det, n_det, primary_batch, fnn, kernel_fnn, recon, device):
-    """(U_surrogate, U_true, parts_surrogate, parts_true) for one layout."""
+def score(e_det, n_det, primary_batch, fnn, kernel_fnn, recon, device,
+         objective="composite", detect_n=None, detect_e=None):
+    """(U_surrogate, U_true, parts_surrogate, parts_true) for one layout.
+
+    `objective` picks which utility scores BOTH the surrogate (`fnn`) and the
+    kernel labels (`kernel_fnn`), so the two numbers stay directly comparable
+    -- composite (default) is `utility_of_xy`, recon-aware, unchanged from
+    before. detection is `opt_core.detection_utility_of_xy`, which takes no
+    recon argument at all (`recon` is accepted here only so both objectives
+    share one call signature; it is simply unused on this path)."""
     x, y = e_det.to(device), n_det.to(device)
-    U_s, _, p_s = utility_of_xy(x, y, primary_batch, fnn, recon)
-    U_t, _, p_t = utility_of_xy(x, y, primary_batch, kernel_fnn, recon)
+    if objective == "detection":
+        U_s, _, p_s = detection_utility_of_xy(
+            x, y, primary_batch, fnn,
+            reconstruct_threshold=detect_n, layout_threshold=detect_e)
+        U_t, _, p_t = detection_utility_of_xy(
+            x, y, primary_batch, kernel_fnn,
+            reconstruct_threshold=detect_n, layout_threshold=detect_e)
+    else:
+        U_s, _, p_s = utility_of_xy(x, y, primary_batch, fnn, recon)
+        U_t, _, p_t = utility_of_xy(x, y, primary_batch, kernel_fnn, recon)
     return float(U_s.item()), float(U_t.item()), p_s, p_t
 
 
@@ -229,6 +259,20 @@ def main():
                          "is used, and primaries are re-encoded from the corpus "
                          "metadata since primary.pt is row-aligned with the training "
                          "corpus only.")
+    ap.add_argument("--objective", type=str, default="composite",
+                    choices=("composite", "detection"),
+                    help="Which utility scores BOTH the surrogate and the kernel "
+                         "labels. 'composite' (default) is the recon-aware utility "
+                         "and is byte-identical to previous behaviour. 'detection' "
+                         "is the aperture-style objective, needed to check a layout "
+                         "optimized with 04 --objective detection against ground "
+                         "truth, since the surrogate over-reports detector firing.")
+    ap.add_argument("--detect_n", type=float, default=None,
+                    help="detection objective: minimum detector count (None uses "
+                         "the opt_core default).")
+    ap.add_argument("--detect_e", type=float, default=None,
+                    help="detection objective: per-detector count threshold (None "
+                         "uses the opt_core default).")
     args = ap.parse_args()
     if args.layout:
         global LAYOUT_PATH
@@ -266,8 +310,9 @@ def main():
         e_g, n_g = grid_layout(mountain)
     else:
         e_g, n_g = center_layout(mountain)
-    gs, gt, _, _ = score(e_g, n_g, prim, fnn, kernel_fnn, recon, device)
-    os_, ot, ops, opt_ = score(e_o, n_o, prim, fnn, kernel_fnn, recon, device)
+    _sc = dict(objective=args.objective, detect_n=args.detect_n, detect_e=args.detect_e)
+    gs, gt, _, _ = score(e_g, n_g, prim, fnn, kernel_fnn, recon, device, **_sc)
+    os_, ot, ops, opt_ = score(e_o, n_o, prim, fnn, kernel_fnn, recon, device, **_sc)
 
     print()
     if args.grid_layout:
@@ -296,8 +341,15 @@ def main():
     print(f"  VERDICT: {verdict}")
     print()
     print("  component breakdown (surrogate | true), optimized layout:")
-    for k in ("u_theta", "u_phi", "u_e", "u_pr"):
-        print(f"    {k:8s}  {float(ops[k].item()):+9.4f} | {float(opt_[k].item()):+9.4f}")
+    # Key set depends on the active objective: composite reports the three
+    # reward terms plus the aperture term, detection reports its own
+    # diagnostics. Iterate over what the objective actually returned so this
+    # never reads a key the active path does not produce.
+    for k in ops:
+        s_v, t_v = ops[k], opt_[k]
+        s_v = float(s_v.item()) if torch.is_tensor(s_v) else float(s_v)
+        t_v = float(t_v.item()) if torch.is_tensor(t_v) else float(t_v)
+        print(f"    {k:11s}  {s_v:+9.4f} | {t_v:+9.4f}")
 
 
 if __name__ == "__main__":
