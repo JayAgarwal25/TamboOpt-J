@@ -50,8 +50,8 @@ from modules_v6.constants import (
     OPT_FOLDER,
 )
 
-# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
-LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_center", "layout_best.pt")
+LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
+# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_center", "layout_best.pt")
 
 class KernelDualLabels:
     """Drop-in for the dual surrogate: same ``(primary_batch, xy_batch) -> (B, n_det, 2)``
@@ -205,8 +205,14 @@ def score(e_det, n_det, primary_batch, fnn, kernel_fnn, recon, device):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--n-events", type=int, default=512,
+    ap.add_argument("--n-events", type=int, default=5120,
                     help="fixed primary/cloud batch size for the objective")
+    ap.add_argument("--kernel-chunk", type=int, default=128,
+                    help="events per kernel call (0 = whole batch). Memory only: "
+                         "the result is identical for any value, since the kernel "
+                         "is per-event. ~0.6 GiB per (chunk=64) kernel tensor vs "
+                         "4.79 GiB at 512 — lower this, not --n-events, when the "
+                         "GPU OOMs, so the utility keeps its full sample.")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--grid-layout", action="store_true",
                     help="use grid layout as baseline")
@@ -246,7 +252,9 @@ def main():
     surface = SurfaceUpMap.from_mountain(mountain).to(device)
     elec, muon, B, n_pairs = load_events(args.n_events, device, corpus_override=args.corpus)
     print(f"events      : {B} of {n_pairs} pairs")
-    kernel_fnn = KernelDualLabels(elec, muon, surface, device)
+    kernel_fnn = KernelDualLabels(elec, muon, surface, device,
+                                  chunk=args.kernel_chunk)
+    print(f"kernel chunk: {kernel_fnn.chunk} events/call")
 
     fnn, recon = load_models(device, recon_dir=args.recon_dir)
     # Always re-encoded from the corpus being scored: primary.pt only ever lines up

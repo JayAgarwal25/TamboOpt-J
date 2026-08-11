@@ -80,7 +80,7 @@ TAU_RECONSTRUCT = 0.2
 # bulk is untouched. theta/phi share U_angle but need different caps.
 CAP_THETA = 500.0
 CAP_PHI   = 50.0
-CAP_E     = 50.0
+CAP_E     = 80.0
 
 # GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
 # the configured mesh, else the absolute path) and re-exported here for callers
@@ -89,7 +89,7 @@ CAP_E     = 50.0
 
 # ── Objective helpers ─────────────────────────────────────────────────────────
 def primary_to_physical_labels(primary: torch.Tensor):
-    """(B, 5) -> (E_GeV, θ_rad, φ_rad). Matches 04_optimize.py."""
+    """(B, >=4) -> (E_GeV, θ_rad, φ_rad). Inverse of `encode_primary`."""
     # Normalize before reading off angles. The true primary is already a unit
     # vector, but this is also called on the RECON's raw regression output, whose
     # norm shrinks toward the population mean under MSE training. Taking
@@ -118,12 +118,84 @@ def primary_to_physical_labels(primary: torch.Tensor):
     return E_gev, theta, phi
 
 
+# Off-mesh penalty (see offmesh_penalty). Weight is in units of U: one detector
+# sitting a full max_gap BEYOND the snap radius costs w/n_det, so at w=100 with
+# 100 detectors that is 1.0 U each — comfortably more than the ~1-2 U a chunk
+# gains by overfitting its batch, which is the trade the optimizer was making.
+OFFMESH_PENALTY_W = 100.0
+
+
+# Onset fraction of the snap radius. NOT 1.0, which was the first attempt
+# and measurably failed: a penalty that is flat inside the radius has zero
+# gradient there, so the only equilibrium is where its OUTWARD-growing
+# gradient finally matches the utility's outward pull — necessarily beyond
+# the radius (measured ~21 m beyond at w=100). Starting the wall inside
+# puts that balance point back in-band. The cost is that U is no longer
+# bit-identical to earlier runs for detectors sitting in the outer quarter
+# of the band; the alternative is a barrier that does not hold.
+PENALTY_ONSET_FRAC = 0.75
+
+# Excess (in units of r0) beyond which the penalty grows LINEARLY instead of
+# quadratically. Unbounded quadratic growth was the second failure: a
+# strong-Wolfe probe landing 400 km out produced a gradient ~4000x anything
+# physical, and although the probe was rejected, the curvature pair it fed into
+# L-BFGS's inverse-Hessian approximation made the following directions wilder
+# still (worst excursion grew from 797 m to 420,658 m). Beyond this the
+# gradient is constant, so a wild probe is expensive but not corrupting.
+PENALTY_LINEAR_AT = 1.0
+
+
+def offmesh_penalty(x_det: torch.Tensor, y_det: torch.Tensor,
+                    mesh_en: torch.Tensor, r0: float) -> torch.Tensor:
+    """Mean penalised excess distance beyond `r0` of the nearest mesh centroid.
+
+    Huber-shaped in the normalised excess u = (d - r0)/r0: u^2 while u <= a,
+    then a linear continuation 2a*u - a^2 (value and slope both continuous at
+    u = a). Quadratic near the wall so it is smooth where the optimizer
+    actually works, linear far away so the far field cannot dominate.
+
+    Why this exists: nothing in U knew the mountain existed. The only geometry
+    was `project_to_mountain_ne`, applied under no_grad AFTER the optimizer
+    step, and in L-BFGS only once per sweep chunk. So for a whole chunk the
+    optimizer ran free, took the layout a median 29 m / p99 187 m / max 1272 m
+    off the mesh — past the 91.3 m radius where the stage-1 training layouts
+    were snapped, i.e. where the surrogate has no data — and happily hill-
+    climbed the extrapolation, reporting U 36.2 -> 37.7 out there. The snap at
+    the chunk end then dragged it back and U collapsed to 16.18 (one run
+    returned 100 detectors on 11 distinct points, 28 stacked on one).
+
+    This makes the boundary part of the objective, so the optimizer feels it
+    DURING the chunk instead of being caught at the end. Normalised by r0 and
+    averaged over detectors, so the weight means the same thing at any mesh
+    scale or detector count.
+
+    `r0` is the ONSET radius, which callers set to PENALTY_ONSET_FRAC * max_gap
+    — inside the snap radius on purpose (see that constant). At the default
+    0.75 the wall starts at 68.5 m and bites at the 91.3 m snap radius with a
+    gradient of 9.7e-3 per metre, ~20x the utility's measured outward pull of
+    ~5e-4, putting the balance point at ~70 m — in-band, which is the whole
+    point. A layout in the inner three quarters of the band still scores
+    exactly as it did before.
+    """
+    d2 = ((x_det[:, None] - mesh_en[None, :, 0]) ** 2
+          + (y_det[:, None] - mesh_en[None, :, 1]) ** 2)
+    d = d2.min(dim=1).values.clamp_min(1e-12).sqrt()
+    u = (d - r0).clamp_min(0.0) / r0
+    a = PENALTY_LINEAR_AT
+    quad = u.clamp_max(a).pow(2)                  # u^2 up to the knee
+    lin = 2.0 * a * (u - a).clamp_min(0.0)        # constant slope past it
+    return (quad + lin).mean()
+
+
 def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
                   fnn,
                   recon,
-                  reconstruct_threshold: float = None):
+                  reconstruct_threshold: float = None,
+                  mesh_en: torch.Tensor = None,
+                  penalty_w: float = 0.0,
+                  penalty_r0: float = None):
     """Composite U for an (East, North) layout against a primary batch.
 
     Detector coords are (East, North) to match the ENU h5 convention — but this
@@ -144,7 +216,19 @@ def utility_of_xy(x_det: torch.Tensor,
 
     NOT decorated with `@torch.no_grad()` so the L-BFGS optimizer can
     differentiate it; the gradient-free DE optimizers call it inside their own
-    `no_grad` block."""
+    `no_grad` block.
+
+    `mesh_en` (n_centroids, 2) + `penalty_w` > 0 subtract the differentiable
+    off-mesh penalty (see offmesh_penalty), putting the mountain boundary into
+    the objective itself. OFF by default, so every existing caller — including
+    plots/eval_true_utility.py, which relies on this function being unmodified
+    to guarantee it scores exactly what the optimizer scored — gets the same
+    number as before. `penalty_r0` defaults to the caller's max_gap.
+
+    The returned U is the PENALISED objective, i.e. what the optimizer should
+    select on; the raw utility and the penalty are both in `parts` so the logs
+    can separate them. With r0 = max_gap a converged in-band layout has penalty
+    exactly 0, so reported U stays comparable to earlier runs."""
     if reconstruct_threshold is None:
         reconstruct_threshold = RECONSTRUCT_THRESHOLD
     B = primary_batch.shape[0]
@@ -189,7 +273,15 @@ def utility_of_xy(x_det: torch.Tensor,
     u_e     = U_E    (E_pred_phys, E_true,    r, cap=CAP_E)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
-    return U, r, dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV, u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)
+    parts = dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV,
+                 u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)
+    if mesh_en is not None and penalty_w > 0.0:
+        r0 = penalty_r0 if penalty_r0 else 1.0
+        pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en, r0)
+        parts["u_raw"] = U          # utility before the boundary cost
+        parts["u_offmesh"] = -pen
+        U = U - pen
+    return U, r, parts
 
 
 # ── Ensemble bookkeeping ──────────────────────────────────────────────────────

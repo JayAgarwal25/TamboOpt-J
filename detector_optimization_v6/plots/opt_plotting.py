@@ -34,6 +34,16 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
 
 
+# Type scale for the layout figures. They are drawn on a 14-inch-wide canvas
+# and then read at slide/document size, where matplotlib's 10 pt default
+# shrinks to nothing. Diagnostic grids (per-chain curve panels) keep their own
+# smaller sizes — those are read full-screen.
+FS_TITLE  = 20
+FS_LABEL  = 17
+FS_TICK   = 14
+FS_LEGEND = 14
+
+
 # ── Layout figures ────────────────────────────────────────────────────────────
 @torch.no_grad()
 def project_ne_to_up(surface, north, east):
@@ -419,16 +429,23 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         from mpl_toolkits.axes_grid1 import make_axes_locatable
         cax = make_axes_locatable(ax).append_axes("right", size="2.5%", pad=0.1)
         cbar = fig.colorbar(im, cax=cax)
-        cbar.set_label(f"detector density (count per {member_word} per cell)")
+        # Type sized for the figure: this is a 14-inch-wide canvas, so the
+        # matplotlib defaults (10 pt labels, 8 pt legend) render unreadably
+        # small once the PNG is scaled into a slide or a doc.
+        cbar.set_label(f"detector density (count per {member_word} per cell)",
+                       fontsize=FS_LABEL)
+        cbar.ax.tick_params(labelsize=FS_TICK)
 
-        ax.scatter(np.asarray(best_x), np.asarray(best_y), s=22, c="cyan",
+        ax.scatter(np.asarray(best_x), np.asarray(best_y), s=32, c="cyan",
                    edgecolors="black", linewidths=0.4, alpha=0.95, zorder=3,
                    label="best-U layout")
-        ax.set_xlabel(xlab); ax.set_ylabel(ylab)
+        ax.set_xlabel(xlab, fontsize=FS_LABEL)
+        ax.set_ylabel(ylab, fontsize=FS_LABEL)
+        ax.tick_params(labelsize=FS_TICK)
         title = (f"detector placement density ({count_word}={K}{count_suffix}, "
                  f"{bins}×{bins} bins) + best-U layout")
-        ax.set_title(title + (f"\n{sub}" if sub else ""))
-        ax.legend(loc="upper right", fontsize=8)
+        ax.set_title(title + (f"\n{sub}" if sub else ""), fontsize=FS_TITLE)
+        ax.legend(loc="upper right", fontsize=FS_LEGEND)
         fig.savefig(path, dpi=110, bbox_inches="tight")
         plt.close(fig)
         print(f"[plot] wrote {path}")
@@ -571,77 +588,154 @@ def plot_components_de_pop(de_log, path: str):
         print(f"[plot] utility components skipped ({exc!r})")
 
 
+def _improving(u):
+    """(positions, values) of the entries that beat every entry before them."""
+    a = np.asarray(u, dtype=float)
+    if not a.size:
+        return np.zeros(0, dtype=int), np.zeros(0)
+    keep = a > np.maximum.accumulate(np.concatenate([[-np.inf], a[:-1]]))
+    keep &= np.isfinite(a)
+    pos = np.flatnonzero(keep)
+    return pos, a[pos]
+
+
+def _lbfgs_series(l_u, scores):
+    """(x offsets, U, label suffix) for the L-BFGS half of the U panel.
+
+    Preferred source is `scores` — the chunk-end evaluations on the held-out
+    scoring set, kept only where they improved. That is the only L-BFGS series
+    whose values are comparable to each other: the per-closure U each chunk
+    reports is measured on that chunk's own batch, so it ranks batches as much
+    as layouts, and it includes strong-Wolfe probes the optimizer rejected.
+
+    Runs written before the scoring set existed have no such series, so those
+    fall back to the running-max frontier of the closure U.
+    """
+    if scores:
+        keep = [s for s in scores if s.get("best")]
+        if keep:
+            return (np.array([s["closure"] for s in keep], dtype=float),
+                    np.array([s["U_score"] for s in keep], dtype=float),
+                    "scoring set")
+    pos, val = _improving(l_u)
+    return pos.astype(float), val, "closure U, improving only"
+
+
+def _clip_u_axis(ax, series):
+    """Autoscale the U axis over the non-negative data, floored at 0."""
+    finite = np.concatenate([np.asarray(s, dtype=float) for s in series if len(s)]) \
+        if any(len(s) for s in series) else np.zeros(0)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return 0
+    top = float(finite.max())
+    ax.set_ylim(0.0, top * 1.05 if top > 0 else 1.0)
+    return int((finite < 0).sum())
+
+
 def plot_curves_lbfgs(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str,
-                      grad_cos_window: int = 10):
+                      grad_cos_window: int = 10, cos_smoothed=None,
+                      scoring_logs=None):
     """L-BFGS ensemble, two panels: (1) combined Adam→L-BFGS U trajectory, one line
     per run with the SAME color across both phases (Adam solid, L-BFGS dashed) and
     a vertical divider at the switch; (2) consecutive-step gradient cosine
-    distance (W=`grad_cos_window`-step vector-averaged; raw drawn faint)."""
+    distance (W=`grad_cos_window`-step vector-averaged; raw drawn faint).
+
+    The L-BFGS half of panel 1 shows only improvements — see `_lbfgs_series`.
+
+    `cos_smoothed` is for re-plotting from a finished run's optimize_log.json,
+    which keeps the already-smoothed cosine series but not the raw gradients:
+    pass dict(adam=[per-run series], lbfgs=[...]) with `adam_grads`/`lbfgs_grads`
+    empty and panel 2 is drawn from it, without the faint raw underlay."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        K = max(len(adam_logs), 1)
+        K = max(len(adam_logs), len(lbfgs_logs), 1)
         fig, axes = plt.subplots(1, 2, figsize=(15, 4.5))
         colors = plt.cm.tab10(np.linspace(0, 1, K))
 
         # Panel 1 — combined Adam + L-BFGS U, one continuous line per run.
         adam_switch = max((len(lg) for lg in adam_logs), default=0)
+        all_u, kinds = [], set()
         for k in range(K):
             a_lg = adam_logs[k] if k < len(adam_logs) else []
             l_lg = lbfgs_logs[k] if k < len(lbfgs_logs) else []
+            scores = (scoring_logs or [])[k] if k < len(scoring_logs or []) else None
             a_u = [e["U"] for e in a_lg]
-            l_u = [e["U"] for e in l_lg]
-            best = max(a_u + l_u) if (a_u or l_u) else float("nan")
+            xl, l_u, kind = _lbfgs_series([e["U"] for e in l_lg], scores)
+            all_u += [a_u, l_u]
+            kinds.add(kind)
+            best = max(list(a_u) + list(l_u)) if (len(a_u) or len(l_u)) else float("nan")
             if a_u:
                 axes[0].plot(np.arange(1, len(a_u) + 1), a_u, color=colors[k],
                              alpha=0.85, linewidth=1.0, linestyle="-",
                              label=f"chain {k}  best={best:.2f}")
-            if l_u:
-                xl = np.arange(adam_switch + 1, adam_switch + 1 + len(l_u))
-                axes[0].plot(xl, l_u, color=colors[k], alpha=0.85, linewidth=1.0,
-                             linestyle="--",
+            if len(l_u):
+                axes[0].plot(adam_switch + 1 + xl, l_u, color=colors[k], alpha=0.9,
+                             linewidth=1.3, linestyle="--", marker="o",
+                             markersize=3.2, drawstyle="steps-post",
                              label=None if a_u else f"chain {k}  best={best:.2f}")
         if adam_switch:
             axes[0].axvline(adam_switch + 0.5, color="gray", linestyle=":",
                             alpha=0.7, label="Adam→L-BFGS")
+        _clip_u_axis(axes[0], all_u)
         axes[0].set_xlabel("optimizer step (Adam epochs → L-BFGS calls)")
         axes[0].set_ylabel("U (composite)")
-        axes[0].set_title(f"optimization: Adam (solid) + L-BFGS (dashed), K={K}")
+        axes[0].set_title(f"optimization: Adam (solid) + L-BFGS improvements "
+                          f"(dashed), K={K}\nL-BFGS: {' / '.join(sorted(kinds))}",
+                          fontsize=11)
         axes[0].grid(alpha=0.3); axes[0].legend(fontsize=7, bbox_to_anchor=(1.04, 1), loc="upper left",)
 
         # Panel 2 — consecutive-step gradient cosine distance, one line per run.
-        adam_len = max((len(consecutive_cos_distance(g, 1)) for g in (adam_grads or [])),
-                       default=0)
+        # From raw gradient histories when the caller has them (live run), else
+        # from the pre-smoothed series a finished run wrote to its log.
+        from_raw = bool(adam_grads)
+        if from_raw:
+            adam_len = max((len(consecutive_cos_distance(g, 1)) for g in adam_grads),
+                           default=0)
+            runs = [(adam_grads[k], lbfgs_grads[k] if lbfgs_grads else None)
+                    for k in range(len(adam_grads))]
+        else:
+            a_cos = list((cos_smoothed or {}).get("adam") or [])
+            l_cos = list((cos_smoothed or {}).get("lbfgs") or [])
+            adam_len = max((len(c) for c in a_cos), default=0)
+            runs = [(a_cos[k] if k < len(a_cos) else None,
+                     l_cos[k] if k < len(l_cos) else None)
+                    for k in range(max(len(a_cos), len(l_cos)))]
         any_line = False
-        for k in range(len(adam_grads or [])):
-            for grads, x0, dashed in (
-                (adam_grads[k], 0, False),
-                (lbfgs_grads[k] if lbfgs_grads else None, adam_len, True),
-            ):
-                if grads is None:
+        for k, (a_series, l_series) in enumerate(runs):
+            for series, x0, dashed in ((a_series, 0, False),
+                                       (l_series, adam_len, True)):
+                if series is None or not len(series):
                     continue
-                raw  = consecutive_cos_distance(grads, 1)
-                if len(raw):
-                    axes[1].plot(np.arange(x0 + 1, x0 + 1 + len(raw)), raw,
-                                 color=colors[k % K], alpha=0.1, linewidth=0.7,
-                                 linestyle="--" if dashed else "-")
-                    any_line = True
-                sm = consecutive_cos_distance(grads, grad_cos_window)
-                if len(sm):
+                if from_raw:
+                    raw = consecutive_cos_distance(series, 1)
+                    sm = consecutive_cos_distance(series, grad_cos_window)
+                    if len(raw):
+                        axes[1].plot(np.arange(x0 + 1, x0 + 1 + len(raw)), raw,
+                                     color=colors[k % K], alpha=0.1, linewidth=0.7,
+                                     linestyle="--" if dashed else "-")
+                        any_line = True
                     off = x0 + (len(raw) - len(sm)) // 2 + 1
+                else:
+                    sm, off = np.asarray(series, dtype=float), x0 + 1
+                if len(sm):
                     axes[1].plot(np.arange(off, off + len(sm)), sm,
                                  color=colors[k % K], alpha=0.9, linewidth=1.6,
                                  linestyle="--" if dashed else "-",
                                  label=f"run {k}" if not dashed else None)
-        if adam_len and lbfgs_grads:
+                    any_line = True
+        if adam_len and any(l is not None for _, l in runs):
             axes[1].axvline(adam_len + 0.5, color="gray", linestyle=":", alpha=0.6,
                             label="Adam→L-BFGS")
         axes[1].set_xlabel("optimizer step")
         axes[1].set_ylabel("cos distance (consecutive grads)")
         axes[1].set_title(f"per-run gradient-direction turn "
-                          f"(W={grad_cos_window}-step vector avg; raw faint)")
+                          f"(W={grad_cos_window}-step vector avg"
+                          + ("; raw faint)" if from_raw else "; from log)"),
+                          fontsize=11)
         axes[1].grid(alpha=0.3)
         if any_line:
             axes[1].legend(fontsize=7)
@@ -689,25 +783,36 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
             l_lg = lbfgs_logs[k] if k < len(lbfgs_logs) else []
             xa = np.arange(1, len(a_lg) + 1)
             xl = np.arange(adam_switch + 1, adam_switch + 1 + len(l_lg))
+            ax_series = []
 
             for label, key, w, col in parts:
                 if a_lg:
-                    ax.plot(xa, [e[key] * w for e in a_lg], color=col,
+                    ya = [e[key] * w for e in a_lg]
+                    ax_series.append(ya)
+                    ax.plot(xa, ya, color=col,
                             linewidth=1.0, linestyle="-", alpha=0.85, label=label)
                 if l_lg:
-                    ax.plot(xl, [e[key] * w for e in l_lg], color=col,
+                    yl = [e[key] * w for e in l_lg]
+                    ax_series.append(yl)
+                    ax.plot(xl, yl, color=col,
                             linewidth=1.0, linestyle="--", alpha=0.85,
                             label=None if a_lg else label)
             if a_lg:
-                ax.plot(xa, [e["U"] for e in a_lg], color="black",
+                ya = [e["U"] for e in a_lg]
+                ax_series.append(ya)
+                ax.plot(xa, ya, color="black",
                         linewidth=1.8, linestyle="-", label="U (overall)")
             if l_lg:
-                ax.plot(xl, [e["U"] for e in l_lg], color="black",
+                yl = [e["U"] for e in l_lg]
+                ax_series.append(yl)
+                ax.plot(xl, yl, color="black",
                         linewidth=1.8, linestyle="--",
                         label=None if a_lg else "U (overall)")
             if adam_switch:
                 ax.axvline(adam_switch + 0.5, color="gray", linestyle=":", alpha=0.6)
-            ax.set_title(f"chain {k}", fontsize=10)
+            n_clipped = _clip_u_axis(ax, ax_series)
+            ax.set_title(f"chain {k}" + (f"  ({n_clipped} probes below axis)"
+                                         if n_clipped else ""), fontsize=10)
             ax.set_xlabel("optimizer step"); ax.set_ylabel("utility")
             ax.grid(alpha=0.3); ax.legend(fontsize=7)
 
