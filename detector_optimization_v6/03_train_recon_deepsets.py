@@ -339,10 +339,15 @@ def _plot_curves(log, path: str, adam_epochs: int = 0,
 
 
 def main():
-    global N_EPOCHS, LBFGS_MAX_ITER
+    global N_EPOCHS, LBFGS_MAX_ITER, TRAINING_DATASET_FOLDER
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs",        type=int,  default=N_EPOCHS)
     ap.add_argument("--lbfgs-iters",   type=int,  default=LBFGS_MAX_ITER)
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER: directory holding "
+                         "primary.pt / xy.pt / E.pt / T.pt / strategy_ids.pt. Use "
+                         "to train against a rebuilt dataset without touching the "
+                         "run world the constants point at.")
     ap.add_argument("--fnn_folder",    type=str,  default=None,
                     help="Override FNN_FOLDER: directory containing fnn_electron.pt "
                          "and fnn_muon.pt.  Use this after adaptive-loop FNN fine-tune "
@@ -394,6 +399,8 @@ def main():
     normalize_loss = bool(args.normalize_loss)
     sparsify       = float(args.sparsify)
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
+    if args.dataset_folder:
+        TRAINING_DATASET_FOLDER = args.dataset_folder
     if args.fnn_folder:
         global FNN_FOLDER
         FNN_FOLDER = args.fnn_folder
