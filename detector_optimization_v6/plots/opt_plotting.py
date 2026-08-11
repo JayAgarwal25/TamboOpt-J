@@ -588,17 +588,41 @@ def plot_components_de_pop(de_log, path: str):
         print(f"[plot] utility components skipped ({exc!r})")
 
 
-def _clip_u_axis(ax, series):
-    """Floor the U axis at 0 and report how many points that hides.
+def _improving(u):
+    """(positions, values) of the entries that beat every entry before them."""
+    a = np.asarray(u, dtype=float)
+    if not a.size:
+        return np.zeros(0, dtype=int), np.zeros(0)
+    keep = a > np.maximum.accumulate(np.concatenate([[-np.inf], a[:-1]]))
+    keep &= np.isfinite(a)
+    pos = np.flatnonzero(keep)
+    return pos, a[pos]
 
-    L-BFGS logs CLOSURE calls, so every strong-Wolfe probe is in there — and a
-    probe that lands hundreds of km off the mesh pays an off-mesh penalty of
-    ~1e5-1e6 U. Those points are rejected by the line search (U is back to its
-    pre-excursion value within a handful of closures), but on a shared linear
-    axis they compress the +0..+37 band everyone actually reads into one flat
-    line. Autoscaling on the positive data only and letting the probes clip
-    below the axis is the honest fix: nothing real lives under 0.
+
+def _lbfgs_series(l_u, scores):
+    """(x offsets, U, label suffix) for the L-BFGS half of the U panel.
+
+    Preferred source is `scores` — the chunk-end evaluations on the held-out
+    scoring set, kept only where they improved. That is the only L-BFGS series
+    whose values are comparable to each other: the per-closure U each chunk
+    reports is measured on that chunk's own batch, so it ranks batches as much
+    as layouts, and it includes strong-Wolfe probes the optimizer rejected.
+
+    Runs written before the scoring set existed have no such series, so those
+    fall back to the running-max frontier of the closure U.
     """
+    if scores:
+        keep = [s for s in scores if s.get("best")]
+        if keep:
+            return (np.array([s["closure"] for s in keep], dtype=float),
+                    np.array([s["U_score"] for s in keep], dtype=float),
+                    "scoring set")
+    pos, val = _improving(l_u)
+    return pos.astype(float), val, "closure U, improving only"
+
+
+def _clip_u_axis(ax, series):
+    """Autoscale the U axis over the non-negative data, floored at 0."""
     finite = np.concatenate([np.asarray(s, dtype=float) for s in series if len(s)]) \
         if any(len(s) for s in series) else np.zeros(0)
     finite = finite[np.isfinite(finite)]
@@ -610,13 +634,14 @@ def _clip_u_axis(ax, series):
 
 
 def plot_curves_lbfgs(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str,
-                      grad_cos_window: int = 10, cos_smoothed=None):
+                      grad_cos_window: int = 10, cos_smoothed=None,
+                      scoring_logs=None):
     """L-BFGS ensemble, two panels: (1) combined Adam→L-BFGS U trajectory, one line
     per run with the SAME color across both phases (Adam solid, L-BFGS dashed) and
     a vertical divider at the switch; (2) consecutive-step gradient cosine
     distance (W=`grad_cos_window`-step vector-averaged; raw drawn faint).
 
-    Panel 1's y axis starts at 0 — see `_clip_u_axis`.
+    The L-BFGS half of panel 1 shows only improvements — see `_lbfgs_series`.
 
     `cos_smoothed` is for re-plotting from a finished run's optimize_log.json,
     which keeps the already-smoothed cosine series but not the raw gradients:
@@ -633,32 +658,33 @@ def plot_curves_lbfgs(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str,
 
         # Panel 1 — combined Adam + L-BFGS U, one continuous line per run.
         adam_switch = max((len(lg) for lg in adam_logs), default=0)
-        all_u = []
+        all_u, kinds = [], set()
         for k in range(K):
             a_lg = adam_logs[k] if k < len(adam_logs) else []
             l_lg = lbfgs_logs[k] if k < len(lbfgs_logs) else []
+            scores = (scoring_logs or [])[k] if k < len(scoring_logs or []) else None
             a_u = [e["U"] for e in a_lg]
-            l_u = [e["U"] for e in l_lg]
+            xl, l_u, kind = _lbfgs_series([e["U"] for e in l_lg], scores)
             all_u += [a_u, l_u]
-            best = max(a_u + l_u) if (a_u or l_u) else float("nan")
+            kinds.add(kind)
+            best = max(list(a_u) + list(l_u)) if (len(a_u) or len(l_u)) else float("nan")
             if a_u:
                 axes[0].plot(np.arange(1, len(a_u) + 1), a_u, color=colors[k],
                              alpha=0.85, linewidth=1.0, linestyle="-",
                              label=f"chain {k}  best={best:.2f}")
-            if l_u:
-                xl = np.arange(adam_switch + 1, adam_switch + 1 + len(l_u))
-                axes[0].plot(xl, l_u, color=colors[k], alpha=0.85, linewidth=1.0,
-                             linestyle="--",
+            if len(l_u):
+                axes[0].plot(adam_switch + 1 + xl, l_u, color=colors[k], alpha=0.9,
+                             linewidth=1.3, linestyle="--", marker="o",
+                             markersize=3.2, drawstyle="steps-post",
                              label=None if a_u else f"chain {k}  best={best:.2f}")
         if adam_switch:
             axes[0].axvline(adam_switch + 0.5, color="gray", linestyle=":",
                             alpha=0.7, label="Adam→L-BFGS")
-        n_clipped = _clip_u_axis(axes[0], all_u)
+        _clip_u_axis(axes[0], all_u)
         axes[0].set_xlabel("optimizer step (Adam epochs → L-BFGS calls)")
         axes[0].set_ylabel("U (composite)")
-        axes[0].set_title(f"optimization: Adam (solid) + L-BFGS (dashed), K={K}"
-                          + (f"\ny clipped at 0 — {n_clipped} rejected line-search "
-                             f"probes below" if n_clipped else ""),
+        axes[0].set_title(f"optimization: Adam (solid) + L-BFGS improvements "
+                          f"(dashed), K={K}\nL-BFGS: {' / '.join(sorted(kinds))}",
                           fontsize=11)
         axes[0].grid(alpha=0.3); axes[0].legend(fontsize=7, bbox_to_anchor=(1.04, 1), loc="upper left",)
 

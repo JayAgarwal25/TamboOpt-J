@@ -55,7 +55,8 @@ def main():
             os.path.join(d, "optimize_curves.png"),
             grad_cos_window=log.get("config", {}).get("grad_cos_window",
                                                       GRAD_COS_WINDOW),
-            cos_smoothed=log.get("grad_cos_consecutive"))
+            cos_smoothed=log.get("grad_cos_consecutive"),
+            scoring_logs=log.get("scoring_logs"))
         _plt.plot_components_lbfgs(
             log["adam_logs"], log["lbfgs_logs"],
             os.path.join(d, "utility_components.png"))

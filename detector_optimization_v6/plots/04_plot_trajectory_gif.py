@@ -315,10 +315,18 @@ def _resample(panels, n_out, min_per_chunk=0):
                       f"chunks {min_per_chunk} each — raise --seconds/--fps")
                 per = np.full(uniq.size, max(1, slots[p] // uniq.size))
             else:
-                per = min_per_chunk + np.floor(spare * length / length.sum()).astype(int)
+                exact = spare * length / length.sum()
+                per = min_per_chunk + np.floor(exact).astype(int)
+                rem = int(slots[p] - per.sum())
+                if rem > 0:
+                    order = np.argsort(-(exact - np.floor(exact)))
+                    per[order[:rem]] += 1
             src.append(np.concatenate([_pick(idx[ck == c], k)
                                        for c, k in zip(uniq, per)]))
-        P["idx"] = np.concatenate(src)
+        out = np.concatenate(src)
+        if out.size != n_out:
+            out = out[np.linspace(0, out.size - 1, n_out).round().astype(int)]
+        P["idx"] = out
 
 
 def _writer(path, fps):
