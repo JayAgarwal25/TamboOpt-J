@@ -310,6 +310,12 @@ def main():
         print(f"output dir   : {output_folder}")
         print(f"batch size   : {BATCH_SIZE}")
         print(f"max showers  : {max_showers}")
+        # Create it NOW, not at save time: build_training_pairs writes its
+        # resume checkpoint into this folder every resume_every_s, long before
+        # _save_dataset would create it. With the default folder that already
+        # existed from an earlier run, so a fresh --output_folder was the only
+        # case that hit it, and it hit it 30 minutes into a multi-hour build.
+        os.makedirs(output_folder, exist_ok=True)
 
         t0 = time.time()
         primary, xy, E, T, strat, species = build_training_pairs(
