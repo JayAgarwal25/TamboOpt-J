@@ -51,6 +51,6 @@ run_step 03_train_recon_deepsets.py
 # --chains 1: this run is for the layout trajectory, not the ensemble spread,
 # and one chain at POS_LOG_EVERY=1 is what makes the animation smooth. The
 # 8-chain run took 11h03m of the 12h limit; one chain is ~1/8 of that.
-run_step 04_optimize_lbfgs_ensemble.py --schemes grid --chains 8
+run_step 04_optimize_lbfgs_ensemble.py --schemes grid --chains 1
 
 

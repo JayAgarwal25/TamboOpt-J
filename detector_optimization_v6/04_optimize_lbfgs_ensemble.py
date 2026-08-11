@@ -99,7 +99,7 @@ INIT_OVERDISP_SIGMA = 100.0  # metres — per-restart init spread around scheme 
 
 # Adam warm-start
 N_ADAM_EPOCHS       = 5_000
-PRIMARIES_PER_STEP  = 256
+PRIMARIES_PER_STEP  = 5_000
 ADAM_LR             = 1.0
 GRAD_CLIP           = 100.0
 ADAM_LOG_EVERY      = 100
@@ -171,6 +171,24 @@ LBFGS_BATCH_PRIMARIES = 6000
 # per-chunk determinism (what the line search needs) while holding the sweep at
 # the measured cost.
 LBFGS_MAX_SWEEP_PRIMARIES = 1_000_000
+
+# Fixed scoring set: chunk-end candidates are re-scored here before any of them
+# is called "best". Held out of the sweep pool, so it is the one objective every
+# chunk's result is comparable on — the per-chunk U is not, each chunk having
+# its own batch. Evaluated in SCORING_BATCH_PRIMARIES slices and combined as a
+# size-weighted mean, which is exact: every term in U is a per-event mean, and
+# the layout-only off-mesh penalty is identical in every slice.
+SCORING_SET_PRIMARIES   = 20_000
+SCORING_BATCH_PRIMARIES = 4_000
+
+# Tolerance band for carrying a chunk's positions forward. A chunk that beats
+# the best score is always accepted and becomes the new best; a chunk that lands
+# within this fraction of it is still carried forward (the sweep keeps exploring
+# from there) but does NOT become the best; anything worse is rolled back to the
+# best-known layout. Strict improvement-only acceptance would throw away a chunk
+# that found a better region but scored fractionally worse through scoring-set
+# noise, and restart from the same point every time.
+SCORING_ACCEPT_TOL = 0.05
 
 # Composite weights (W_*) + reconstructability thresholds are imported from
 # modules_v6/opt_core.py (shared across the 04 optimizers).
@@ -369,6 +387,31 @@ def _perturbed_adam_runs(scheme: str, K: int, generator: torch.Generator,
     return adam_bests, adam_logs, perturbed_inits, adam_grads, adam_positions
 
 
+@torch.no_grad()
+def score_on_set(x: torch.Tensor, y: torch.Tensor, scoring_set: torch.Tensor,
+                 fnn: DualSpeciesSurrogate, recon: torch.nn.Module, mountain,
+                 project: bool = True):
+    """U of one layout on the fixed scoring set, in memory-safe slices.
+
+    Projects first unless told otherwise: an unprojected layout is not one that
+    can be built, so scoring it would rank a candidate by a value the snap is
+    about to take away.
+    """
+    if project:
+        x, y = project_to_mountain_ne(mountain, x.detach().cpu(), y.detach().cpu())
+    x, y = x.to(DEVICE), y.to(DEVICE)
+    mesh_en, pen_r0 = _penalty_args(mountain)
+    step = SCORING_BATCH_PRIMARIES or scoring_set.shape[0]
+    tot, n_tot = 0.0, 0
+    for s in range(0, scoring_set.shape[0], step):
+        batch = scoring_set[s:s + step].to(DEVICE)
+        U, _, _ = utility_of_xy(x, y, batch, fnn, recon, mesh_en=mesh_en,
+                                penalty_w=OFFMESH_PENALTY, penalty_r0=pen_r0)
+        tot += float(U.item()) * batch.shape[0]
+        n_tot += batch.shape[0]
+    return (tot / max(n_tot, 1)), x.detach().cpu(), y.detach().cpu()
+
+
 def lbfgs_refine(init_x: torch.Tensor,
                  init_y: torch.Tensor,
                  fnn: DualSpeciesSurrogate,
@@ -505,11 +548,18 @@ def _run_one_scheme(scheme: str,
     # after a preemption, so chains refined before and after the restart would
     # be optimized against different data and the aligned ensemble would mix
     # them. Seeding makes the pool and chunk order identical across resubmits.
-    n_sweep = n_total_primaries
-    if LBFGS_MAX_SWEEP_PRIMARIES and LBFGS_MAX_SWEEP_PRIMARIES < n_total_primaries:
-        n_sweep = int(LBFGS_MAX_SWEEP_PRIMARIES)
     g = torch.Generator().manual_seed(SEED)
-    perm = torch.randperm(n_total_primaries, generator=g)[:n_sweep]
+    shuffled = torch.randperm(n_total_primaries, generator=g)
+    n_score = min(int(SCORING_SET_PRIMARIES), n_total_primaries)
+    scoring_idx, pool_idx = shuffled[:n_score], shuffled[n_score:]
+    scoring_set = primary_all[scoring_idx].to(DEVICE)
+    print(f"[lbfgs] scoring set={n_score} primaries (held out of the sweep), "
+          f"evaluated in slices of {SCORING_BATCH_PRIMARIES}")
+
+    n_sweep = pool_idx.numel()
+    if LBFGS_MAX_SWEEP_PRIMARIES and LBFGS_MAX_SWEEP_PRIMARIES < n_sweep:
+        n_sweep = int(LBFGS_MAX_SWEEP_PRIMARIES)
+    perm = pool_idx[:n_sweep]
     n_chunks = math.ceil(n_sweep / LBFGS_BATCH_PRIMARIES)
     print(f"[lbfgs] sweep pool={n_sweep} of {n_total_primaries} primaries "
           f"-> {n_chunks} chunk(s) of {LBFGS_BATCH_PRIMARIES}"
@@ -532,6 +582,7 @@ def _run_one_scheme(scheme: str,
         _ck = torch.load(lbfgs_resume_path, map_location="cpu", weights_only=False)
         refined, lbfgs_logs = _ck["refined"], _ck["lbfgs_logs"]
         refined_U, all_lbfgs_grads = _ck["refined_U"], _ck["all_lbfgs_grads"]
+        scoring_logs = _ck.get("scoring_logs", [])
         all_lbfgs_pos = _ck.get("all_lbfgs_pos", [])          # pre-logging checkpoints
         if len(all_lbfgs_pos) < len(refined):
             all_lbfgs_pos = all_lbfgs_pos + [torch.zeros(0)] * (
@@ -540,7 +591,7 @@ def _run_one_scheme(scheme: str,
         print(f"[resume] {lbfgs_resume_path}: {k_start}/{len(all_bests)} chains already refined")
     else:
         refined, lbfgs_logs, refined_U, all_lbfgs_grads = [], [], [], []
-        all_lbfgs_pos = []
+        all_lbfgs_pos, scoring_logs = [], []
         k_start = 0
 
     for k, (bx, by) in enumerate(all_bests):
@@ -550,26 +601,66 @@ def _run_one_scheme(scheme: str,
               f"over {n_chunks} chunk(s)")
         xp, yp = bx, by
         run_logs, run_grads, run_pos = [], [], []
+        # Baseline is the Adam-best on the scoring set, so the refinement can
+        # only ever hand back something that beats what it started from.
+        best_S, best_sx, best_sy = score_on_set(bx, by, scoring_set, fnn, recon, mountain)
+        best_at, n_kept, n_reverted = -1, 0, 0
+        # Every scoring-set evaluation, at its position on the combined closure
+        # timeline — the series the curves plot, since it is the only one whose
+        # values are comparable to each other.
+        run_scores = [dict(chunk=-1, closure=0, U_chunk=None, U_score=best_S,
+                           best=True, kept=True)]
+        print(f"  [lbfgs] refine {k} adam-best scores {best_S:+.3f} on the scoring set")
         for c, primary_chunk in enumerate(primary_chunks):
             xp, yp, Up, lg, ghist, phist = lbfgs_refine(
                 xp, yp, fnn, recon, primary_chunk, mountain)
             run_logs.extend(lg)
             run_grads.extend(ghist)
             run_pos.extend(phist)          # chunks run back-to-back -> one path
+            # Accept/reject on the scoring set, not on the chunk's own U: each
+            # chunk optimizes a different batch, so its U ranks batches as much
+            # as layouts. A chunk that did not improve the held-out score has its
+            # positions rolled back, so the sweep can only ever walk uphill on
+            # one fixed objective. Scored EVERY chunk — a chunk with no verdict
+            # could only be accepted blindly, which is what this replaces.
+            S, sx, sy = score_on_set(xp, yp, scoring_set, fnn, recon, mountain)
+            floor = best_S - abs(best_S) * SCORING_ACCEPT_TOL
+            is_best = S > best_S
+            keep = is_best or S >= floor
+            if is_best:
+                best_S, best_sx, best_sy, best_at = S, sx, sy, c
+                xp, yp = sx, sy
+                mark = f"  scored {S:+.3f}  <- NEW BEST"
+            elif keep:
+                xp, yp = sx, sy
+                n_kept += 1
+                mark = (f"  scored {S:+.3f}  within {SCORING_ACCEPT_TOL:.0%} of "
+                        f"{best_S:+.3f} — carried forward")
+            else:
+                xp, yp = best_sx.clone(), best_sy.clone()
+                n_reverted += 1
+                mark = f"  scored {S:+.3f}  below {floor:+.3f} — reverted"
+            run_scores.append(dict(chunk=c, closure=len(run_logs),
+                                   U_chunk=float(Up), U_score=float(S),
+                                   best=bool(is_best), kept=bool(keep)))
             print(f"  [lbfgs] refine {k} chunk {c+1}/{n_chunks}  U={Up:+.3f}  "
-                  f"({len(lg)} closure calls)")
-        refined.append((xp, yp))
-        refined_U.append(Up)
+                  f"({len(lg)} closure calls){mark}")
+        refined.append((best_sx, best_sy))
+        refined_U.append(best_S)
+        scoring_logs.append(run_scores)
         lbfgs_logs.append(run_logs)
         all_lbfgs_grads.append(run_grads)
         all_lbfgs_pos.append(torch.stack(run_pos, dim=0) if run_pos else torch.zeros(0))
-        print(f"  [lbfgs] refine {k} DONE  final U={Up:+.3f}  "
-              f"({sum(len(lg) for lg in [run_logs])} total closure calls)")
+        print(f"  [lbfgs] refine {k} DONE  best U={best_S:+.3f} on the scoring set "
+              f"from chunk {best_at + 1 if best_at >= 0 else 0} "
+              f"({n_chunks - n_kept - n_reverted} new best, {n_kept} within "
+              f"{SCORING_ACCEPT_TOL:.0%}, {n_reverted} reverted, of {n_chunks})")
 
         _tmp = lbfgs_resume_path + ".tmp"
         torch.save({"refined": refined, "lbfgs_logs": lbfgs_logs,
                    "refined_U": refined_U, "all_lbfgs_grads": all_lbfgs_grads,
-                   "all_lbfgs_pos": all_lbfgs_pos}, _tmp)
+                   "all_lbfgs_pos": all_lbfgs_pos,
+                   "scoring_logs": scoring_logs}, _tmp)
         os.replace(_tmp, lbfgs_resume_path)
 
     # Per-run consecutive-step gradient cosine distance (Adam + L-BFGS phases),
@@ -648,6 +739,7 @@ def _run_one_scheme(scheme: str,
             ),
             "adam_logs": all_adam_logs,
             "lbfgs_logs": lbfgs_logs,
+            "scoring_logs": scoring_logs,
             "config": dict(
                 n_chains=N_CHAINS, init_overdisp_sigma=INIT_OVERDISP_SIGMA,
                 n_adam_epochs=N_ADAM_EPOCHS, primaries_per_step=PRIMARIES_PER_STEP,
@@ -656,6 +748,9 @@ def _run_one_scheme(scheme: str,
                 lbfgs_history_size=LBFGS_HISTORY_SIZE,
                 offmesh_penalty=OFFMESH_PENALTY,
                 lbfgs_batch_primaries=LBFGS_BATCH_PRIMARIES,
+                scoring_set_primaries=SCORING_SET_PRIMARIES,
+                scoring_batch_primaries=SCORING_BATCH_PRIMARIES,
+                scoring_accept_tol=SCORING_ACCEPT_TOL,
                 w_theta=W_THETA, w_phi=W_PHI, w_e=W_E, w_pr=W_PR, w_div=W_DIV,
                 layout_threshold=LAYOUT_THRESHOLD,
                 reconstruct_threshold=RECONSTRUCT_THRESHOLD,
@@ -665,7 +760,8 @@ def _run_one_scheme(scheme: str,
 
     _plt.plot_curves_lbfgs(all_adam_logs, lbfgs_logs, all_adam_grads, all_lbfgs_grads,
                            os.path.join(opt_dir, "optimize_curves.png"),
-                           grad_cos_window=GRAD_COS_WINDOW)
+                           grad_cos_window=GRAD_COS_WINDOW,
+                           scoring_logs=scoring_logs)
     _plt.plot_components_lbfgs(all_adam_logs, lbfgs_logs,
                               os.path.join(opt_dir, "utility_components.png"))
     # Render the ensemble + density in the (North, Up) cross section. The
