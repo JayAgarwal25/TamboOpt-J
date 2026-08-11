@@ -63,20 +63,38 @@ class KernelDualLabels:
     are combined into the surrogate's own output space with
     `dual_surrogate.combine_species_outputs` (log1p(N_tot), log1p(t_tot*T_LOG_SCALE)),
     so the frozen recon sees inputs in the space it was trained on. `primary_batch`
-    is ignored: the clouds already fix which events this is."""
+    is ignored: the clouds already fix which events this is.
 
-    def __init__(self, elec_clouds, muon_clouds, surface, device):
+    `chunk` splits the call over events. The kernel materializes several
+    (B, points, n_det) fp32 tensors at once -- at B=512 with ~25k points/event
+    that is 4.79 GiB EACH, and `spatial = exp(-(dx**2 + dy**2)/...)` alone holds
+    five of them live, so the whole batch needs ~30 GiB and OOMs a 20 GB card.
+    Chunking is exact, not an approximation: compute_labels_batch reduces only
+    over a shower's own points and combine_species_outputs is elementwise, so no
+    event ever sees another. The utility statistics downstream still average over
+    all B events -- unlike lowering --n-events, which shrinks the sample."""
+
+    def __init__(self, elec_clouds, muon_clouds, surface, device, chunk=0):
         self.elec = elec_clouds.to(device)
         self.muon = muon_clouds.to(device)
         self.surface = surface
+        # 0 / None -> whole batch at once (previous behaviour).
+        self.chunk = int(chunk) or int(self.elec.shape[0])
+
+    def _labels(self, clouds, e_det, n_det):
+        E, T = compute_labels_batch(clouds, e_det, n_det, self.surface)
+        return torch.stack([torch.log1p(E), torch.log1p(T * T_LOG_SCALE)], dim=-1)
 
     def __call__(self, primary_batch, xy_batch):
         e_det, n_det = xy_batch[0, :, 0], xy_batch[0, :, 1]      # layout shared across batch
-        E_e, T_e = compute_labels_batch(self.elec, e_det, n_det, self.surface)
-        E_mu, T_mu = compute_labels_batch(self.muon, e_det, n_det, self.surface)
-        pred_e = torch.stack([torch.log1p(E_e), torch.log1p(T_e * T_LOG_SCALE)], dim=-1)
-        pred_mu = torch.stack([torch.log1p(E_mu), torch.log1p(T_mu * T_LOG_SCALE)], dim=-1)
-        return combine_species_outputs(pred_e, pred_mu)
+        B = int(self.elec.shape[0])
+        out = []
+        for lo in range(0, B, self.chunk):
+            hi = min(lo + self.chunk, B)
+            pred_e  = self._labels(self.elec[lo:hi], e_det, n_det)
+            pred_mu = self._labels(self.muon[lo:hi], e_det, n_det)
+            out.append(combine_species_outputs(pred_e, pred_mu))
+        return out[0] if len(out) == 1 else torch.cat(out, dim=0)
 
 
 def load_events(n_events, device, mountain):
@@ -154,8 +172,14 @@ def score(e_det, n_det, primary_batch, fnn, kernel_fnn, recon, device):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--n-events", type=int, default=512,
+    ap.add_argument("--n-events", type=int, default=5120,
                     help="fixed primary/cloud batch size for the objective")
+    ap.add_argument("--kernel-chunk", type=int, default=128,
+                    help="events per kernel call (0 = whole batch). Memory only: "
+                         "the result is identical for any value, since the kernel "
+                         "is per-event. ~0.6 GiB per (chunk=64) kernel tensor vs "
+                         "4.79 GiB at 512 — lower this, not --n-events, when the "
+                         "GPU OOMs, so the utility keeps its full sample.")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--grid-layout", action="store_true",
                     help="use grid layout as baseline")
@@ -177,7 +201,9 @@ def main():
     surface = SurfaceUpMap.from_mountain(mountain).to(device)
     elec, muon, B, n_pairs, prim = load_events(args.n_events, device, mountain)
     print(f"events      : {B} of {n_pairs} pairs")
-    kernel_fnn = KernelDualLabels(elec, muon, surface, device)
+    kernel_fnn = KernelDualLabels(elec, muon, surface, device,
+                                  chunk=args.kernel_chunk)
+    print(f"kernel chunk: {kernel_fnn.chunk} events/call")
 
     fnn, recon = load_models(device)
 
