@@ -47,4 +47,6 @@ detector_optimization_v6/slurm-*.out
 
 detector_optimization_v6/decay_locations/*.h5
 detector_optimization_v6/decay_locations/malata.jld2
-detector_optimization_v6/pipeline_status.json
+detector_optimization_v6/pipeline_status*.json
+detector_optimization_v6/pipeline_status_center.json
+detector_optimization_v6/pipeline_status_grid.json
