@@ -28,6 +28,16 @@ Reports, in order:
      for each source separately.
   b. the per-event difference n_lit_surrogate - n_lit_kernel (median, p10,
      p90), so the surrogate's tendency to over- or under-count is explicit.
+  b2. PARTICLES per event, the total counts summed over all detectors, for each
+     source plus their ratio. Detector counts alone are a thresholded view and
+     discard magnitude, so this says whether the two sources agree on how much
+     signal an event deposits, not merely on how many slots cross the cut.
+  b3. where the surrogate's excess lands on slots the kernel leaves DARK, split
+     by whether it stays under the firing threshold or crosses it. This
+     separates two failure modes that produce identical detector counts: a
+     small surplus everywhere that tips near-threshold slots over, versus
+     invented bright detectors. Only the ABOVE-threshold share causes false
+     detections.
   c. per-detector confusion between the two sources, aggregated over every
      event and detector: both-lit, kernel-only, surrogate-only, neither
      counts and rates, plus precision/recall/F1 of the surrogate treating the
@@ -482,6 +492,20 @@ def main():
     n_lit_surrogate = np.empty(B, dtype=np.int64)
     both = konly = sonly = neither = 0
 
+    # Particle-count accounting. n_lit alone cannot distinguish two very
+    # different failure modes with identical detector counts: a surrogate that
+    # adds a little signal everywhere and tips near-threshold detectors over,
+    # versus one that invents bright detectors where the kernel sees nothing.
+    # Totals plus the excess split by where it lands relative to the threshold
+    # separate them.
+    tot_kernel = np.empty(B, dtype=np.float64)      # particles per event, kernel
+    tot_surrogate = np.empty(B, dtype=np.float64)   # particles per event, surrogate
+    # Excess particles the surrogate adds on slots the KERNEL leaves dark, split
+    # by whether that excess is small enough to sit under the firing threshold.
+    excess_dark_below = 0.0     # on dark slots, surrogate still under threshold
+    excess_dark_above = 0.0     # on dark slots, surrogate pushed over threshold
+    n_dark_slots = 0
+
     with torch.no_grad():
         for lo in range(0, B, args.chunk):
             hi = min(lo + args.chunk, B)
@@ -506,8 +530,24 @@ def main():
             sonly += int((~lit_k & lit_s).sum().item())
             neither += int((~lit_k & ~lit_s).sum().item())
 
+            # Totals over ALL detectors, the event's full signal, not just the
+            # slots that happened to cross the threshold.
+            tot_kernel[lo:hi] = counts_kernel.sum(dim=1).double().cpu().numpy()
+            tot_surrogate[lo:hi] = counts_surrogate.sum(dim=1).double().cpu().numpy()
+
+            # On kernel-dark slots the kernel contributes ~0, so the surrogate's
+            # value there IS the excess. Splitting it at the threshold says
+            # whether the surplus is harmless background or the thing driving
+            # the false detections.
+            dark = counts_kernel <= 0.0
+            n_dark_slots += int(dark.sum().item())
+            s_dark = counts_surrogate[dark]
+            over = s_dark > args.threshold
+            excess_dark_above += float(s_dark[over].double().sum().item())
+            excess_dark_below += float(s_dark[~over].double().sum().item())
+
             del elec_c, muon_c, E_e, E_mu, counts_kernel
-            del xy, pred_ET, counts_surrogate, lit_k, lit_s
+            del xy, pred_ET, counts_surrogate, lit_k, lit_s, dark, s_dark, over
 
     print("\n  (a) per-event n_lit distribution:")
     _, p_kernel, _ = _report_distribution("kernel", n_lit_kernel)
@@ -515,6 +555,28 @@ def main():
 
     print("\n  (b) per-event over/under-count (surrogate - kernel):")
     _report_diff(n_lit_surrogate - n_lit_kernel)
+
+    print("\n  (b2) particles per event (total counts over all detectors):")
+    for nm, tot in (("kernel", tot_kernel), ("surrogate", tot_surrogate)):
+        q = np.percentile(tot, [10, 50, 90])
+        print(f"  {nm:12s} mean={tot.mean():10.2f}  "
+              f"p10={q[0]:9.2f} p50={q[1]:9.2f} p90={q[2]:9.2f}")
+    _ratio = tot_surrogate / np.maximum(tot_kernel, 1e-9)
+    print(f"  surrogate/kernel total ratio : median={np.median(_ratio):.3f}  "
+          f"p10={np.percentile(_ratio, 10):.3f} p90={np.percentile(_ratio, 90):.3f}")
+    print(f"  mean excess particles per event (surrogate - kernel) : "
+          f"{float((tot_surrogate - tot_kernel).mean()):+.2f}")
+
+    print("\n  (b3) where the surrogate's excess lands on kernel-DARK slots:")
+    _tot_excess = excess_dark_above + excess_dark_below
+    _den = max(_tot_excess, 1e-9)
+    print(f"  dark slots                    : {n_dark_slots}")
+    print(f"  excess particles on dark slots: {_tot_excess:.1f} total, "
+          f"{_tot_excess / max(n_dark_slots, 1):.4f} per dark slot")
+    print(f"    of which BELOW threshold    : {excess_dark_below:12.1f}  "
+          f"({100.0 * excess_dark_below / _den:5.1f}%)  harmless background")
+    print(f"    of which ABOVE threshold    : {excess_dark_above:12.1f}  "
+          f"({100.0 * excess_dark_above / _den:5.1f}%)  drives false detections")
 
     print("\n  (c) per-detector confusion (aggregated over all events x detectors):")
     precision, recall, f1 = _report_confusion(both, konly, sonly, neither)
