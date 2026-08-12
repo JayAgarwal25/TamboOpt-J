@@ -205,10 +205,70 @@ def face_limits(ax, mtn_s, mtn_u, pad: float = 400.0):
     ax.set_aspect("equal")
 
 
+def _count_norm(c, live, dyn_range):
+    """LogNorm for a detector-count colour scale, clamped to `dyn_range` decades
+    below the peak: real layouts mix a few strong detectors with a far tail, and an
+    unbounded LogNorm over ~60 decades fails outright with "Invalid vmin or vmax".
+
+    Returns (norm, lo, hi); clip the data to [lo, hi] before handing it over."""
+    from matplotlib.colors import LogNorm
+    hi = float(c[live].max())
+    lo = max(float(c[live].min()), hi / dyn_range)
+    if not (np.isfinite(lo) and np.isfinite(hi)) or lo <= 0:
+        lo, hi = 1e-12, 1.0
+    if hi <= lo:                          # single value / all-equal → give it room
+        hi = lo * 10.0
+    return LogNorm(vmin=lo, vmax=hi), lo, hi
+
+
+def draw_detectors_enu_3d(ax, E, e_det, n_det, surface,
+                          layout_threshold=None, legend=True,
+                          log1p_space: bool = False, dyn_range: float = 1e6,
+                          cmap: str = "plasma", marker: str = "^",
+                          s_live: float = 55.0, s_dark: float = 26.0):
+    """3-D (East, North, Up) twin of `draw_detectors_on_face`.
+
+    Same colour language — dimgray where nothing arrived, `cmap` on a LogNorm over
+    raw counts otherwise, a cyan ring above `layout_threshold` — but drawn at the
+    detectors' real ENU position instead of projected into the cliff plane. The face
+    view is the better one for reading a layout's PATTERN; this one is for reading
+    where the shower is relative to the array, which a 2-D projection cannot show.
+
+    `ax` must be a ``projection="3d"`` axis. Detector Up comes from the same
+    differentiable `SurfaceUpMap` the optimiser is scored through.
+
+    Returns (mappable_or_None, n_with_signal, n_over_threshold)."""
+    if layout_threshold is None:
+        layout_threshold = LAYOUT_THRESHOLD
+    e = np.asarray(e_det, dtype=float).reshape(-1)
+    n = np.asarray(n_det, dtype=float).reshape(-1)
+    up = np.asarray(project_ne_to_up(surface, n, e), dtype=float).reshape(-1)
+    c = det_counts(E, log1p_space=log1p_space).reshape(-1)
+    live, over = c > 0.001, c > layout_threshold
+
+    # depthshade=False throughout: matplotlib's default fades distant markers, which
+    # on a colour-coded scatter reads as a lower count rather than as depth.
+    ax.scatter(e[~live], n[~live], up[~live], s=s_dark, c="dimgray", marker=marker,
+               depthshade=False, label="no signal" if legend else None)
+    sc = None
+    if live.any():
+        norm, lo, hi = _count_norm(c, live, dyn_range)
+        sc = ax.scatter(e[live], n[live], up[live], c=np.clip(c[live], lo, hi),
+                        s=s_live, cmap=cmap, marker=marker, edgecolor="white",
+                        linewidths=0.5, norm=norm, depthshade=False,
+                        label="signal" if legend else None)
+    # if over.any():
+    #     ax.scatter(e[over], n[over], up[over], s=s_live * 3.4, facecolors="none",
+    #                edgecolors="cyan", marker=marker, lw=1.2, depthshade=False,
+    #                label=f"> {layout_threshold:g} counts" if legend else None)
+    return sc, int(live.sum()), int(over.sum())
+
+
 def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
                            layout_threshold=None, legend=True,
                            log1p_space: bool = False, dyn_range: float = 1e6,
-                           cmap: str = "plasma"):
+                           cmap: str = "plasma", marker: str = "o",
+                           marker_dark: str = "x"):
     """Scatter detectors on the cliff face, coloured by RAW counts (log scale).
 
     Colouring by magnitude rather than drawing a boolean "triggered" mask matters:
@@ -217,13 +277,14 @@ def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
     hides the spatial falloff. Detectors clearing `layout_threshold` (the
     optimiser's own cut, in counts) get a ring.
 
-    `log1p_space` says which space `E` is in — see `det_counts`. `dyn_range` caps
-    how many decades the colour scale spans below the peak: real layouts mix a few
-    strong detectors with a far tail, and an unbounded LogNorm over ~60 decades
-    fails outright with "Invalid vmin or vmax".
+    `log1p_space` says which space `E` is in — see `det_counts`; `dyn_range` bounds
+    the colour scale, see `_count_norm`.
+
+    `marker` / `marker_dark` default to today's shapes so the 04 optimizer figures
+    are unchanged; the trigger-count notebook passes "^" for both to match the
+    placement-closure figure it sits next to.
 
     Returns (mappable_or_None, n_with_signal, n_over_threshold)."""
-    from matplotlib.colors import LogNorm
     if layout_threshold is None:
         layout_threshold = LAYOUT_THRESHOLD
     ds, du = project_en_to_face(surface, np.asarray(e_det), np.asarray(n_det), frame)
@@ -233,28 +294,24 @@ def draw_detectors_on_face(ax, E, e_det, n_det, surface, frame,
     # "dimgray" rather than a mid gray value: needs to read as clearly distinct
     # from the mountain's light neutral background, not just a darker shade of
     # the same gray family.
-    ax.scatter(ds[~live], du[~live], s=14, c="dimgray", marker="x", lw=0.9, zorder=2,
-               label="no signal" if legend else None)
+    ax.scatter(ds[~live], du[~live], s=14, c="dimgray", marker=marker_dark, lw=0.9,
+               zorder=2, label="no signal" if legend else None)
     sc = None
     if live.any():
-        hi = float(c[live].max())
-        lo = max(float(c[live].min()), hi / dyn_range)
-        if not (np.isfinite(lo) and np.isfinite(hi)) or lo <= 0:
-            lo, hi = 1e-12, 1.0
-        if hi <= lo:                      # single value / all-equal → give LogNorm room
-            hi = lo * 10.0
         # `cmap` defaults to plasma rather than inferno on purpose: inferno's low
         # end is pure BLACK, so the weakest detectors render as bold black dots
         # indistinguishable from the strongest — and from a black shower cloud.
         # plasma bottoms out at dark blue-violet, keeping the ramp readable. The
         # thin white edge separates markers from the cloud behind them.
+        norm, lo, hi = _count_norm(c, live, dyn_range)
         sc = ax.scatter(ds[live], du[live], c=np.clip(c[live], lo, hi), s=42,
-                        cmap=cmap, edgecolor="white", linewidths=0.5,
-                        norm=LogNorm(vmin=lo, vmax=hi), zorder=3,
+                        cmap=cmap, marker=marker, edgecolor="white", linewidths=0.5,
+                        norm=norm, zorder=3,
                         label="signal" if legend else None)
     if over.any():
         ax.scatter(ds[over], du[over], s=150, facecolors="none", edgecolors="cyan",
-                   lw=1.4, label=f"> {layout_threshold:g} counts" if legend else None)
+                   marker=marker, lw=1.4,
+                   label=f"> {layout_threshold:g} counts" if legend else None)
     return sc, int(live.sum()), int(over.sum())
 
 
@@ -751,11 +808,16 @@ def plot_curves_lbfgs(adam_logs, lbfgs_logs, adam_grads, lbfgs_grads, path: str,
         print(f"[plot] curves skipped ({exc!r})")
 
 
-def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
+def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str, parts_spec=None,
+                          title=None):
     """L-BFGS ensemble: one subfigure per chain — weighted utility sub-parts
     (θ, φ, E) over the combined Adam→L-BFGS trajectory plus the overall U (bold
     black). Adam phase solid, L-BFGS phase dashed; a vertical divider marks the
-    switch."""
+    switch.
+
+    `parts_spec` overrides which log keys are drawn, as (label, key, weight,
+    colour) tuples — 04_optimize_lbfgs_activation.py logs particles/detectors
+    instead of θ/φ/E. Default is the composite objective's decomposition."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -770,7 +832,7 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
 
         # The logged u_* are ALREADY the weighted contributions (W_x * u_x / W_DIV;
         # see utility_of_xy) and sum to U — plot them as-is (weight 1.0).
-        parts = [
+        parts = parts_spec or [
             ("θ", "u_theta", 1.0, "C0"),
             ("φ", "u_phi",   1.0, "C1"),
             ("E", "u_e",     1.0, "C2"),
@@ -819,7 +881,7 @@ def plot_components_lbfgs(adam_logs, lbfgs_logs, path: str):
         for j in range(K, len(axes_flat)):
             axes_flat[j].axis("off")
 
-        fig.suptitle("per-chain utility decomposition "
+        fig.suptitle(title or "per-chain utility decomposition "
                      "(weighted θ/φ/E sub-parts + overall U; Adam solid, L-BFGS dashed)",
                      fontsize=12)
         fig.tight_layout(rect=(0, 0, 1, 0.97))
