@@ -121,6 +121,144 @@ def _scatter(ax, x, y, title: str, vmin=None, vmax=None, lo=None, hi=None):
     ax.legend(loc="upper left", fontsize=8, framealpha=1)
 
 
+def _calibration_panel(ax, sigma, err, channel: str):
+    """Predicted uncertainty vs realised error, as a 2σ-vs-|error| density.
+
+    x = 2σ (the nominal 95% half-width the head predicts for that detector),
+    y = |prediction − target|. For a calibrated Gaussian head the cloud sits
+    mostly BELOW the y = x diagonal: |err| exceeds 2σ only 4.6% of the time.
+    Two binned curves cut through the density — the per-σ-bin median and 95th
+    percentile of |err| — against their ideal Gaussian values (0.337·x and
+    0.98·x), which is what turns "looks about right" into a readable
+    over/under-confidence verdict: a p95 curve above y = x means the head is
+    over-confident in that σ range, below means it over-inflates σ.
+
+    σ bins are quantile bins (equal counts), so every marker carries the same
+    statistical weight regardless of how skewed the σ distribution is."""
+    import numpy as np
+    from matplotlib.colors import LogNorm
+
+    two_sig = 2.0 * sigma
+    abs_err = np.abs(err)
+    hi = float(max(np.percentile(two_sig, 99.5), np.percentile(abs_err, 99.5)))
+
+    hb = ax.hexbin(two_sig, abs_err, gridsize=80, cmap="viridis",
+                   norm=LogNorm(vmin=1), mincnt=1, extent=(0.0, hi, 0.0, hi))
+    plt.colorbar(hb, ax=ax, label="count", pad=0.02, fraction=0.046)
+
+    # Quantile bins over σ so each point aggregates the same number of samples.
+    n_bins = 25
+    edges = np.unique(np.percentile(two_sig, np.linspace(0, 100, n_bins + 1)))
+    if edges.size >= 3:
+        idx = np.clip(np.digitize(two_sig, edges[1:-1]), 0, edges.size - 2)
+        centers, med, p95 = [], [], []
+        for b in range(edges.size - 1):
+            m = idx == b
+            if m.sum() < 50:
+                continue
+            centers.append(np.median(two_sig[m]))
+            med.append(np.median(abs_err[m]))
+            p95.append(np.percentile(abs_err[m], 95.0))
+        ax.plot(centers, p95, color="#d95f02", marker="o", ms=4, lw=2.0,
+                label="p95 |err| per σ-bin")
+        ax.plot(centers, med, color="#7570b3", marker="s", ms=4, lw=2.0,
+                label="median |err| per σ-bin")
+
+    ax.plot([0, hi], [0, hi], color="red", ls="--", lw=2.0, alpha=0.85,
+            label="y = x  (ideal p95)")
+    ax.plot([0, hi], [0, 0.337 * hi], color="red", ls=":", lw=1.6, alpha=0.7,
+            label="0.337·x  (ideal median)")
+
+    cover = float((abs_err <= two_sig).mean())
+    ax.set_xlim(0, hi); ax.set_ylim(0, hi)
+    ax.set_xlabel("2σ  (predicted)"); ax.set_ylabel("|prediction − target|")
+    ax.set_title(f"{channel}: within 2σ = {100 * cover:.1f}%  (ideal 95.4%)")
+    ax.legend(loc="upper left", fontsize=7, framealpha=1)
+
+
+def _zscore_panel(ax, err, sigma, channel: str):
+    """Pull distribution z = (pred − target)/σ against the unit normal.
+
+    The 2σ-vs-|err| panel shows how calibration varies WITH σ; this one
+    collapses it to a single shape test. A too-wide histogram means the head
+    under-estimates σ, too narrow means it over-estimates, and an off-centre
+    peak is mean bias the scatter plot hides inside |·|."""
+    import numpy as np
+
+    z = err / np.maximum(sigma, 1e-12)
+    lim = 5.0
+    zc = np.clip(z, -lim, lim)
+    ax.hist(zc, bins=200, range=(-lim, lim), density=True,
+            color="#4c72b0", alpha=0.85, label="z = (pred − target)/σ")
+    grid = np.linspace(-lim, lim, 400)
+    ax.plot(grid, np.exp(-0.5 * grid ** 2) / np.sqrt(2 * np.pi),
+            color="red", ls="--", lw=2.0, label="N(0, 1)")
+
+    c1 = float((np.abs(z) <= 1.0).mean())
+    c2 = float((np.abs(z) <= 2.0).mean())
+    ax.set_yscale("log")
+    ax.set_xlim(-lim, lim)
+    ax.set_xlabel("z"); ax.set_ylabel("density")
+    ax.set_title(f"{channel}: |z|≤1 {100 * c1:.1f}% (68.3%)   "
+                 f"|z|≤2 {100 * c2:.1f}% (95.4%)")
+    ax.legend(loc="upper right", fontsize=7, framealpha=1)
+
+
+@torch.no_grad()
+def fnn_predict_sigma(fnn, primary: torch.Tensor, xy: torch.Tensor):
+    """Per-detector predicted σ in raw target units, (N, n_det) for E and T.
+
+    Uses the heteroscedastic head's `forward_var` (raw-unit variance), which is
+    the un-z-scored counterpart of the logvar the NLL loss trains on."""
+    N = primary.shape[0]
+    E_sig = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    T_sig = torch.empty((N, N_DETECTORS), dtype=torch.float32)
+    for lo in range(0, N, BATCH):
+        hi = min(lo + BATCH, N)
+        var = fnn.forward_var(primary[lo:hi].to(DEVICE), xy[lo:hi].to(DEVICE))
+        sig = var.clamp_min(1e-24).sqrt().cpu()
+        E_sig[lo:hi] = sig[..., 0]
+        T_sig[lo:hi] = sig[..., 1]
+    return E_sig, T_sig
+
+
+def _render_fnn_calibration(fnn, primary, xy, E_true, T_true, val_idx,
+                            output_path):
+    """2×2 uncertainty-calibration figure for one surrogate.
+
+    Rows are the two channels (log1p(E), log1p(T·1e8)); left column is the
+    2σ-vs-|error| density, right column the z-score pull histogram. Requires a
+    heteroscedastic (mean+variance) head — callers must check `forward_var`."""
+    import numpy as np
+
+    p   = primary[val_idx]
+    x   = xy[val_idx]
+    E_t = E_true[val_idx]
+    T_t = T_true[val_idx]
+    E_p, T_p = fnn_predict(fnn, p, x)
+    E_s, T_s = fnn_predict_sigma(fnn, p, x)
+
+    E_err = (E_p - E_t).flatten().numpy()
+    T_err = (T_p - T_t).flatten().numpy()
+    E_sig = E_s.flatten().numpy()
+    T_sig = T_s.flatten().numpy()
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    _calibration_panel(axes[0, 0], E_sig, E_err, "log1p(E)")
+    _zscore_panel(axes[0, 1], E_err, E_sig, "log1p(E)")
+    _calibration_panel(axes[1, 0], T_sig, T_err, "log1p(T·1e8)")
+    _zscore_panel(axes[1, 1], T_err, T_sig, "log1p(T·1e8)")
+    fig.suptitle(f"FNN predicted σ vs realised error — val split "
+                 f"(N={E_err.size:,} detector-samples)", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=130)
+    plt.close(fig)
+    print(f"[save] {output_path}")
+    print(f"       E: RMSE={np.sqrt((E_err**2).mean()):.4f}  "
+          f"mean σ={E_sig.mean():.4f}   "
+          f"T: RMSE={np.sqrt((T_err**2).mean()):.4f}  mean σ={T_sig.mean():.4f}")
+
+
 def load_fnn() -> FNNSurrogate:
     # Read width + dropout from the saved config and prefer the FNN's own
     # norm_stats (02_train_fnn.py updates the T slots in-memory for log-T
@@ -318,6 +456,11 @@ def plot_fnn_only(*, fnn=None,
         output_path = os.path.join(FNN_FOLDER, "fnn_target_vs_pred.png")
     _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path,
                         **FNN_DUAL_VLIM.get(species, {}))
+    if hasattr(fnn, "forward_var"):
+        base, ext = os.path.splitext(output_path)
+        _render_fnn_calibration(
+            fnn, primary, xy, E_true, T_true, val_idx,
+            base.replace("target_vs_pred", "calibration") + ext)
 
 
 def plot_recon_only(*, fnn=None, recon=None,
@@ -388,6 +531,14 @@ def plot_fnn_dual(output_dir=None):
         _render_fnn_scatter(fnn, primary[idx], xy[idx],
                             E_true[idx], T_true[idx], val_idx, out,
                             **FNN_DUAL_VLIM[tag])
+        # Calibration only exists for the heteroscedastic (mean+var) head; a
+        # plain FNNSurrogate checkpoint has no forward_var and is skipped.
+        if hasattr(fnn, "forward_var"):
+            _render_fnn_calibration(
+                fnn, primary[idx], xy[idx], E_true[idx], T_true[idx], val_idx,
+                os.path.join(output_dir, f"fnn_{tag}_calibration.png"))
+        else:
+            print(f"[skip] {tag}: no forward_var (not a mean+variance head)")
 
 
 def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER):
