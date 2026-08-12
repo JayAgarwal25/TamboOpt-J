@@ -133,10 +133,12 @@ RUN_COMBINED         = False # True
 COMBINED_SCHEME_NAME = "combined"
 OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_activation_{scheme}"
 
-# What activation_of_xy maximizes: 'particles' = mean particles/shower over the
-# array (in PARTICLE_SCALE units), 'detectors' = mean soft trigger count. Both
-# are logged either way. Overridable with --objective.
-OBJECTIVE            = "particles"
+# What activation_of_xy maximizes: 
+# 'particles' = mean particles/shower over the array (in PARTICLE_SCALE units), 
+# 'detectors' = mean soft trigger count. 
+# 'distinct' = normalized distinct particles (in DISTINCT_SCALE units)
+# Overridable with --objective.
+OBJECTIVE            = "distinct"
 
 # Recon dir. This objective does NOT use the recon — it never reconstructs
 # anything — but load_models returns the pair and the recon is threaded through

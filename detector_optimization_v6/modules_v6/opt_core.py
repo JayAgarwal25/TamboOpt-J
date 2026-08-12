@@ -282,12 +282,21 @@ def utility_of_xy(x_det: torch.Tensor,
 # the objective-to-penalty ratio, so it is not free to get wrong.
 PARTICLE_SCALE = 500.0
 
-# Same job as PARTICLE_SCALE for mode="distinct". Needed separately because the
-# overlap correction divides the summed flux by a multiplicity that is ~5 for the
-# baseline grid (67 m spacing against a 50 m kernel width genuinely oversamples),
-# so reusing PARTICLE_SCALE would land the objective near 8 and leave the off-mesh
-# penalty ~5x overweight. Measured, not guessed — see the calibration note on
-# PARTICLE_SCALE for the method.
+# Same job as PARTICLE_SCALE for mode="distinct", kept separate because the overlap
+# correction divides the summed flux by m_d, so the two modes do not share a range.
+#
+# MEASURED m_d (median over detectors), not the idealised square-lattice estimate:
+#
+#     baseline grid          1.61   (NN spacing 67 m against sigma = 50 m)
+#     distinct-optimised     1.25   (NN spacing 120 m — the optimiser spreads until
+#                                    the double counting is nearly gone)
+#
+# At 100 the objective runs ~123 (grid) to ~159 (optimised), i.e. ~3-4x above the
+# composite U ~ 35 that OFFMESH_PENALTY_W is quoted against, so the boundary is
+# correspondingly softer here than in the ensemble script. Left at 100 anyway
+# because runs already exist at this value and rescaling would silently break
+# comparison against them; revisit only alongside OFFMESH_PENALTY_W, and never
+# mid-experiment. See the calibration note on PARTICLE_SCALE for the method.
 DISTINCT_SCALE = 100.0
 
 
