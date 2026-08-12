@@ -16,6 +16,7 @@ score calls in `torch.no_grad()` themselves.
 """
 import math
 import os
+from typing import Optional
 
 import numpy as np
 import torch
@@ -24,6 +25,7 @@ from scipy.optimize import linear_sum_assignment
 from .constants import (
     N_DETECTORS, FNN_FOLDER, RECON_FOLDER,
     GEOMETRY_PATH, GEOMETRY_PATH_RESOLVED, LOG_E_MIN, LOG_E_MAX,
+    SIGMA_SPATIAL,
 )
 from .dual_surrogate import load_dual_surrogate
 from .reconstruction import build_recon_from_ckpt
@@ -251,6 +253,162 @@ def utility_of_xy(x_det: torch.Tensor,
         r0 = penalty_r0 if penalty_r0 else 1.0
         pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en, r0)
         parts["u_raw"] = U          # utility before the boundary cost
+        parts["u_offmesh"] = -pen
+        U = U - pen
+    return U, r, parts
+
+
+# Divisor putting particles/shower into the same range as the composite U.
+#
+# Every constant the 04 optimizers were tuned with assumes an objective of order
+# tens: OFFMESH_PENALTY_W is quoted "in units of U", GRAD_CLIP is 100,
+# SCORING_ACCEPT_TOL is a 5% band. Unscaled particles/shower would swamp the
+# off-mesh penalty and the boundary would stop existing.
+#
+# Calibrated on the SURROGATE, which is what this objective actually reads, and
+# that distinction is the whole reason this comment is long. Measured on the grid
+# layout over 4000 corpus primaries:
+#
+#     surrogate   1.98e4 particles/shower,  47.4 soft detectors
+#     kernel      3.77e5 particles/shower,  34.8 soft detectors   (held-out reserve,
+#                                                     plots/eval_activation_counts.py)
+#
+# The surrogate is ~19x LOW on total particles while ~36% HIGH on detector count —
+# it spreads too little signal over too many detectors. So a scale picked from the
+# kernel number puts the objective at ~2 and leaves the penalty ~19x overweight,
+# which is what 1e4 did. 500 puts the grid layout at ~40, next to U ~ 35.
+#
+# It is a pure rescale — it cannot change which layout wins a run — but it does set
+# the objective-to-penalty ratio, so it is not free to get wrong.
+PARTICLE_SCALE = 500.0
+
+# Same job as PARTICLE_SCALE for mode="distinct". Needed separately because the
+# overlap correction divides the summed flux by a multiplicity that is ~5 for the
+# baseline grid (67 m spacing against a 50 m kernel width genuinely oversamples),
+# so reusing PARTICLE_SCALE would land the objective near 8 and leave the off-mesh
+# penalty ~5x overweight. Measured, not guessed — see the calibration note on
+# PARTICLE_SCALE for the method.
+DISTINCT_SCALE = 100.0
+
+
+def overlap_multiplicity(x_det: torch.Tensor, y_det: torch.Tensor,
+                         sigma: float = SIGMA_SPATIAL) -> torch.Tensor:
+    """Per-detector `m_d = sum_j exp(-r_dj^2 / (2 sigma^2))` (>= 1): how many
+    detectors' worth of kernel weight lands on the particles detector d sees.
+
+    Why the double counting exists. `tr_plane_kernel` gives every detector its own
+    UNNORMALISED Gaussian, `spatial = exp(-(dx^2+dy^2) / (2 sigma^2))` (peak 1),
+    reduced independently per detector with no exclusivity. So
+
+        sum_d count_d = sum_p e_p * M_p,      M_p = sum_d exp(-r_pd^2 / 2 sigma^2)
+
+    where `M_p` is the total kernel weight particle p receives. Counting each
+    particle ONCE means dividing its contribution by max(1, M_p). The surrogate
+    only reports per-detector aggregates, so `M_p` per particle is unavailable —
+    but evaluating it at the detector position instead gives `m_d` above, which is
+    >= 1 automatically (the j = d term is exactly 1) and so needs no clamp.
+
+    WEIGHT MATTERS, and it is the kernel's own Gaussian, not an overlap integral.
+    `exp(-r^2 / (4 sigma^2))` — the overlap of two NORMALISED Gaussians — is the
+    natural-looking choice and is wrong here: it gets the isolated limit right but
+    over-corrects by exactly 2x when detectors are dense, because
+    `int exp(-r^2/4 sigma^2) = 4 pi sigma^2` against the kernel's own
+    `int exp(-r^2/2 sigma^2) = 2 pi sigma^2`. With the form above both limits are
+    right: spacing s >> sigma gives m -> 1 (sum unchanged), and s << sigma gives
+    m -> 2 pi sigma^2 / s^2, so `sum_d count_d / m_d -> rho * area` — the flux
+    through the covered region, counted once.
+
+    Two coincident detectors therefore give m = 2 and half a count each: stacking
+    gains exactly nothing, which removes the collapse degeneracy from inside the
+    objective rather than fencing it off with a minimum-spacing penalty.
+
+    The approximation that could bite: it assumes particle density is smooth over
+    `sigma`, so a detector's own count stands in for the local density. A shower
+    core much narrower than 50 m would be over-corrected. Counting distinct
+    particles exactly needs the per-PARTICLE (point, detector) tensor, which the
+    surrogate does not expose — it predicts one aggregate per detector, and a union
+    cannot be recovered from marginals.
+    """
+    d2 = ((x_det[:, None] - x_det[None, :]) ** 2
+          + (y_det[:, None] - y_det[None, :]) ** 2)
+    return torch.exp(-d2 / (2.0 * sigma ** 2)).sum(dim=1)     # diagonal contributes 1
+
+
+def activation_of_xy(x_det: torch.Tensor,
+                     y_det: torch.Tensor,
+                     primary_batch: torch.Tensor,
+                     fnn,
+                     mode: str = "particles",
+                     mesh_en: Optional[torch.Tensor] = None,
+                     penalty_w: float = 0.0,
+                     penalty_r0: Optional[float] = None):
+    """How much a layout COLLECTS, differentiably — the objective for
+    `04_optimize_lbfgs_activation.py`.
+
+    The training-time twin of `plots/eval_activation_counts.py::activation`, with
+    two differences forced by what it is for:
+
+      * labels come from the SURROGATE, not the kernel — `compute_labels_batch` is
+        decorated `@torch.no_grad()`, so the ground truth cannot be optimized
+        through. The two disagree by ~19x on total particles (see PARTICLE_SCALE),
+        so the numbers here are NOT comparable to the evaluator's; that script's
+        kernel scoring on held-out events is the honest check afterwards.
+      * the summed modes are divided by a scale constant (see PARTICLE_SCALE).
+
+        counts    = expm1(fnn(primary, xy)[..., 0])       raw particles/detector
+        p         = sigmoid(TAU_LAYOUT * (counts - LAYOUT_THRESHOLD))
+        particles = counts.sum(1) / PARTICLE_SCALE
+        detectors = p.sum(1)                              the soft trigger count
+        distinct  = (counts / m).sum(1) / DISTINCT_SCALE  m = overlap_multiplicity
+
+    `mode` picks which mean is maximized; ALL THREE land in `parts` either way, so
+    a run optimizing one can be read against the others. What each is for:
+
+        particles   total flux through the instrumented positions. Maximized
+                    EXACTLY by stacking every detector on the densest point — the
+                    kernel double-counts shared particles — so use it only when
+                    that is understood.
+        detectors   trigger multiplicity / footprint coverage. Saturates at 1 per
+                    detector, so it pays to spread. This is the one the composite
+                    U's reconstructability gate is a function of.
+        distinct    particles counted once each, via the geometric overlap
+                    correction. What "maximize collection area" actually means,
+                    and it has no stacking degeneracy.
+
+    What this deliberately does NOT contain: any reconstruction term. It rewards a
+    layout for sitting where the flux is, not for resolving direction or energy —
+    which is why it is a separate script rather than a term bolted onto
+    `utility_of_xy`, and why the two runs are expected to disagree.
+
+    Returns (U, r, parts) with the same shape as `utility_of_xy` so the ensemble
+    machinery is a drop-in; `r` is the same reconstructability the composite uses,
+    reported (not optimized) so the two runs' logs stay comparable.
+    """
+    if mode not in ("particles", "detectors", "distinct"):
+        raise ValueError("mode must be 'particles', 'detectors' or 'distinct', "
+                         f"got {mode!r}")
+    B = primary_batch.shape[0]
+    xy_batch = torch.stack([x_det, y_det], dim=-1).unsqueeze(0).expand(B, -1, -1)
+
+    # clamp_min(0) matches dual_surrogate.combine_species_outputs: a negative
+    # predicted count is not physical, and zeroing its gradient stops the optimizer
+    # chasing detectors into the surrogate's undershoot.
+    counts = torch.expm1(fnn(primary_batch, xy_batch)[..., 0]).clamp_min(0.0)
+    p = torch.sigmoid(TAU_LAYOUT * (counts - LAYOUT_THRESHOLD))
+    n_soft = p.sum(dim=1)
+    particles = counts.sum(dim=1) / PARTICLE_SCALE
+    # Layout-only, so it is the same (n_det,) vector for every event in the batch.
+    m = overlap_multiplicity(x_det, y_det)
+    distinct = (counts / m[None, :]).sum(dim=1) / DISTINCT_SCALE
+    r = torch.sigmoid(TAU_RECONSTRUCT * (n_soft - RECONSTRUCT_THRESHOLD))
+
+    U = dict(particles=particles, detectors=n_soft, distinct=distinct)[mode].mean()
+    parts = dict(u_particles=particles.mean(), u_detectors=n_soft.mean(),
+                 u_distinct=distinct.mean(), u_pr=W_PR * U_PR(r) / W_DIV)
+    if mesh_en is not None and penalty_w > 0.0:
+        pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en,
+                                          penalty_r0 if penalty_r0 else 1.0)
+        parts["u_raw"] = U
         parts["u_offmesh"] = -pen
         U = U - pen
     return U, r, parts
