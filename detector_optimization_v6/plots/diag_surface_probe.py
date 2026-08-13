@@ -151,18 +151,27 @@ def r2(pred, true):
     return float(1.0 - ss_res / ss_tot)
 
 
-def linear_probe(feat_tr, y_tr, feat_te, y_te, ridge=1e-3):
-    """Ridge regression in closed form, fitted on train, scored on test."""
+def linear_probe(feat_tr, y_tr, feat_te, y_te, feat_all, ridge=1e-3):
+    """Ridge regression in closed form, fitted on train, scored on test.
+
+    Returns (held-out R^2, predictions for every row of feat_all). The full
+    predictions are for plotting only; the reported number is the test score.
+    """
     mu, sd = feat_tr.mean(0, keepdim=True), feat_tr.std(0, keepdim=True).clamp_min(1e-6)
     a = torch.cat([(feat_tr - mu) / sd, torch.ones_like(feat_tr[:, :1])], dim=1).double()
     b = torch.cat([(feat_te - mu) / sd, torch.ones_like(feat_te[:, :1])], dim=1).double()
     ym, ys = y_tr.mean(), y_tr.std().clamp_min(1e-6)
     gram = a.T @ a + ridge * a.shape[0] * torch.eye(a.shape[1], dtype=torch.float64, device=a.device)
     w = torch.linalg.solve(gram, a.T @ ((y_tr - ym) / ys).double())
-    return r2((b @ w).float() * ys + ym, y_te)
+    score = r2((b @ w).float() * ys + ym, y_te)
+    with torch.no_grad():
+        allf = torch.cat([(feat_all - mu) / sd, torch.ones_like(feat_all[:, :1])], dim=1).double()
+        pred_all = (allf @ w).float() * ys + ym
+    return score, pred_all
 
 
-def mlp_probe(feat_tr, y_tr, feat_te, y_te, hidden=256, epochs=60, lr=1e-3, seed=0):
+def mlp_probe(feat_tr, y_tr, feat_te, y_te, feat_all, hidden=256, epochs=60,
+              lr=1e-3, seed=0):
     """Small MLP readout. Same train/test split as the linear probe."""
     torch.manual_seed(seed)
     dev = feat_tr.device
@@ -183,15 +192,22 @@ def mlp_probe(feat_tr, y_tr, feat_te, y_te, hidden=256, epochs=60, lr=1e-3, seed
             opt.step()
     net.eval()
     with torch.no_grad():
-        pred = net((feat_te - mu) / sd).squeeze(1) * ys + ym
-    return r2(pred, y_te)
+        score = r2(net((feat_te - mu) / sd).squeeze(1) * ys + ym, y_te)
+        pred_all = torch.cat([net(((feat_all[lo:lo + 65536] - mu) / sd)).squeeze(1)
+                              for lo in range(0, feat_all.shape[0], 65536)]) * ys + ym
+    return score, pred_all
 
 
-def surface_gradient(surf, north, east, step=10.0):
-    """|grad g| by central differences, in metres of Up per metre of ground."""
+def surface_gradient(up_fn, north, east, step=10.0):
+    """|grad g| by central differences, in metres of Up per metre of ground.
+
+    Takes the Up lookup as a function of (north, east) so the caller's pinned
+    argument order is applied once, in one place, instead of being re-derived
+    here with a swap that has to stay in sync.
+    """
     with torch.no_grad():
-        dn = (surf(north + step, east) - surf(north - step, east)) / (2 * step)
-        de = (surf(north, east + step) - surf(north, east - step)) / (2 * step)
+        dn = (up_fn(north + step, east) - up_fn(north - step, east)) / (2 * step)
+        de = (up_fn(north, east + step) - up_fn(north, east - step)) / (2 * step)
     return torch.sqrt(dn ** 2 + de ** 2)
 
 
@@ -201,21 +217,106 @@ def binned_table(values, by, n_bins, label):
     Both matter and they fail differently: a bias that drifts with the binning
     variable is a systematic the model could have learned, while a flat bias with
     a growing spread is noise the geometry does not explain.
+
+    Returns the rows so the caller can plot and save them too.
     """
     qs = torch.quantile(by, torch.linspace(0, 1, n_bins + 1, device=by.device))
     print(f"\n  residual vs {label}:")
     print(f"    {'bin':>26}  {'n':>8}  {'bias':>9}  {'|res| med':>9}  {'|res| p84':>9}")
+    rows = []
     for i in range(n_bins):
         lo, hi = qs[i], qs[i + 1]
         m = (by >= lo) & (by <= hi if i == n_bins - 1 else by < hi)
         if int(m.sum()) < 32:
             continue
         v = values[m]
-        bias = float(v.median())
-        a_med = float(v.abs().median())
-        a_p84 = float(torch.quantile(v.abs(), 0.84))
-        print(f"    [{float(lo):10.3f}, {float(hi):10.3f})  {int(m.sum()):8d}  "
-              f"{bias:9.4f}  {a_med:9.4f}  {a_p84:9.4f}")
+        row = dict(lo=float(lo), hi=float(hi), n=int(m.sum()),
+                   centre=float(by[m].median()),
+                   bias=float(v.median()),
+                   abs_med=float(v.abs().median()),
+                   abs_p84=float(torch.quantile(v.abs(), 0.84)))
+        rows.append(row)
+        print(f"    [{row['lo']:10.3f}, {row['hi']:10.3f})  {row['n']:8d}  "
+              f"{row['bias']:9.4f}  {row['abs_med']:9.4f}  {row['abs_p84']:9.4f}")
+    return rows
+
+
+def _subsample(n, k, dev, seed=0):
+    if n <= k:
+        return torch.arange(n, device=dev)
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    return torch.randperm(n, generator=g)[:k].to(dev)
+
+
+def make_plots(plot_dir, species, res, preds, U, XY, grad, rows_u, rows_g):
+    """Probe panel + residual profiles. Never lets a plotting failure lose data."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    os.makedirs(plot_dir, exist_ok=True)
+    dev = U.device
+    sub = _subsample(U.shape[0], 40000, dev)
+    u_s = U[sub].cpu().numpy()
+
+    # ── figure 1: the probe contrast ────────────────────────────────────────
+    fig, ax = plt.subplots(2, 2, figsize=(11, 9))
+    names = ["linear_from_xy", "linear_from_h", "mlp_from_xy", "mlp_from_h"]
+    colours = ["#4C78A8", "#F58518", "#54A24B", "#B279A2"]
+
+    ax[0, 0].bar(range(4), [res[k] for k in names], color=colours)
+    ax[0, 0].set_xticks(range(4))
+    ax[0, 0].set_xticklabels(["lin←xy", "lin←h", "mlp←xy", "mlp←h"])
+    ax[0, 0].set_ylim(0.9, 1.001)
+    ax[0, 0].set_ylabel("held-out $R^2$ for $u_d$")
+    ax[0, 0].set_title("probe contrast (note truncated axis)")
+    for i, k in enumerate(names):
+        ax[0, 0].text(i, res[k] + 0.0015, f"{res[k]:.4f}", ha="center", fontsize=9)
+    ax[0, 0].axhline(1.0, color="k", lw=0.6, ls=":")
+
+    # linear-from-xy is the load-bearing one: 3 parameters, cannot memorise.
+    for a, key, ttl in ((ax[0, 1], "linear_from_xy", "linear ← xy (3 params)"),
+                        (ax[1, 0], "linear_from_h", "linear ← h (257 params)")):
+        p = preds[key][sub].cpu().numpy()
+        a.hexbin(u_s, p, gridsize=60, bins="log", cmap="viridis")
+        lim = [float(min(u_s.min(), p.min())), float(max(u_s.max(), p.max()))]
+        a.plot(lim, lim, "r-", lw=1.0)
+        a.set_xlabel("true $u_d$ [m]"); a.set_ylabel("predicted $u_d$ [m]")
+        a.set_title(f"{ttl}   $R^2$={res[key]:.4f}")
+
+    # How planar is the surface actually? Residual of the 3-parameter fit.
+    resid_plane = (preds["linear_from_xy"][sub] - U[sub]).cpu().numpy()
+    sc = ax[1, 1].scatter(XY[sub, 0].cpu().numpy(), XY[sub, 1].cpu().numpy(),
+                          c=resid_plane, s=2, cmap="coolwarm",
+                          vmin=-3 * resid_plane.std(), vmax=3 * resid_plane.std())
+    plt.colorbar(sc, ax=ax[1, 1], label="plane-fit residual [m]")
+    ax[1, 1].set_xlabel("East [m]"); ax[1, 1].set_ylabel("North [m]")
+    ax[1, 1].set_title(f"where the plane fails  (RMS {resid_plane.std():.1f} m)")
+
+    fig.suptitle(f"surface representation probe — {species}", fontsize=13)
+    fig.tight_layout()
+    p1 = os.path.join(plot_dir, f"surface_probe_{species}_probes.png")
+    fig.savefig(p1, dpi=140); plt.close(fig)
+    print(f"[plot] wrote {p1}")
+
+    # ── figure 2: residual profiles ─────────────────────────────────────────
+    fig, ax = plt.subplots(1, 2, figsize=(12, 4.4))
+    for a, rows, xl in ((ax[0], rows_u, "$u_d$ (terrain height) [m]"),
+                        (ax[1], rows_g, r"$|\nabla g|$ (terrain steepness)")):
+        c = [r["centre"] for r in rows]
+        a.plot(c, [r["bias"] for r in rows], "o-", color="#4C78A8", label="bias (median)")
+        a.plot(c, [r["abs_med"] for r in rows], "s-", color="#F58518", label="|res| median")
+        a.plot(c, [r["abs_p84"] for r in rows], "^--", color="#B279A2", label="|res| p84")
+        a.axhline(0, color="k", lw=0.6, ls=":")
+        a.set_xlabel(xl); a.set_ylabel("residual [log1p counts]")
+        a.legend(fontsize=8)
+    ax[0].set_title("a rising trend here would support the feature")
+    ax[1].set_title("steepness is where it would show most")
+    fig.suptitle(f"surrogate residual vs terrain — {species}", fontsize=13)
+    fig.tight_layout()
+    p2 = os.path.join(plot_dir, f"surface_probe_{species}_residuals.png")
+    fig.savefig(p2, dpi=140); plt.close(fig)
+    print(f"[plot] wrote {p2}")
 
 
 def main():
@@ -234,6 +335,12 @@ def main():
     ap.add_argument("--chunk", type=int, default=256)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-json", type=str, default=None)
+    ap.add_argument("--csv", type=str, default=None,
+                    help="write the binned residual tables as CSV")
+    ap.add_argument("--plot_dir", type=str, default=None,
+                    help="write the probe panel and residual profiles here "
+                         "(created if missing); plotting failures never drop the "
+                         "printed tables")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -310,7 +417,9 @@ def main():
 
             H.append(h.reshape(-1, h.shape[-1]).cpu())
             U.append(u.reshape(-1).cpu())
-            XY.append(torch.stack([north.reshape(-1), east.reshape(-1)], dim=-1).cpu())
+            # (East, North), matching the corpus column order pinned above, so
+            # XY[:, 0] means the same thing here as it does on disk.
+            XY.append(torch.stack([east.reshape(-1), north.reshape(-1)], dim=-1).cpu())
             RESID.append(resid.reshape(-1).cpu())
     handle.remove()
 
@@ -318,6 +427,13 @@ def main():
     U = torch.cat(U).to(dev)
     XY = torch.cat(XY).to(dev)
     RESID = torch.cat(RESID).to(dev)
+    # Guard the assembled array too, not just the on-disk one. The columns were
+    # re-stacked above, and a silent transpose here would mislabel every plot
+    # axis while leaving the probe scores untouched (feature order does not
+    # matter to a regression), so nothing downstream would catch it.
+    if verify_xy_column_order(XY.unsqueeze(0).cpu(), mountain) != "east_first":
+        raise SystemExit("[abort] assembled XY is not (East, North); the plot "
+                         "axes and the gradient call would both be wrong.")
     print(f"[data] {H.shape[0]} detector states, hidden={H.shape[1]}")
     print(f"[data] u_d range [{float(U.min()):.1f}, {float(U.max()):.1f}] m, "
           f"std {float(U.std()):.1f} m")
@@ -330,14 +446,17 @@ def main():
     print("\n" + "=" * 72)
     print("probes: predict u_d, held-out R^2 (20% test split)")
     print("=" * 72)
-    res = {
-        "linear_from_xy": linear_probe(XY[tr], U[tr], XY[te], U[te]),
-        "linear_from_h":  linear_probe(H[tr], U[tr], H[te], U[te]),
-        "mlp_from_xy":    mlp_probe(XY[tr], U[tr], XY[te], U[te]),
-        "mlp_from_h":     mlp_probe(H[tr], U[tr], H[te], U[te]),
-    }
+    res, preds = {}, {}
+    res["linear_from_xy"], preds["linear_from_xy"] = linear_probe(XY[tr], U[tr], XY[te], U[te], XY)
+    res["linear_from_h"],  preds["linear_from_h"]  = linear_probe(H[tr],  U[tr], H[te],  U[te],  H)
+    res["mlp_from_xy"],    preds["mlp_from_xy"]    = mlp_probe(XY[tr], U[tr], XY[te], U[te], XY)
+    res["mlp_from_h"],     preds["mlp_from_h"]     = mlp_probe(H[tr],  U[tr], H[te],  U[te],  H)
+    n_par = {"linear_from_xy": XY.shape[1] + 1, "linear_from_h": H.shape[1] + 1,
+             "mlp_from_xy": "~67k", "mlp_from_h": "~132k"}
+    print(f"  {'probe':18s}  {'params':>8}  {'R^2':>8}  {'resid RMS [m]':>14}")
     for k in ("linear_from_xy", "linear_from_h", "mlp_from_xy", "mlp_from_h"):
-        print(f"  {k:18s}  R^2 = {res[k]:8.4f}")
+        rms = float(U.std()) * float(max(0.0, 1.0 - res[k])) ** 0.5
+        print(f"  {k:18s}  {str(n_par[k]):>8}  {res[k]:8.4f}  {rms:14.1f}")
 
     print("\n  reading:")
     if res["linear_from_xy"] > 0.9:
@@ -358,19 +477,40 @@ def main():
     print("\n" + "=" * 72)
     print("residual (surrogate - kernel, log1p counts) vs terrain")
     print("=" * 72)
-    grad = surface_gradient(surf, XY[:, 0], XY[:, 1]) if arg_order == "north_first" \
-        else surface_gradient(surf, XY[:, 1], XY[:, 0])
-    binned_table(RESID, U, 8, "u_d (terrain height)")
-    binned_table(RESID, grad, 8, "|grad g| (terrain steepness)")
+    # XY is (East, North); up_of already encodes the pinned SurfaceUpMap order.
+    grad = surface_gradient(up_of, north=XY[:, 1], east=XY[:, 0])
+    rows_u = binned_table(RESID, U, 8, "u_d (terrain height)")
+    rows_g = binned_table(RESID, grad, 8, "|grad g| (terrain steepness)")
     print("\n  A FLAT profile in both is evidence the surface is not limiting the")
     print("  surrogate. A profile that climbs with |grad g| is the signature the")
     print("  proposed feature would address.")
 
+    if args.csv:
+        with open(args.csv, "w") as f:
+            f.write("species,binned_by,lo,hi,centre,n,bias,abs_med,abs_p84\n")
+            for tag, rows in (("u_d", rows_u), ("grad_g", rows_g)):
+                for r in rows:
+                    f.write(f"{args.species},{tag},{r['lo']:.6g},{r['hi']:.6g},"
+                            f"{r['centre']:.6g},{r['n']},{r['bias']:.6g},"
+                            f"{r['abs_med']:.6g},{r['abs_p84']:.6g}\n")
+        print(f"[save] {args.csv}")
+
     if args.out_json:
         with open(args.out_json, "w") as f:
             json.dump({"probes": res, "arg_order": arg_order, "col_order": col_order,
-                       "species": args.species, "n_states": int(H.shape[0])}, f, indent=2)
-        print(f"\n[save] {args.out_json}")
+                       "species": args.species, "n_states": int(H.shape[0]),
+                       "u_std_m": float(U.std()),
+                       "resid_rms_m": {k: float(U.std()) * max(0.0, 1.0 - v) ** 0.5
+                                       for k, v in res.items()},
+                       "binned_u_d": rows_u, "binned_grad_g": rows_g}, f, indent=2)
+        print(f"[save] {args.out_json}")
+
+    # Plotting last and guarded: a failure here must never cost the tables above.
+    if args.plot_dir:
+        try:
+            make_plots(args.plot_dir, args.species, res, preds, U, XY, grad, rows_u, rows_g)
+        except Exception as exc:  # noqa: BLE001 — diagnostics must not die on plots
+            print(f"[plot] SKIPPED, plotting failed: {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":
