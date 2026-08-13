@@ -153,6 +153,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--recon_dir", type=str, default=None)
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="directory holding fnn_electron.pt and fnn_muon.pt. Without "
+                         "this the surrogate comes from FNN_FOLDER in constants, which "
+                         "is NOT necessarily the surrogate --recon_dir's recon was "
+                         "trained against; pairing a recon with a different surrogate "
+                         "silently invalidates the 'surrogate (FNN)' row.")
     ap.add_argument("--n-events", type=int, default=512)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--layout", type=str, default="grid",
@@ -194,7 +200,7 @@ def main():
         ev_desc = f"{B} events held out from the RECON only (stage-2 split differs)"
 
     kfn = _etu.KernelDualLabels(elec, muon, surf, dev, chunk=args.chunk)
-    fnn, recon = load_models(dev, recon_dir=args.recon_dir)
+    fnn, recon = load_models(dev, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
     has_vertex = int(getattr(recon, "output_dim", 4)) == 7
 
     if args.layout == "grid":
@@ -209,6 +215,7 @@ def main():
     print("=" * 72)
     print(f"device      : {dev}")
     print(f"recon_dir   : {args.recon_dir or '(constants default)'}")
+    print(f"fnn_folder  : {args.fnn_folder or '(constants default)'}")
     print(f"output_dim  : {getattr(recon, 'output_dim', 4)}  (vertex={'yes' if has_vertex else 'no'})")
     print(f"layout      : {args.layout}")
     print(f"events      : {ev_desc}")

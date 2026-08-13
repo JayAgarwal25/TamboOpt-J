@@ -450,6 +450,11 @@ def main():
     ap.add_argument("--recon_dir", type=str, default=None,
                     help="passed to opt_core.load_models; only the dual surrogate "
                          "it returns is used here, the recon is not called.")
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="directory holding fnn_electron.pt and fnn_muon.pt. THIS is "
+                         "the model this script measures, so without it every number "
+                         "below describes whatever surrogate FNN_FOLDER in constants "
+                         "happens to point at, not the one you meant to evaluate.")
     ap.add_argument("--plot_dir", type=str, default=None,
                     help="if given, also write the detection-diagnostic PNG figures "
                          "here (created if missing), in addition to the printed "
@@ -465,7 +470,7 @@ def main():
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
     prim = _etu.build_primaries(corpus_path, B, mtn).to(dev)
 
-    fnn, _recon = load_models(dev, recon_dir=args.recon_dir)
+    fnn, _recon = load_models(dev, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
 
     if args.layout == "grid":
         e_l, n_l = _etu.grid_layout(mtn)
@@ -481,6 +486,7 @@ def main():
     print("detection stats - kernel vs surrogate, same events + layout")
     print("=" * 72)
     print(f"device      : {dev}")
+    print(f"fnn_folder  : {args.fnn_folder or '(constants default)'}")
     print(f"corpus      : {corpus_path}"
           f"{'  (override)' if args.corpus else '  (held-out, unseen by Steps 1-4)'}")
     print(f"layout      : {args.layout}")
