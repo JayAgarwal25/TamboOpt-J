@@ -993,6 +993,13 @@ def main():
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to the output directory name for each "
                          "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
+    ap.add_argument("--opt_folder", type=str, default=None,
+                    help="Override OPT_FOLDER, the PREFIX of the per-scheme output "
+                         "directories. --opt_suffix only renames within whatever "
+                         "OPT_FOLDER constants.py resolves to, which may be a run "
+                         "world this job cannot write to; this redirects the output "
+                         "itself. Use together with --dataset_folder/--fnn_folder/"
+                         "--recon_folder to keep a run entirely inside one world.")
     ap.add_argument("--dataset_folder", type=str, default=None,
                     help="Override TRAINING_DATASET_FOLDER, the source of the "
                          "primaries the sweep optimizes against. Use to run "
@@ -1056,9 +1063,10 @@ def main():
     n_total_primaries = int(primary_all.shape[0])
     print(f"[load] {n_total_primaries} primaries")
 
-    if args.opt_suffix:
+    if args.opt_suffix or args.opt_folder:
         global OPT_DIR_TEMPLATE
-        OPT_DIR_TEMPLATE = OPT_FOLDER + "_lbfgs_ensemble" + args.opt_suffix + "_{scheme}"
+        opt_base = args.opt_folder or OPT_FOLDER
+        OPT_DIR_TEMPLATE = opt_base + "_lbfgs_ensemble" + args.opt_suffix + "_{scheme}"
 
     if OBJECTIVE == "detection":
         # Insert a "_detection" marker right before the per-scheme "_{scheme}"
