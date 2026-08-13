@@ -4,7 +4,8 @@ North–East sibling of `01_build_dataset.py`, kept step-for-step identical so t
 two diff cleanly. The only changes are the (North, East) pieces: detectors are
 placed by horizontal map coords (North, East), the mountain extrapolates the
 height Up = g(North, East) (`SurfaceUpMap`), and labels come from the NE
-`build_training_pairs`. Stored `xy = (North, East)`. Writes to a dedicated
+`build_training_pairs`. Stored `xy = (East, North)`, col 0 East and col 1 North,
+as `fnn_surrogate_ne.build_training_pairs` writes it. Writes to a dedicated
 `..._northeast` folder so the original (North, Up) corpus is never overwritten.
 
 Run from the v6 folder:
