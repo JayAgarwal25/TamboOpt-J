@@ -250,6 +250,12 @@ def main():
                     help="Recon checkpoint directory to score (default: "
                          "constants RECON_FOLDER + '_deepsets'). Point at a "
                          "C0/T1/T2 experiment recon to compare them on one layout.")
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="directory holding fnn_electron.pt and fnn_muon.pt. Without "
+                         "this the surrogate comes from FNN_FOLDER in constants, which "
+                         "need not be the surrogate --recon_dir's recon was trained "
+                         "against, and the surrogate-side U would then describe a "
+                         "different model than the one under test.")
     ap.add_argument("--layout", type=str, default=None,
                     help="Path to the OPTIMIZED layout_best.pt to score against the "
                          "baseline (default: the constants full_corpus_grid layout).")
@@ -300,7 +306,7 @@ def main():
                                   chunk=args.kernel_chunk)
     print(f"kernel chunk: {kernel_fnn.chunk} events/call")
 
-    fnn, recon = load_models(device, recon_dir=args.recon_dir)
+    fnn, recon = load_models(device, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
     # Always re-encoded from the corpus being scored: primary.pt only ever lines up
     # with the TRAINING corpus, and the default corpus here is the held-out one.
     prim = build_primaries(corpus_path, B, mountain).to(device)
