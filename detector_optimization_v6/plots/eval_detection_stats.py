@@ -446,47 +446,47 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
         print(f"[plot] {title} skipped ({exc!r})")
 
 
-def _plot_particle_totals(tot_kernel, tot_surrogate, subtitle, path):
-    """Per-event total particles, kernel vs surrogate, on log axes.
+def _totals_floor(tot_kernel, tot_surrogate, floor=1e-1):
+    """Clip both totals to a positive floor so a log axis is defined.
 
-    The (b2) table quotes deciles and a mean, and the mean is a poor summary
-    of a quantity spanning five orders of magnitude -- worse, it hides a SIGN
-    FLIP. The surrogate predicts ~25x too MUCH on the dimmest events and ~17x
-    too LITTLE on the brightest, so a single "N times less" number is wrong in
-    one direction for half the corpus. This draws the whole thing:
+    A blind event has total 0, and log(0) is undefined. Dropping those events
+    would remove exactly the population the surrogate handles worst, so they
+    are held at `floor` instead and pile up in one column at the axis edge.
+    That column's POSITION is an artifact of the flooring; its POPULATION is
+    real. Returns (kernel, surrogate, lo, hi, n_floored)."""
+    k = np.maximum(tot_kernel, floor)
+    s = np.maximum(tot_surrogate, floor)
+    return (k, s, float(min(k.min(), s.min())), float(max(k.max(), s.max())),
+            int((tot_kernel <= floor).sum()))
 
-      left   joint distribution with y=x and the median surrogate response in
-             bins of kernel truth. A slope below 1 IS the compression, and the
-             point where the median crosses y=x is where over-prediction turns
-             into under-prediction.
-      right  the two marginals, where the compressed dynamic range is the
-             visible difference in width.
-    """
+
+def _plot_particle_scatter(tot_kernel, tot_surrogate, subtitle, path):
+    """Per-event total counts, surrogate against kernel, on log axes.
+
+    The black curve is the median surrogate response in log-spaced bins of
+    kernel truth. Its slope is the thing to read: below 1 means the surrogate
+    compresses a wide range of truths into a narrow range of predictions, and
+    where it crosses the diagonal is where over-prediction becomes
+    under-prediction."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as exc:
-        print(f"[plot] particle totals skipped ({exc!r})")
+        print(f"[plot] particle scatter skipped ({exc!r})")
         return
     try:
-        # Totals can be 0 for a blind event; floor them so a log axis is defined
-        # rather than silently dropping exactly the events that matter most.
-        floor = 1e-1
-        k = np.maximum(tot_kernel, floor)
-        s = np.maximum(tot_surrogate, floor)
-        lo = float(min(k.min(), s.min()))
-        hi = float(max(k.max(), s.max()))
+        k, s, lo, hi, _ = _totals_floor(tot_kernel, tot_surrogate)
+        fig, ax = plt.subplots(figsize=(7, 5.6))
 
-        fig, (axA, axB) = plt.subplots(1, 2, figsize=(12, 5))
+        hb = ax.hexbin(k, s, gridsize=42, bins="log", cmap="viridis", mincnt=1,
+                       xscale="log", yscale="log")
+        cb = fig.colorbar(hb, ax=ax)
+        cb.set_label("events per bin", fontsize=9)
+        cb.ax.tick_params(labelsize=8)
 
-        axA.hexbin(k, s, gridsize=42, bins="log", cmap="viridis", mincnt=1,
-                   xscale="log", yscale="log")
-        axA.plot([lo, hi], [lo, hi], "r--", linewidth=1.3, label="equal")
+        ax.plot([lo, hi], [lo, hi], "r--", linewidth=1.3, label="equal")
 
-        # Median surrogate response in log-spaced bins of kernel truth. This is
-        # the whole message: its slope is the compression, and where it crosses
-        # the diagonal is where over-prediction becomes under-prediction.
         edges = np.logspace(np.log10(lo), np.log10(hi), 18)
         idx = np.digitize(k, edges[1:-1])
         xs, ys = [], []
@@ -496,35 +496,56 @@ def _plot_particle_totals(tot_kernel, tot_surrogate, subtitle, path):
                 xs.append(float(np.median(k[m])))
                 ys.append(float(np.median(s[m])))
         if xs:
-            axA.plot(xs, ys, "k-o", markersize=4, linewidth=1.6, label="median")
+            ax.plot(xs, ys, "k-o", markersize=4, linewidth=1.6, label="median")
 
-        axA.set_xscale("log")
-        axA.set_yscale("log")
-        axA.grid(which="both", alpha=0.25)
-        axA.set_xlabel("kernel, total counts per event")
-        axA.set_ylabel("surrogate, total counts per event")
-        axA.set_title("per event")
-        axA.legend(fontsize=9, loc="upper left")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.grid(which="both", alpha=0.25)
+        ax.set_xlabel("kernel, total counts per event")
+        ax.set_ylabel("surrogate, total counts per event")
+        ax.set_title(f"total counts per event\n{subtitle}", fontsize=10)
+        ax.legend(fontsize=9, loc="upper left")
 
-        bins = np.logspace(np.log10(lo), np.log10(hi), 55)
-        axB.hist(k, bins=bins, alpha=0.45, color="#4C78A8", label="kernel")
-        axB.hist(s, bins=bins, histtype="step", linewidth=1.8, color="#F58518",
-                 label="surrogate")
-        axB.set_xscale("log")
-        axB.grid(which="both", alpha=0.25)
-        axB.set_xlabel("total counts per event")
-        axB.set_ylabel("events")
-        axB.set_title("dynamic range")
-        axB.legend(fontsize=9)
-
-        fig.suptitle(f"total counts per event, kernel vs surrogate\n{subtitle}",
-                     fontsize=11)
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
         print(f"[plot] wrote {path}")
     except Exception as exc:
-        print(f"[plot] particle totals skipped ({exc!r})")
+        print(f"[plot] particle scatter skipped ({exc!r})")
+
+
+def _plot_particle_range(tot_kernel, tot_surrogate, subtitle, path):
+    """The two marginal distributions of per-event total counts.
+
+    Read for width, not position: the kernel spans far more decades than the
+    surrogate does, which is the same compression the scatter's median slope
+    shows, seen without the pairing."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] particle range skipped ({exc!r})")
+        return
+    try:
+        k, s, lo, hi, _ = _totals_floor(tot_kernel, tot_surrogate)
+        fig, ax = plt.subplots(figsize=(7, 5.6))
+        bins = np.logspace(np.log10(lo), np.log10(hi), 55)
+        ax.hist(k, bins=bins, alpha=0.45, color="#4C78A8", label="kernel")
+        ax.hist(s, bins=bins, histtype="step", linewidth=1.9, color="#F58518",
+                label="surrogate")
+        ax.set_xscale("log")
+        ax.grid(which="both", alpha=0.25)
+        ax.set_xlabel("total counts per event")
+        ax.set_ylabel("events")
+        ax.set_title(f"dynamic range\n{subtitle}", fontsize=10)
+        ax.legend(fontsize=9)
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] particle range skipped ({exc!r})")
 
 
 def _make_plots(plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
@@ -555,8 +576,10 @@ def _make_plots(plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
     _plot_confusion(both, konly, sonly, neither, precision, recall, f1, sub,
                      os.path.join(plot_dir, "detection_confusion.png"))
     if tot_kernel is not None and tot_surrogate is not None:
-        _plot_particle_totals(tot_kernel, tot_surrogate, sub,
-                               os.path.join(plot_dir, "detection_particle_totals.png"))
+        _plot_particle_scatter(tot_kernel, tot_surrogate, sub,
+                                os.path.join(plot_dir, "detection_particle_scatter.png"))
+        _plot_particle_range(tot_kernel, tot_surrogate, sub,
+                              os.path.join(plot_dir, "detection_particle_range.png"))
     _plot_efficiency(e_bins, N_DET_THRESHOLDS, "log10(E / GeV)",
                       "detection efficiency vs primary energy", sub,
                       os.path.join(plot_dir, "detection_efficiency_energy.png"),
