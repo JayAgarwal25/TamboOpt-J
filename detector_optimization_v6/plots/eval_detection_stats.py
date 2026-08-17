@@ -446,10 +446,111 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
         print(f"[plot] {title} skipped ({exc!r})")
 
 
+def _plot_particle_totals(tot_kernel, tot_surrogate, subtitle, path):
+    """Per-event total particles, kernel vs surrogate, on log axes.
+
+    The (b2) table quotes deciles and a mean, and the mean is a poor summary
+    of a quantity spanning five orders of magnitude -- worse, it hides a SIGN
+    FLIP. The surrogate predicts ~25x too MUCH on the dimmest events and ~17x
+    too LITTLE on the brightest, so a single "N times less" number is wrong in
+    one direction for half the corpus. This draws the whole thing:
+
+      left   joint distribution with y=x and the median surrogate response in
+             bins of kernel truth. A slope below 1 IS the compression, and the
+             point where the median crosses y=x is where over-prediction turns
+             into under-prediction.
+      right  the two marginals, where the compressed dynamic range is the
+             visible difference in width.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"[plot] particle totals skipped ({exc!r})")
+        return
+    try:
+        # Totals can be 0 for a blind event; floor them so log is defined and
+        # say so on the axis rather than silently dropping those events.
+        floor = 1e-1
+        lk = np.log10(np.maximum(tot_kernel, floor))
+        ls = np.log10(np.maximum(tot_surrogate, floor))
+        lo = float(min(lk.min(), ls.min()))
+        hi = float(max(lk.max(), ls.max()))
+
+        fig, (axA, axB) = plt.subplots(1, 2, figsize=(12.5, 5.2))
+
+        axA.hexbin(lk, ls, gridsize=45, bins="log", cmap="viridis", mincnt=1)
+        axA.plot([lo, hi], [lo, hi], "r--", linewidth=1.3, label="y = x")
+
+        edges = np.linspace(lo, hi, 18)
+        idx = np.digitize(lk, edges[1:-1])
+        xs, ys = [], []
+        for i in range(len(edges) - 1):
+            m = idx == i
+            if int(m.sum()) >= 25:
+                xs.append(float(np.median(lk[m])))
+                ys.append(float(np.median(ls[m])))
+        xs, ys = np.asarray(xs), np.asarray(ys)
+        if xs.size:
+            axA.plot(xs, ys, "k-o", markersize=4, linewidth=1.6,
+                     label="median surrogate | kernel")
+            # Where the median response crosses truth: below it the surrogate
+            # invents signal, above it the surrogate loses signal.
+            d = ys - xs
+            sign = np.where(d >= 0)[0]
+            if sign.size and sign[-1] + 1 < xs.size:
+                j = sign[-1]
+                t = d[j] / (d[j] - d[j + 1])
+                xc = xs[j] + t * (xs[j + 1] - xs[j])
+                axA.axvline(xc, color="0.35", linestyle=":", linewidth=1.2)
+                axA.text(0.97, 0.06,
+                         f"invents signal below {10 ** xc:,.0f} particles,\n"
+                         f"loses it above",
+                         transform=axA.transAxes, ha="right", va="bottom",
+                         fontsize=8.5, color="0.25",
+                         bbox=dict(boxstyle="round,pad=0.3", fc="white",
+                                   ec="0.75", alpha=0.85))
+
+        # The pile-up at the left edge is real events with zero total, held at
+        # the floor so they stay visible. Say so, because that column is the
+        # blind-event population and it is the most striking thing on the plot.
+        n_floor = int((tot_kernel <= floor).sum())
+        if n_floor:
+            axA.text(0.02, 0.02,
+                     f"left column: {n_floor} events with zero kernel signal",
+                     transform=axA.transAxes, fontsize=7.5, color="0.35")
+        axA.set_xlabel(f"log10 particles per event, kernel  (floored at {floor:g})")
+        axA.set_ylabel("log10 particles per event, surrogate")
+        axA.set_title("per event, surrogate vs kernel")
+        axA.legend(fontsize=8, loc="upper left")
+        axA.grid(alpha=0.25)
+
+        bins = np.linspace(lo, hi, 60)
+        axB.hist(lk, bins=bins, alpha=0.45, color="#4C78A8",
+                 label=f"kernel (median {np.median(tot_kernel):,.0f})")
+        axB.hist(ls, bins=bins, histtype="step", linewidth=1.8, color="#F58518",
+                 label=f"surrogate (median {np.median(tot_surrogate):,.0f})")
+        axB.set_xlabel("log10 particles per event")
+        axB.set_ylabel("events")
+        axB.set_title("dynamic range is compressed")
+        axB.legend(fontsize=8)
+        axB.grid(alpha=0.25)
+
+        fig.suptitle(f"total particles per event\n{subtitle}", fontsize=11)
+        fig.tight_layout()
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        print(f"[plot] wrote {path}")
+    except Exception as exc:
+        print(f"[plot] particle totals skipped ({exc!r})")
+
+
 def _make_plots(plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
                  med_kernel, med_surrogate, both, konly, sonly, neither,
                  precision, recall, f1, e_bins, v_bins,
-                 layout, n_events, threshold):
+                 layout, n_events, threshold,
+                 tot_kernel=None, tot_surrogate=None):
     """Write the five detection-diagnostic figures into `plot_dir`.
 
     Every array passed in here is one already printed above (n_lit_kernel /
@@ -472,6 +573,9 @@ def _make_plots(plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
                         os.path.join(plot_dir, "detection_nlit_scatter.png"))
     _plot_confusion(both, konly, sonly, neither, precision, recall, f1, sub,
                      os.path.join(plot_dir, "detection_confusion.png"))
+    if tot_kernel is not None and tot_surrogate is not None:
+        _plot_particle_totals(tot_kernel, tot_surrogate, sub,
+                               os.path.join(plot_dir, "detection_particle_totals.png"))
     _plot_efficiency(e_bins, N_DET_THRESHOLDS, "log10(E / GeV)",
                       "detection efficiency vs primary energy", sub,
                       os.path.join(plot_dir, "detection_efficiency_energy.png"),
@@ -658,7 +762,8 @@ def main():
         _make_plots(args.plot_dir, n_lit_kernel, n_lit_surrogate, n_det,
                     p_kernel[2], p_surrogate[2], both, konly, sonly, neither,
                     precision, recall, f1, e_bins, v_bins,
-                    args.layout, B, args.threshold)
+                    args.layout, B, args.threshold,
+                    tot_kernel=tot_kernel, tot_surrogate=tot_surrogate)
 
 
 if __name__ == "__main__":
