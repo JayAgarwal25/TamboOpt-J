@@ -332,15 +332,18 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
     so the lines here reproduce the printed fractions rather than
     recomputing them. Empty bins carry NaN and are left as gaps.
 
-    `show_binwidth` draws horizontal error bars spanning each bin so
-    unevenly spaced (quantile) bins are not misread as uniform; `log_x`
-    is for a distance/energy-like quantity spanning orders of magnitude.
+    Bins are drawn as STEPS across their true edges. That carries the bin
+    width intrinsically, which is what `show_binwidth` used to say with
+    horizontal error bars -- but four overlapping sets of them, on quantile
+    bins whose widths differ by two orders of magnitude, buried the curves
+    they were annotating. The parameter is kept for call compatibility and
+    no longer changes the rendering. `log_x` is for a distance/energy-like
+    quantity spanning orders of magnitude.
 
-    The secondary axis is an explicit exception to "one axis per chart":
-    mean n_lit is a different unit than a detected fraction, but it is
-    informative read alongside the fractions, so it is drawn in a visibly
-    distinct style (black, dashed, cross markers) and labelled as its own
-    axis rather than folded into the left-hand color/marker scheme."""
+    Mean n_lit and the per-bin event count are sample properties, not
+    results, so they go in their own short panel underneath rather than on a
+    twin axis crossing the efficiency curves. Sharing the x-axis keeps them
+    readable against the same bins."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -353,41 +356,49 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
         edges = bins["edges"]
         fracs = bins["fracs"]
         mean_nlit = bins["mean_nlit"]
+        n_events = bins["n_events"]
 
-        fig, ax = plt.subplots(figsize=(9, 5.5))
-        xerr = None
-        if show_binwidth:
-            xerr = np.stack([centers - edges[:-1], edges[1:] - centers], axis=0)
+        def _step(axis, vals, **kw):
+            """Horizontal segment per bin, across its real edges."""
+            v = np.asarray(vals, dtype=float)
+            return axis.step(edges, np.concatenate([v, v[-1:]]),
+                             where="post", **kw)
+
+        fig, (ax, axb) = plt.subplots(
+            2, 1, figsize=(9, 6.4), sharex=True,
+            gridspec_kw=dict(height_ratios=[3, 1], hspace=0.10))
 
         for k, n in enumerate(n_thresholds):
             color, marker = _THRESH_STYLE[k % len(_THRESH_STYLE)]
-            label = f"N_DET >= {n}"
-            if show_binwidth:
-                ax.errorbar(centers, fracs[:, k], xerr=xerr, color=color,
-                            marker=marker, markersize=5, linewidth=1.4,
-                            capsize=3, elinewidth=0.8, alpha=0.9, label=label)
-            else:
-                ax.plot(centers, fracs[:, k], color=color, marker=marker,
-                        markersize=5, linewidth=1.4, alpha=0.9, label=label)
+            _step(ax, fracs[:, k], color=color, linewidth=1.7, alpha=0.95,
+                  label=f"N_DET >= {n}")
+            # Markers at bin centres only, so the steps stay the visual
+            # carrier and the points just aid reading across bins.
+            ax.plot(centers, fracs[:, k], color=color, marker=marker,
+                    markersize=4, linestyle="none", alpha=0.95)
 
         ax.set_ylim(0.0, 1.0)
-        ax.set_xlabel(xlabel)
         ax.set_ylabel("fraction of events detected (kernel)")
-        if log_x:
-            ax.set_xscale("log")
-        ax.grid(alpha=0.3)
-
-        ax2 = ax.twinx()
-        ax2.plot(centers, mean_nlit, color="black", linestyle="--", marker="x",
-                  markersize=6, linewidth=1.2, alpha=0.85,
-                  label="mean n_lit, kernel (right axis)")
-        ax2.set_ylabel("mean n_lit (kernel)")
-
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax2.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="best")
-
+        ax.grid(alpha=0.25)
+        ax.legend(fontsize=8, loc="lower left", framealpha=0.9)
         ax.set_title(f"{title}\n{subtitle}")
+
+        _step(axb, mean_nlit, color="black", linewidth=1.4)
+        axb.plot(centers, mean_nlit, color="black", marker="x", markersize=5,
+                 linestyle="none")
+        axb.set_ylabel("mean n_lit", fontsize=9)
+        axb.set_xlabel(xlabel)
+        axb.grid(alpha=0.25)
+
+        # Per-bin statistics, so thin bins are visible rather than implied.
+        axc = axb.twinx()
+        _step(axc, n_events, color="gray", linewidth=1.0, alpha=0.55)
+        axc.set_ylabel("events/bin", color="gray", fontsize=8)
+        axc.tick_params(axis="y", labelcolor="gray", labelsize=7)
+        axc.set_ylim(bottom=0)
+
+        if log_x:
+            axb.set_xscale("log")
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
