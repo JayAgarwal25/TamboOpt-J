@@ -364,20 +364,44 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
             return axis.step(edges, np.concatenate([v, v[-1:]]),
                              where="post", **kw)
 
+        def _band(axis, vals, err, **kw):
+            """Shaded +/-err ribbon following the same steps."""
+            v, e = np.asarray(vals, float), np.asarray(err, float)
+            lo = np.concatenate([v - e, (v - e)[-1:]])
+            hi = np.concatenate([v + e, (v + e)[-1:]])
+            return axis.fill_between(edges, lo, hi, step="post", **kw)
+
         fig, (ax, axb) = plt.subplots(
             2, 1, figsize=(9, 6.4), sharex=True,
             gridspec_kw=dict(height_ratios=[3, 1], hspace=0.10))
 
+        with np.errstate(invalid="ignore", divide="ignore"):
+            n_safe = np.where(n_events > 0, n_events, np.nan).astype(float)
+
         for k, n in enumerate(n_thresholds):
             color, marker = _THRESH_STYLE[k % len(_THRESH_STYLE)]
-            _step(ax, fracs[:, k], color=color, linewidth=1.7, alpha=0.95,
+            p = fracs[:, k]
+            # Binomial standard error on the per-bin fraction. Without it there
+            # is no way to tell a real feature from a 1000-event wiggle, and
+            # these curves are read for their shape.
+            with np.errstate(invalid="ignore"):
+                err = np.sqrt(np.clip(p * (1.0 - p), 0.0, None) / n_safe)
+            _band(ax, p, err, color=color, alpha=0.18, linewidth=0)
+            _step(ax, p, color=color, linewidth=1.7, alpha=0.95,
                   label=f"N_DET >= {n}")
             # Markers at bin centres only, so the steps stay the visual
             # carrier and the points just aid reading across bins.
-            ax.plot(centers, fracs[:, k], color=color, marker=marker,
+            ax.plot(centers, p, color=color, marker=marker,
                     markersize=4, linestyle="none", alpha=0.95)
 
-        ax.set_ylim(0.0, 1.0)
+        # Anchoring a fraction at 0 is the usual default, but these panels are
+        # read for the SHAPE of the curve, and half an empty axis compresses
+        # the structure that carries the result. The floor is set below the
+        # lowest point instead, with the axis labelled and ticked so nothing
+        # is hidden.
+        finite = fracs[np.isfinite(fracs)]
+        lo = float(np.min(finite)) if finite.size else 0.0
+        ax.set_ylim(max(0.0, lo - 0.10), 1.0)
         ax.set_ylabel("fraction of events detected (kernel)")
         ax.grid(alpha=0.25)
         ax.legend(fontsize=8, loc="lower left", framealpha=0.9)
@@ -390,15 +414,30 @@ def _plot_efficiency(bins, n_thresholds, xlabel, title, subtitle, path,
         axb.set_xlabel(xlabel)
         axb.grid(alpha=0.25)
 
-        # Per-bin statistics, so thin bins are visible rather than implied.
-        axc = axb.twinx()
-        _step(axc, n_events, color="gray", linewidth=1.0, alpha=0.55)
-        axc.set_ylabel("events/bin", color="gray", fontsize=8)
-        axc.tick_params(axis="y", labelcolor="gray", labelsize=7)
-        axc.set_ylim(bottom=0)
+        # Quantile binning makes events/bin constant by construction, so drawing
+        # it would be pure ink. Only show it when the bins actually differ.
+        spread = float(np.ptp(n_events)) / max(float(np.mean(n_events)), 1.0)
+        if spread > 0.05:
+            axc = axb.twinx()
+            _step(axc, n_events, color="gray", linewidth=1.0, alpha=0.55)
+            axc.set_ylabel("events/bin", color="gray", fontsize=8)
+            axc.tick_params(axis="y", labelcolor="gray", labelsize=7)
+            axc.set_ylim(bottom=0)
+        else:
+            axb.text(0.99, 0.06, f"{int(np.median(n_events))} events/bin",
+                     transform=axb.transAxes, ha="right", fontsize=7,
+                     color="gray")
 
         if log_x:
             axb.set_xscale("log")
+            # Decade-only ticks leave the 1-6 km region, where the structure is,
+            # unlabelled. Add 2x/5x subdivisions in plain numbers.
+            from matplotlib.ticker import LogLocator, FuncFormatter
+            axb.xaxis.set_major_locator(
+                LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=12))
+            axb.xaxis.set_minor_locator(plt.NullLocator())
+            axb.xaxis.set_major_formatter(FuncFormatter(
+                lambda v, _: f"{v:g}" if v < 1000 else f"{v / 1000:g}k"))
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
