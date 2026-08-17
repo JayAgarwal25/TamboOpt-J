@@ -470,74 +470,55 @@ def _plot_particle_totals(tot_kernel, tot_surrogate, subtitle, path):
         print(f"[plot] particle totals skipped ({exc!r})")
         return
     try:
-        # Totals can be 0 for a blind event; floor them so log is defined and
-        # say so on the axis rather than silently dropping those events.
+        # Totals can be 0 for a blind event; floor them so a log axis is defined
+        # rather than silently dropping exactly the events that matter most.
         floor = 1e-1
-        lk = np.log10(np.maximum(tot_kernel, floor))
-        ls = np.log10(np.maximum(tot_surrogate, floor))
-        lo = float(min(lk.min(), ls.min()))
-        hi = float(max(lk.max(), ls.max()))
+        k = np.maximum(tot_kernel, floor)
+        s = np.maximum(tot_surrogate, floor)
+        lo = float(min(k.min(), s.min()))
+        hi = float(max(k.max(), s.max()))
 
-        fig, (axA, axB) = plt.subplots(1, 2, figsize=(12.5, 5.2))
+        fig, (axA, axB) = plt.subplots(1, 2, figsize=(12, 5))
 
-        axA.hexbin(lk, ls, gridsize=45, bins="log", cmap="viridis", mincnt=1)
-        axA.plot([lo, hi], [lo, hi], "r--", linewidth=1.3, label="y = x")
+        axA.hexbin(k, s, gridsize=42, bins="log", cmap="viridis", mincnt=1,
+                   xscale="log", yscale="log")
+        axA.plot([lo, hi], [lo, hi], "r--", linewidth=1.3, label="equal")
 
-        edges = np.linspace(lo, hi, 18)
-        idx = np.digitize(lk, edges[1:-1])
+        # Median surrogate response in log-spaced bins of kernel truth. This is
+        # the whole message: its slope is the compression, and where it crosses
+        # the diagonal is where over-prediction becomes under-prediction.
+        edges = np.logspace(np.log10(lo), np.log10(hi), 18)
+        idx = np.digitize(k, edges[1:-1])
         xs, ys = [], []
         for i in range(len(edges) - 1):
             m = idx == i
             if int(m.sum()) >= 25:
-                xs.append(float(np.median(lk[m])))
-                ys.append(float(np.median(ls[m])))
-        xs, ys = np.asarray(xs), np.asarray(ys)
-        if xs.size:
-            axA.plot(xs, ys, "k-o", markersize=4, linewidth=1.6,
-                     label="median surrogate | kernel")
-            # Where the median response crosses truth: below it the surrogate
-            # invents signal, above it the surrogate loses signal.
-            d = ys - xs
-            sign = np.where(d >= 0)[0]
-            if sign.size and sign[-1] + 1 < xs.size:
-                j = sign[-1]
-                t = d[j] / (d[j] - d[j + 1])
-                xc = xs[j] + t * (xs[j + 1] - xs[j])
-                axA.axvline(xc, color="0.35", linestyle=":", linewidth=1.2)
-                axA.text(0.97, 0.06,
-                         f"invents signal below {10 ** xc:,.0f} particles,\n"
-                         f"loses it above",
-                         transform=axA.transAxes, ha="right", va="bottom",
-                         fontsize=8.5, color="0.25",
-                         bbox=dict(boxstyle="round,pad=0.3", fc="white",
-                                   ec="0.75", alpha=0.85))
+                xs.append(float(np.median(k[m])))
+                ys.append(float(np.median(s[m])))
+        if xs:
+            axA.plot(xs, ys, "k-o", markersize=4, linewidth=1.6, label="median")
 
-        # The pile-up at the left edge is real events with zero total, held at
-        # the floor so they stay visible. Say so, because that column is the
-        # blind-event population and it is the most striking thing on the plot.
-        n_floor = int((tot_kernel <= floor).sum())
-        if n_floor:
-            axA.text(0.02, 0.02,
-                     f"left column: {n_floor} events with zero kernel signal",
-                     transform=axA.transAxes, fontsize=7.5, color="0.35")
-        axA.set_xlabel(f"log10 particles per event, kernel  (floored at {floor:g})")
-        axA.set_ylabel("log10 particles per event, surrogate")
-        axA.set_title("per event, surrogate vs kernel")
-        axA.legend(fontsize=8, loc="upper left")
-        axA.grid(alpha=0.25)
+        axA.set_xscale("log")
+        axA.set_yscale("log")
+        axA.grid(which="both", alpha=0.25)
+        axA.set_xlabel("kernel, total counts per event")
+        axA.set_ylabel("surrogate, total counts per event")
+        axA.set_title("per event")
+        axA.legend(fontsize=9, loc="upper left")
 
-        bins = np.linspace(lo, hi, 60)
-        axB.hist(lk, bins=bins, alpha=0.45, color="#4C78A8",
-                 label=f"kernel (median {np.median(tot_kernel):,.0f})")
-        axB.hist(ls, bins=bins, histtype="step", linewidth=1.8, color="#F58518",
-                 label=f"surrogate (median {np.median(tot_surrogate):,.0f})")
-        axB.set_xlabel("log10 particles per event")
+        bins = np.logspace(np.log10(lo), np.log10(hi), 55)
+        axB.hist(k, bins=bins, alpha=0.45, color="#4C78A8", label="kernel")
+        axB.hist(s, bins=bins, histtype="step", linewidth=1.8, color="#F58518",
+                 label="surrogate")
+        axB.set_xscale("log")
+        axB.grid(which="both", alpha=0.25)
+        axB.set_xlabel("total counts per event")
         axB.set_ylabel("events")
-        axB.set_title("dynamic range is compressed")
-        axB.legend(fontsize=8)
-        axB.grid(alpha=0.25)
+        axB.set_title("dynamic range")
+        axB.legend(fontsize=9)
 
-        fig.suptitle(f"total particles per event\n{subtitle}", fontsize=11)
+        fig.suptitle(f"total counts per event, kernel vs surrogate\n{subtitle}",
+                     fontsize=11)
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)
