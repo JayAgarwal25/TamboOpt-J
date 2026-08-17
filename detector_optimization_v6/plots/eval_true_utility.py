@@ -320,18 +320,22 @@ def main():
     gs, gt, _, _ = score(e_g, n_g, prim, fnn, kernel_fnn, recon, device, **_sc)
     os_, ot, ops, opt_ = score(e_o, n_o, prim, fnn, kernel_fnn, recon, device, **_sc)
 
+    # The baseline label follows --grid-layout. It used to read "grid"
+    # unconditionally while the DEFAULT baseline is center, so a default run
+    # reported an optimized-vs-center comparison labelled optimized-vs-grid.
+    # The two are far apart -- on the phase3 models grid scores true-U 22.1
+    # against center's 7.6 -- so the mislabel inflated the reported gain by an
+    # order of magnitude while looking entirely plausible.
+    base_name = "grid" if args.grid_layout else "center"
     print()
-    if args.grid_layout:
-        print("GRID LAYOUT (baseline) vs OPTIMIZED LAYOUT")
-    else:
-        print("CENTER LAYOUT (baseline) vs OPTIMIZED LAYOUT")
+    print(f"{base_name.upper()} LAYOUT (baseline) vs OPTIMIZED LAYOUT")
     print("                  surrogate-U     true-U")
-    print(f"  baseline grid   {gs:11.4f}   {gt:11.4f}")
+    print(f"  baseline {base_name:6s} {gs:11.4f}   {gt:11.4f}")
     print(f"  optimized       {os_:11.4f}   {ot:11.4f}")
     print()
     d_surr, d_true = os_ - gs, ot - gt
-    print(f"  ΔU surrogate (opt - grid) : {d_surr:+.4f}")
-    print(f"  ΔU true      (opt - grid) : {d_true:+.4f}")
+    print(f"  ΔU surrogate (opt - {base_name}) : {d_surr:+.4f}")
+    print(f"  ΔU true      (opt - {base_name}) : {d_true:+.4f}")
     print(f"  artifact gap (surr - true, optimized) : {os_ - ot:+.4f}")
     print()
     tol = 0.02 * max(abs(gt), abs(gs), 1.0)
