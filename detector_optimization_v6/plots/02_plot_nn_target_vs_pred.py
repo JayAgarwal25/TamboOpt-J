@@ -45,6 +45,7 @@ its scatter. Plain RECON_FOLDER belongs to the older flat-MLP 03_train_recon.py.
 """
 import os
 import sys
+from collections import namedtuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _V6_DIR = os.path.dirname(_HERE)
@@ -211,156 +212,254 @@ def _calibration_panel(ax, sigma, err, channel: str):
     ax.legend(loc="upper left", fontsize=7, framealpha=1)
 
 
-def _conditional_panel(ax, target, pred, sigma, channel: str,
-                       n_bins=60, min_count=200):
-    """P(prediction | target) for HIT detectors, plus the reverse-conditional curve.
+# --------------------------------------------------------------------------- #
+# Conditional-density figure (fnn_<species>_conditional.png)
+#
+# Why it exists, in one paragraph. The joint hexbin in *_target_vs_pred.png
+# understates the surrogate for two reasons that have nothing to do with model
+# quality: a spike of DARK detectors (target exactly 0) owns the colour scale,
+# and the mean head is fitted to a stochastic target, so its cloud is *supposed*
+# to be narrower than the data. This figure drops the dark samples and normalises
+# per target-column, then overlays the mean and ±1σ of the SAME conditional
+# (prediction | target) so image and curve agree. Its slope is read against
+# Var(pred)/Var(target), not against 1.00 — see `_conditional_panel`.
+# --------------------------------------------------------------------------- #
 
-    The raw target-vs-prediction hexbin is unreadable for reasons unrelated to
-    model quality: a huge spike of DARK detectors (target exactly 0) owns the
-    colour scale, and the joint density hides the regression wherever the target
-    distribution is thin. So: keep only `target > 0`, and scale each target-column
-    to its own PEAK — the figure is then the SHAPE of P(pred | target) at every
-    target, equally legible across the range. Columns under `min_count` are left
-    blank rather than normalised from a handful of samples.
+# p16/p84 — the ±1σ interval of a Gaussian, so the drawn band is directly
+# comparable to the head's own predicted σ.
+SIGMA_QUANTILES = (0.16, 0.84)
 
-    The one curve drawn is `target | prediction` — a MEAN plus a p16/p84 (±1σ)
-    band — because it is the only summary whose ideal is `y = x`:
+# Axis window: p99.9 of the target, not its max. A handful of extreme targets
+# would otherwise spend most of the axis on whitespace.
+AXIS_PERCENTILE = 99.9
 
-    * the other direction (prediction per target-bin) is redundant with the
-      peak-scaled density AND misleading — it conditions on a noisy realisation
-      of the target while the net is fitted to `E[y | input]`, so regression
-      attenuation holds its slope below 1 however good the model is;
-    * `E[target | pred] = pred` is exact for a calibrated conditional mean at any
-      noise level. MEAN, not median: that identity is about means and is what the
-      Gaussian NLL fits the mean head to. The conditional is strongly
-      right-skewed in log1p space near zero, so a median curve leaves `y = x`
-      even for a perfect model and charges the skew to the model as bias.
+BinnedProfile = namedtuple("BinnedProfile", "bin_center mean p16 p84 count")
 
-    Returns the numbers for the caller to print; only the slope reaches the
-    title. `sigma` may be None — the band/σ comparison is then skipped.
+
+def profile_by_bin(key, value, edges, min_count):
+    """Group `value` by which `edges` bin its `key` falls into; summarise each bin.
+
+    Returns a `BinnedProfile` whose arrays are already filtered to bins holding
+    at least `min_count` samples, so callers can plot them directly.
+
+    Implementation note: `np.bincount` gives the count and both sums in one pass
+    each, and accumulates in float64 — which a naive fp32 sum over the ~1e6
+    samples a single bin can hold would not. The two quantiles need order, so
+    one `lexsort` lays the values out grouped by bin and ascending within each
+    group, after which a quantile is a positional offset from the group's start.
     """
     import numpy as np
 
-    hit = target > 0.0
-    t, p = target[hit], pred[hit]
-    s = None if sigma is None else sigma[hit]
-    if t.size < 10 * n_bins:
-        ax.set_title(f"{channel}: too few hit samples ({t.size})")
-        return None
+    n_bins = edges.size - 1
+    bin_of = np.clip(np.digitize(key, edges[1:-1]), 0, n_bins - 1)
 
-    # p99.9, not the max: a few extreme targets would spend the axis on whitespace.
-    lo, hi = 0.0, float(np.percentile(t, 99.9))
-    edges = np.linspace(lo, hi, n_bins + 1)
+    count = np.bincount(bin_of, minlength=n_bins)
+    divisor = np.maximum(count, 1)                      # empty bins -> 0/1 = 0
+    mean = np.bincount(bin_of, weights=value, minlength=n_bins) / divisor
 
+    ordered = value[np.lexsort((value, bin_of))]
+    group_start = np.concatenate(([0], np.cumsum(count)[:-1]))
+
+    def quantile(frac):
+        offset = (frac * np.maximum(count - 1, 0)).astype(np.intp)
+        # Empty bins can point one past the end; they are dropped by `keep`.
+        return ordered[np.minimum(group_start + offset, ordered.size - 1)]
+
+    lo_q, hi_q = SIGMA_QUANTILES
+    keep = count >= min_count
+    bin_center = 0.5 * (edges[:-1] + edges[1:])
+    return BinnedProfile(
+        bin_center=bin_center[keep],
+        mean=mean[keep],
+        p16=quantile(lo_q)[keep],
+        p84=quantile(hi_q)[keep],
+        count=count[keep].astype(np.float64),
+    )
+
+
+def _draw_column_density(ax, target, pred, edges, min_count):
+    """Fill the panel with P(prediction | target), each column scaled to its peak.
+
+    Peak-scaling rather than sum-normalising: the conditional is sharp near
+    target = 0 and broad at high target, so dividing by the column sum lets one
+    column's spike take the whole colour ramp and washes the ridge out
+    everywhere else. Scaling to the peak puts every column on the same visual
+    footing, which is the point — the SHAPE of the conditional at each target,
+    not its height. Columns under `min_count` are left blank rather than
+    normalised from a handful of samples.
+    """
+    import numpy as np
+
+    lo, hi = edges[0], edges[-1]
     # Predictions outside the window are clipped INTO the edge bins so no column
-    # loses mass before normalisation; the curve below uses unclipped values.
-    H, _, _ = np.histogram2d(t, np.clip(p, lo, hi), bins=(edges, edges))
-    ok = H.sum(axis=1) >= min_count
-    dens = np.full_like(H, np.nan)
-    dens[ok] = H[ok] / np.maximum(H[ok].max(axis=1, keepdims=True), 1.0)
-    im = ax.imshow(dens.T, origin="lower", extent=(lo, hi, lo, hi),
+    # loses mass before normalisation. Every statistic elsewhere uses unclipped
+    # values, so this affects the picture only.
+    joint, _, _ = np.histogram2d(target, np.clip(pred, lo, hi),
+                                 bins=(edges, edges))
+    populated = joint.sum(axis=1) >= min_count
+    density = np.full_like(joint, np.nan)
+    density[populated] = joint[populated] / np.maximum(
+        joint[populated].max(axis=1, keepdims=True), 1.0)
+
+    # .T because histogram2d indexes [x, y] while imshow wants [row, col].
+    im = ax.imshow(density.T, origin="lower", extent=(lo, hi, lo, hi),
                    aspect="auto", cmap="viridis", interpolation="nearest")
     plt.colorbar(im, ax=ax, label="P(prediction | target)", pad=0.02,
                  fraction=0.046)
 
-    # Binned on the PREDICTION, so the binning variable is the Y axis — hence
-    # fill_betweenx and the (value, centre) argument order in every plot call.
-    y, avg, p16, p84, rms, cnt = _binned(p, t, s, edges, min_count)
-    ax.fill_betweenx(y, p16, p84, color="#ff2d95", alpha=0.15, zorder=3)
-    ax.plot(p16, y, color="#ff2d95", ls=":", lw=1.5, alpha=0.9, zorder=4,
-            label="±1σ  (p16 / p84 of target)")
-    ax.plot(p84, y, color="#ff2d95", ls=":", lw=1.5, alpha=0.9, zorder=4)
-    ax.plot(avg, y, color="#ff2d95", marker="s", ms=3.5, lw=2.2, zorder=5,
-            label="mean target | prediction")
+
+def _draw_forward_conditional(ax, profile):
+    """Draw mean-prediction-per-target-bin, its ±1σ band, and the y = x line.
+
+    Binned on the TARGET, which is the X axis — so the bin centre is the X
+    coordinate and every prediction statistic is a Y coordinate, and the calls
+    below read in the natural `(bin_center, statistic)` order. This is the same
+    conditioning the column-normalised image behind it uses, so the mean curve
+    lands inside the bright ridge instead of cutting across it.
+    """
+    target_bin = profile.bin_center
+    pink = "#ff2d95"
+
+    ax.fill_between(target_bin, profile.p16, profile.p84,
+                    color=pink, alpha=0.15, zorder=3)
+    ax.plot(target_bin, profile.p16, color=pink, ls=":", lw=1.5, alpha=0.9,
+            zorder=4, label="±1σ  (p16 / p84 of prediction)")
+    ax.plot(target_bin, profile.p84, color=pink, ls=":", lw=1.5, alpha=0.9,
+            zorder=4)
+    ax.plot(target_bin, profile.mean, color=pink, marker="s", ms=3.5, lw=2.2,
+            zorder=5, label="mean prediction | target")
+
+    lo, hi = ax.get_xlim()
     ax.plot([lo, hi], [lo, hi], color="red", ls="--", lw=2.0, alpha=0.9,
-            zorder=6, label="y = x  (ideal)")
-
-    # sqrt(count) weights so the sparse high-prediction bins do not drive the fit.
-    slope = float(np.polyfit(avg, y, 1, w=np.sqrt(cnt))[0]) if y.size > 1 \
-        else float("nan")
-    # Half the p16-p84 gap is the measured 1σ. Against the head's own predicted
-    # σ in the same bins, a ratio > 1 means it is over-confident.
-    emp = float(np.median(0.5 * (p84 - p16)))
-    ratio = float("nan") if rms is None \
-        else emp / max(float(np.median(rms)), 1e-12)
-
-    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
-    ax.set_xlabel("target"); ax.set_ylabel("prediction")
-    ax.set_title(f"{channel}   —   slope {slope:.2f}  (ideal 1.00)", fontsize=11)
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
-    return dict(frac_hit=float(hit.mean()), n_hit=int(t.size), slope=slope,
-                sigma=emp, ratio=ratio)
+            zorder=6, label="y = x")
 
 
-def _binned(bin_var, val, extra, edges, min_count):
-    """Per-bin (centre, mean, p16, p84, rms of `extra`, count) of `val`.
+def _conditional_panel(ax, target, pred, channel: str,
+                       n_bins=60, min_count=200):
+    """One channel's conditional-density panel. Returns its stats for printing.
 
-    Bincounts for the moments — they accumulate in float64, which a naive fp32
-    sum over ~1e6 samples per bin would not. One lexsort for the two quantiles,
-    indexed positionally. Bins under `min_count` are dropped, so every returned
-    array is already plot-ready. `extra` (predicted σ) may be None."""
+    Hit detectors only (`target > 0`): the dark population answers a
+    classification question, not a regression one, and is reported as a number
+    instead of a blob.
+
+    Everything on the panel is the FORWARD conditional `prediction | target`:
+    the image is normalised per target-column, and the curve, band and slope are
+    all binned on the target. One conditioning throughout, so the mean curve sits
+    inside the bright ridge rather than cutting across it.
+
+    DO NOT READ THE SLOPE AGAINST 1.00. This direction conditions on a noisy
+    realisation of the target while the net is fitted to `E[y | input]`, so
+    regression attenuation holds the slope below 1 however good the model is;
+    calling the gap to 1.00 "compression" over-accuses the model.
+
+    The reference it IS read against is measured, never claimed. Writing
+    `target = f + ε` and `pred = m`, `Cov(m, t) = Cov(m, f)`, so a perfect
+    conditional mean `m = f` satisfies `Cov(pred, target) = Var(pred)` exactly —
+    at any noise level, with no appeal to the model's own σ. That gives
+
+        expected slope = Var(pred) / Var(target)
+        bias ratio     = Cov(pred, target) / Var(pred)     (ideal 1.00)
+
+    both from measured moments alone.
+
+    MEAN, not median: the mean is what the Gaussian NLL fits the head to, and
+    the conditional is strongly right-skewed in log1p space near zero.
+
+    Only the slope and its expected value reach the title; the rest goes to
+    stdout via the caller.
+    """
     import numpy as np
-    nb = edges.size - 1
-    idx = np.clip(np.digitize(bin_var, edges[1:-1]), 0, nb - 1)
-    cnt = np.bincount(idx, minlength=nb)
-    n = np.maximum(cnt, 1)
-    avg = np.bincount(idx, weights=val, minlength=nb) / n
-    rms = None if extra is None else np.sqrt(
-        np.bincount(idx, weights=extra.astype(np.float64) ** 2, minlength=nb) / n)
 
-    v = val[np.lexsort((val, idx))]
-    start = np.concatenate(([0], np.cumsum(cnt)[:-1]))
-    def q(f):  # positional quantile within each bin's contiguous slice
-        return v[np.minimum(start + (f * np.maximum(cnt - 1, 0)).astype(np.intp),
-                            v.size - 1)]
+    hit = target > 0.0
+    target, pred = target[hit], pred[hit]            # rebind: hits only below
+    if target.size < 10 * n_bins:
+        ax.set_title(f"{channel}: too few hit samples ({target.size})")
+        return None
 
-    k = cnt >= min_count
-    ctr = 0.5 * (edges[:-1] + edges[1:])
-    return (ctr[k], avg[k], q(0.16)[k], q(0.84)[k],
-            None if rms is None else rms[k], cnt[k].astype(np.float64))
+    lo, hi = 0.0, float(np.percentile(target, AXIS_PERCENTILE))
+    edges = np.linspace(lo, hi, n_bins + 1)
+    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
+
+    _draw_column_density(ax, target, pred, edges, min_count)
+    profile = profile_by_bin(key=target, value=pred,
+                             edges=edges, min_count=min_count)
+    _draw_forward_conditional(ax, profile)
+
+    # # sqrt(count) weights so sparse high-target bins do not drive the fit.
+    # slope = float(np.polyfit(profile.bin_center, profile.mean, 1,
+    #                          w=np.sqrt(profile.count))[0]) \
+    #     if profile.bin_center.size > 1 else float("nan")
+    # # Measured moments over every hit sample — no windowing, no binning, and
+    # # nothing the model asserts about itself. See the docstring for the identity.
+    # t64, p64 = target.astype(np.float64), pred.astype(np.float64)
+    # var_t, var_p = float(np.var(t64)), float(np.var(p64))
+    # cov = float(np.mean((t64 - t64.mean()) * (p64 - p64.mean())))
+    # expected_slope = var_p / max(var_t, 1e-12)
+    # bias_ratio = cov / max(var_p, 1e-12)
+    # Half the p16-p84 gap: the spread of the model's output at a fixed truth.
+    band_sigma = float(np.median(0.5 * (profile.p84 - profile.p16)))
+
+    ax.set_xlabel("target"); ax.set_ylabel("prediction")
+    ax.set_title(channel, fontsize=11)
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    return dict(hit_frac=float(hit.mean()), n_hit=int(target.size),
+                band_sigma=band_sigma)
+
+
+Channel = namedtuple("Channel", "tag label target pred")
 
 
 def _render_fnn_conditional(fnn, primary, xy, E_true, T_true, val_idx,
                             output_path):
-    """Conditional-density figure, one panel per channel.
+    """Conditional-density figure, one panel per channel, plus its stdout report.
 
     Companion to `_render_fnn_scatter`, which shows the same data as a joint
-    density dominated by the dark-detector population. Uses the σ head when the
-    checkpoint has one."""
-    import numpy as np
-
+    density dominated by the dark-detector population. Needs no variance head:
+    every reference on this figure comes from measured moments (see
+    `_conditional_panel`), so it renders identically for a mean-only checkpoint.
+    The predicted σ is tested in fnn_*_calibration.png instead."""
     p, x = primary[val_idx], xy[val_idx]
-    E_p, T_p = (a.flatten().numpy() for a in fnn_predict(fnn, p, x))
-    E_s, T_s = (a.flatten().numpy() for a in fnn_predict_sigma(fnn, p, x)) \
-        if hasattr(fnn, "forward_var") else (None, None)
-    E_t = E_true[val_idx].flatten().numpy()
+    E_pred, T_pred = (a.flatten().numpy() for a in fnn_predict(fnn, p, x))
+    channels = (
+        Channel("E", "log1p(E)", E_true[val_idx].flatten().numpy(), E_pred),
+        Channel("T", "log1p(T·1e8)", T_true[val_idx].flatten().numpy(), T_pred),
+    )
 
-    panels = (("E", "log1p(E)", E_t, E_p, E_s),
-              ("T", "log1p(T·1e8)", T_true[val_idx].flatten().numpy(), T_p, T_s))
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
-    stats = {tag: _conditional_panel(ax, tt, pp, ss, lab)
-             for ax, (tag, lab, tt, pp, ss) in zip(axes, panels)}
+    stats = {ch.tag: _conditional_panel(ax, ch.target, ch.pred, ch.label)
+             for ax, ch in zip(axes, channels)}
 
-    hit_txt = f"{100 * stats['E']['frac_hit']:.0f}% of " if stats["E"] else ""
+    n_samples = channels[0].target.size
+    hit_txt = f"{100 * stats['E']['hit_frac']:.0f}% of " if stats["E"] else ""
     fig.suptitle(f"Deepsets conditional density — hit detectors "
-                 f"({hit_txt}{E_t.size:,})", fontsize=12)
+                 f"({hit_txt}{n_samples:,})", fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(output_path, dpi=130)
     plt.close(fig)
     print(f"[save] {output_path}")
 
-    # Dark/lit split as the classification it is, at the count>=1 cut
-    # LAYOUT_THRESHOLD gates the trigger on (E only — meaningless for a time).
-    lt, lp = E_t >= np.log1p(1.0), E_p >= np.log1p(1.0)
-    print(f"       [E, count>=1] true lit {100 * lt.mean():.2f}%  pred lit "
-          f"{100 * lp.mean():.2f}%  agree {100 * (lt == lp).mean():.2f}%  "
-          f"recall {100 * (lp & lt).sum() / max(lt.sum(), 1):.2f}%")
+    _print_conditional_stats(stats, channels[0].target, E_pred)
+
+
+def _print_conditional_stats(stats, E_target, E_pred):
+    """Everything computed for the figure that did not earn ink on it."""
+    import numpy as np
+
+    # The dark/lit split as the classification it is, at the count >= 1 cut that
+    # LAYOUT_THRESHOLD gates the trigger on. E only — a count threshold is
+    # meaningless for a time.
+    cut = np.log1p(1.0)
+    true_lit, pred_lit = E_target >= cut, E_pred >= cut
+    print(f"       [E, count>=1] true lit {100 * true_lit.mean():.2f}%  "
+          f"pred lit {100 * pred_lit.mean():.2f}%  "
+          f"agree {100 * (true_lit == pred_lit).mean():.2f}%  "
+          f"recall {100 * (pred_lit & true_lit).sum() / max(true_lit.sum(), 1):.2f}%")
+
     for tag, st in stats.items():
-        if st:
-            print(f"       [{tag}] hit {100 * st['frac_hit']:.2f}% "
-                  f"(n={st['n_hit']:,})  slope {st['slope']:.3f} (ideal 1.000)  "
-                  f"1σ band {st['sigma']:.3f}  band/predicted-σ "
-                  f"{st['ratio']:.2f}")
+        if st is None:
+            continue
+        print(f"       [{tag}] hit {100 * st['hit_frac']:.2f}% "
+              f"(n={st['n_hit']:,})  1σ band {st['band_sigma']:.3f}")
 
 
 @torch.no_grad()
