@@ -4,6 +4,8 @@ Chronological record of the six detector-optimization pipelines in this repo. No
 
 All paths are relative to the repo root unless stated otherwise. For the local README of each version, see the corresponding folder.
 
+**Note:** `master` now carries only the v6 pipeline, flattened to the repo root (no more `detector_optimization_v6/` wrapper folder) — v6 is self-contained (the handful of v3/v4 files it depended on are vendored into `modules_v6/legacy_core/`). The `detector_optimization`, `_v2`, `_v3`, `_v4`, and `_v5` folders described below, along with their full history, live on the `legacy-full-repo` git branch.
+
 ---
 
 ## Summary of the arc
