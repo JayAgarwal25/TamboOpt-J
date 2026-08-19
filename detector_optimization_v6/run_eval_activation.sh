@@ -1,9 +1,10 @@
 #!/bin/bash
-#SBATCH -p gpu_test
+#SBATCH -p gpu_requeue
 #SBATCH --mem=20g
 #SBATCH --time=02:00:00
 #SBATCH -c 8
 #SBATCH --gres=gpu:1
+#SBATCH --constraint=a100
 #SBATCH -J run_eval_activation
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 

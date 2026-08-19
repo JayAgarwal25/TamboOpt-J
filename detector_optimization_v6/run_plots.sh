@@ -15,7 +15,9 @@ conda deactivate
 
 conda activate multiproc_env
 
-python -u plots/02_plot_nn_target_vs_pred.py --dual
+# python -u plots/02_plot_nn_target_vs_pred.py --dual
+
+python -u plots/05_paper_figures.py
 
 # mp4 by default: GIF caps at 50 fps. Needs imageio-ffmpeg.
 # python -u plots/04_plot_trajectory_gif.py
