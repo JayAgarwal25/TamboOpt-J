@@ -408,7 +408,8 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
                          mountain, path: str,
                          bins: int = 60, surface=None, vmax=None,
                          member_word: str = "run",
-                         count_word: str = "K", count_suffix: str = " runs"):
+                         count_word: str = "K", count_suffix: str = " runs",
+                         fig_w: float = 14.0, dpi: int = 110, formats=("png",)):
     """2D density of detector placements across the ensemble, on the cliff face.
 
     With `surface` each detector is lifted onto the mountain via Up = g(North,
@@ -417,7 +418,10 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
     (North, East) map view is drawn. `vmax` pins the colorbar to [0, vmax] so faint
     structure isn't squashed by a few hot cells; None auto-scales.
     `member_word`/`count_word`/`count_suffix` set the colorbar + title wording per
-    optimizer."""
+    optimizer. `fig_w`/`dpi` are exposed (default unchanged: 14 in / 110 dpi) so a
+    caller like 05_paper_figures.py can draw at a different canvas size — paired
+    with the FS_* module constants above, which it also overrides — without
+    touching this function's own screen-tuned defaults."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -433,8 +437,7 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
                 surface, np.asarray(best_x), np.asarray(best_y), frame)
             mtn_x, mtn_y = enu_to_face(mountain_enu(mountain), frame)
             xlab, ylab = "along-strike [m]", "up-dip [m]"
-            sub = (f"cliff face — dip {dip_deg(frame[3]):.1f}°, "
-                   f"out-of-plane σ={frame[4]:.0f} m")
+            sub = f"dip {dip_deg(frame[3]):.1f}°, σ={frame[4]:.0f} m"
         else:
             # Body below is written x=North, y=East; reorder once here.
             aligned_xy = np.stack([aligned_xy[..., 1], aligned_xy[..., 0]], axis=-1)
@@ -476,7 +479,6 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         H = np.ma.masked_array(H, mask=~mask)
 
         data_ar = (extent[3] - extent[2]) / (extent[1] - extent[0])
-        fig_w = 14.0
         fig, ax = plt.subplots(figsize=(fig_w, max(fig_w * data_ar + 1.2, 3.0)))
         cmap = plt.cm.magma.copy()
         cmap.set_bad(alpha=0.0)
@@ -499,13 +501,16 @@ def plot_density_heatmap(aligned_xy: np.ndarray,
         ax.set_xlabel(xlab, fontsize=FS_LABEL)
         ax.set_ylabel(ylab, fontsize=FS_LABEL)
         ax.tick_params(labelsize=FS_TICK)
-        title = (f"detector placement density ({count_word}={K}{count_suffix}, "
-                 f"{bins}×{bins} bins) + best-U layout")
+        title = f"Placement density ({count_word}={K}{count_suffix})"
         ax.set_title(title + (f"\n{sub}" if sub else ""), fontsize=FS_TITLE)
-        ax.legend(loc="upper right", fontsize=FS_LEGEND)
-        fig.savefig(path, dpi=110, bbox_inches="tight")
+        fig.legend(*ax.get_legend_handles_labels(), loc="lower center",
+                  fontsize=FS_LEGEND, ncol=1, bbox_to_anchor=(0.5, -0.02))
+        base, ext = os.path.splitext(path)
+        for fmt in (formats or (ext.lstrip(".") or "png",)):
+            out = f"{base}.{fmt}"
+            fig.savefig(out, dpi=dpi, bbox_inches="tight")
+            print(f"[plot] wrote {out}")
         plt.close(fig)
-        print(f"[plot] wrote {path}")
     except Exception as exc:
         print(f"[plot] density heatmap skipped ({exc!r})")
 

@@ -32,6 +32,9 @@ exactly as 03_train_recon.py does. Outputs:
     FNN_FOLDER/fnn_<species>_conditional.png    P(pred | target), hit-only
     FNN_FOLDER/fnn_<species>_calibration.png    predicted σ vs realised error
     RECON_FOLDER_deepsets/recon_target_vs_pred.png
+    RECON_FOLDER_deepsets/recon_conditional.png     P(pred | target), same
+                                                     treatment as the FNN's,
+                                                     over the recon's 4 channels
 
 `*_conditional.png` is the one to read for surrogate quality. The joint hexbin in
 `*_target_vs_pred.png` is dominated by the dark-detector population (target = 0)
@@ -52,6 +55,25 @@ _V6_DIR = os.path.dirname(_HERE)
 if _V6_DIR not in sys.path:
     sys.path.insert(0, _V6_DIR)
 
+# Font sizes, externalized (same convention as plots/opt_plotting.py's FS_*) so a
+# caller can override them before rendering — e.g. 05_paper_figures.py scales
+# these up before calling in, to compensate for the large figsize LaTeX shrinks
+# back down to a fraction of \textwidth.
+FS_PANEL_TITLE      = 11   # _conditional_panel's per-channel title
+FS_LEGEND           = 8    # _scatter / _conditional_panel legends
+FS_LEGEND_DENSE     = 7    # _calibration_panel legend (denser figure)
+FS_SUPTITLE         = 12   # _render_fnn_conditional / _render_fnn_calibration suptitles
+FS_SUPTITLE_SCATTER = 13   # _render_fnn_scatter / _render_recon_scatter suptitles
+
+# Figsizes, externalized the same way — 05_paper_figures.py overrides these
+# module globals (not the figsize= defaults baked into each function) before
+# calling in, so the drawn canvas can shrink or grow for the paper without
+# editing the render functions themselves.
+FIGSIZE_CONDITIONAL = (13, 5.6)    # _render_fnn_conditional
+FIGSIZE_CALIBRATION = (7.5, 10)    # _render_fnn_calibration
+FIGSIZE_SCATTER      = (10, 4.8)   # _render_fnn_scatter
+FIGSIZE_RECON        = (10, 10.6)  # _render_recon_scatter (2x2 grid)
+
 import torch
 import matplotlib
 matplotlib.use("Agg")
@@ -67,6 +89,24 @@ from modules_v6.reconstruction import build_recon_from_ckpt
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _savefig_multi(fig, output_path, dpi=130, formats=("png",)):
+    """Save `fig` under `output_path`'s basename once per extension in
+    `formats` (default: just whatever extension `output_path` already has,
+    unchanged behaviour for training-script callers). `05_paper_figures.py`
+    passes `formats=("png", "pdf")` so every paper figure ships as a
+    print-ready vector PDF alongside the PNG used for quick preview; hexbin
+    and imshow content still rasterizes fine inside a PDF (embedded as a
+    compressed image XObject, not per-point vector paths), so this doesn't
+    bloat file size for the density-heavy figures."""
+    base, ext = os.path.splitext(output_path)
+    if not formats:
+        formats = (ext.lstrip(".") or "png",)
+    for fmt in formats:
+        path = f"{base}.{fmt}"
+        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        print(f"[save] {path}")
 
 # 03_train_recon_deepsets.py writes to RECON_FOLDER + "_deepsets" (its line 50),
 # not RECON_FOLDER — that plain folder only exists for the older flat-MLP
@@ -107,7 +147,7 @@ def shower_level_val_idx(strategy_ids: torch.Tensor,
     return torch.nonzero(val_mask).squeeze(-1)
 
 
-def _scatter(ax, x, y, title: str, vmin=None, vmax=None, lo=None, hi=None):
+def _scatter(ax, x, y, title: str, vmin=None, vmax=None, lo=None, hi=None, legend: bool = True):
     """Density-coloured target-vs-prediction panel.
 
     Hexbin on a LINEAR colour scale clipped at the p95 occupied bin. Plain
@@ -139,10 +179,11 @@ def _scatter(ax, x, y, title: str, vmin=None, vmax=None, lo=None, hi=None):
     ax.set_xlabel("target"); ax.set_ylabel("prediction")
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
     ax.set_title(title)
-    ax.legend(loc="upper left", fontsize=8, framealpha=1)
+    if legend:
+        ax.legend(loc="upper left", fontsize=FS_LEGEND, framealpha=1)
 
 
-def _calibration_panel(ax, sigma, err, channel: str):
+def _calibration_panel(ax, sigma, err, channel: str, legend: bool = True):
     """Predicted uncertainty vs realised error, as a 2σ-vs-|error| density, in
     the z-scored space the network is trained in.
 
@@ -207,9 +248,17 @@ def _calibration_panel(ax, sigma, err, channel: str):
     ax.set_xlim(0, hi); ax.set_ylim(0, hi)
     ax.set_xlabel("2σ  (predicted, z-scored)")
     ax.set_ylabel("|prediction − target|  (z-scored)")
-    ax.set_title(f"{channel}: within 2σ — actual {100 * cover:.1f}%, "
-                 f"expected 95.4%")
-    ax.legend(loc="upper left", fontsize=7, framealpha=1)
+    # `pad` scaled with the active title fontsize (matplotlib's own default,
+    # ~6pt, doesn't scale with fontsize) -- in the stacked 2-panel figure this
+    # is what keeps the lower panel's title clear of the upper panel's
+    # xlabel; subplot/tight_layout spacing knobs didn't move this at all.
+    title_fs = matplotlib.rcParams.get("axes.titlesize", 12)
+    if not isinstance(title_fs, (int, float)):
+        title_fs = matplotlib.rcParams["font.size"]
+    ax.set_title(f"{channel}: 2σ cov. {100 * cover:.1f}% (exp. 95.4%)",
+                pad=1.8 * title_fs)
+    if legend:
+        ax.legend(loc="upper left", fontsize=FS_LEGEND_DENSE, framealpha=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -335,12 +384,20 @@ def _draw_forward_conditional(ax, profile):
 
 
 def _conditional_panel(ax, target, pred, channel: str,
-                       n_bins=60, min_count=200):
+                       n_bins=60, min_count=200, legend: bool = True,
+                       hit_only: bool = True, lo=None, hi=None):
     """One channel's conditional-density panel. Returns its stats for printing.
 
-    Hit detectors only (`target > 0`): the dark population answers a
-    classification question, not a regression one, and is reported as a number
-    instead of a blob.
+    Hit detectors only (`target > 0`) WHEN `hit_only` is set — the default, for
+    the FNN's E/T channels, where most detector-samples are exactly dark and
+    that population answers a classification question, not a regression one, so
+    it is reported as a number instead of a blob. Pass `hit_only=False` for a
+    densely-populated target (e.g. the recon's continuous primary channels),
+    where every sample is a regression sample and none should be dropped.
+
+    `lo`/`hi` fix the axis window explicitly (recon channels don't share one
+    range — dir_z spans [0, 0.5] against dir_x/y/log_e_norm's [0, 1]). Left
+    None, the window is `[0, p99.9(target)]`, the FNN's original default.
 
     Everything on the panel is the FORWARD conditional `prediction | target`:
     the image is normalised per target-column, and the curve, band and slope are
@@ -370,13 +427,18 @@ def _conditional_panel(ax, target, pred, channel: str,
     """
     import numpy as np
 
-    hit = target > 0.0
-    target, pred = target[hit], pred[hit]            # rebind: hits only below
+    if hit_only:
+        keep = target > 0.0
+        target, pred = target[keep], pred[keep]       # rebind: hits only below
+        hit_frac = float(keep.mean())
+    else:
+        hit_frac = 1.0
     if target.size < 10 * n_bins:
-        ax.set_title(f"{channel}: too few hit samples ({target.size})")
+        ax.set_title(f"{channel}: too few samples ({target.size})")
         return None
 
-    lo, hi = 0.0, float(np.percentile(target, AXIS_PERCENTILE))
+    lo = 0.0 if lo is None else lo
+    hi = float(np.percentile(target, AXIS_PERCENTILE)) if hi is None else hi
     edges = np.linspace(lo, hi, n_bins + 1)
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
 
@@ -400,9 +462,10 @@ def _conditional_panel(ax, target, pred, channel: str,
     band_sigma = float(np.median(0.5 * (profile.p84 - profile.p16)))
 
     ax.set_xlabel("target"); ax.set_ylabel("prediction")
-    ax.set_title(channel, fontsize=11)
-    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
-    return dict(hit_frac=float(hit.mean()), n_hit=int(target.size),
+    ax.set_title(channel, fontsize=FS_PANEL_TITLE)
+    if legend:
+        ax.legend(loc="upper left", fontsize=FS_LEGEND, framealpha=0.9)
+    return dict(hit_frac=hit_frac, n_hit=int(target.size),
                 band_sigma=band_sigma)
 
 
@@ -410,7 +473,7 @@ Channel = namedtuple("Channel", "tag label target pred")
 
 
 def _render_fnn_conditional(fnn, primary, xy, E_true, T_true, val_idx,
-                            output_path):
+                            output_path, formats=("png",)):
     """Conditional-density figure, one panel per channel, plus its stdout report.
 
     Companion to `_render_fnn_scatter`, which shows the same data as a joint
@@ -425,18 +488,25 @@ def _render_fnn_conditional(fnn, primary, xy, E_true, T_true, val_idx,
         Channel("T", "log1p(T·1e8)", T_true[val_idx].flatten().numpy(), T_pred),
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
-    stats = {ch.tag: _conditional_panel(ax, ch.target, ch.pred, ch.label)
+    fig, axes = plt.subplots(1, 2, figsize=FIGSIZE_CONDITIONAL)
+    stats = {ch.tag: _conditional_panel(ax, ch.target, ch.pred, ch.label, legend=False)
              for ax, ch in zip(axes, channels)}
 
     n_samples = channels[0].target.size
     hit_txt = f"{100 * stats['E']['hit_frac']:.0f}% of " if stats["E"] else ""
-    fig.suptitle(f"Deepsets conditional density — hit detectors "
-                 f"({hit_txt}{n_samples:,})", fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
-    fig.savefig(output_path, dpi=130)
+    fig.suptitle(f"Conditional density ({hit_txt}{n_samples:,})", fontsize=FS_SUPTITLE)
+    handles, labels = next(
+        (ax.get_legend_handles_labels() for ax in axes if ax.get_legend_handles_labels()[1]),
+        ([], []))
+    if labels:
+        fig.legend(handles, labels, loc="lower center", fontsize=FS_LEGEND,
+                  ncol=len(labels), bbox_to_anchor=(0.5, -0.1))
+    # rect's bottom=0.1 leaves headroom below the axes' own xlabel ("target")
+    # for the legend two lines below it; bbox_to_anchor alone isn't enough --
+    # tight_layout has no idea a legend exists outside the axes it's fitting.
+    fig.tight_layout(rect=(0, 0.1, 1, 0.92))
+    _savefig_multi(fig, output_path, dpi=130, formats=formats)
     plt.close(fig)
-    print(f"[save] {output_path}")
 
     _print_conditional_stats(stats, channels[0].target, E_pred)
 
@@ -481,7 +551,7 @@ def fnn_predict_sigma(fnn, primary: torch.Tensor, xy: torch.Tensor):
 
 
 def _render_fnn_calibration(fnn, primary, xy, E_true, T_true, val_idx,
-                            output_path):
+                            output_path, formats=("png",)):
     """Uncertainty-calibration figure for one surrogate: one panel per channel.
 
     Drawn in the Z-SCORED space the network is actually trained in. The logvar
@@ -512,18 +582,24 @@ def _render_fnn_calibration(fnn, primary, xy, E_true, T_true, val_idx,
     E_sig = (E_s.flatten().numpy()) / E_std
     T_sig = (T_s.flatten().numpy()) / T_std
 
-    fig, axes = plt.subplots(2, 1, figsize=(7.5, 10))
-    _calibration_panel(axes[0], E_sig, E_err, "log1p(E)  [z]")
-    _calibration_panel(axes[1], T_sig, T_err, "log1p(T·1e8)  [z]")
-    # Three lines: the single-column layout is far too narrow for this on one
-    # row, and a clipped suptitle loses the sample count. `rect` reserves the
-    # headroom tight_layout would otherwise hand to the top panel.
-    fig.suptitle("Deepsets predicted σ vs realised error\n"
-                 f"N={E_err.size:,} detector-samples", fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig(output_path, dpi=130)
+    fig, axes = plt.subplots(2, 1, figsize=FIGSIZE_CALIBRATION)
+    _calibration_panel(axes[0], E_sig, E_err, "log1p(E)  [z]", legend=False)
+    _calibration_panel(axes[1], T_sig, T_err, "log1p(T·1e8)  [z]", legend=False)
+    fig.suptitle(f"Predicted σ vs error (N={E_err.size:,})", fontsize=FS_SUPTITLE)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", fontsize=FS_LEGEND_DENSE,
+              ncol=2, bbox_to_anchor=(0.5, -0.12))
+    # `rect` top=0.94 reserves headroom for the suptitle; bottom=0.1 reserves
+    # headroom below the lower panel's own xlabel for the legend two rows
+    # below it (bbox_to_anchor alone doesn't -- tight_layout has no idea a
+    # legend exists outside the axes it's fitting).
+    fig.tight_layout(rect=(0, 0.1, 1, 0.94))
+    # tight_layout's own h_pad is only advisory and empirically does nothing
+    # here -- subplots_adjust after it is what actually forces a bigger gap,
+    # which the lower panel's title needs to clear the upper panel's xlabel.
+    fig.subplots_adjust(hspace=0.6)
+    _savefig_multi(fig, output_path, dpi=130, formats=formats)
     plt.close(fig)
-    print(f"[save] {output_path}")
     # z-scored, matching the figure and the NLL loss. mean(err^2/var) is the
     # quantity the NLL balances: 1.0 is calibrated, >1 over-confident.
     E_r = float((E_err ** 2 / np.maximum(E_sig ** 2, 1e-30)).mean())
@@ -617,7 +693,8 @@ def load_species_fnn(species: str):
 
 
 def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path,
-                        vmin_E=10, vmax_E=4000, vmin_T=10, vmax_T=2500):
+                        vmin_E=10, vmax_E=4000, vmin_T=10, vmax_T=2500,
+                        formats=("png",)):
     """Pure rendering — no I/O for models or corpus. Caller supplies a loaded
     FNN in eval mode plus the in-memory tensors. T_true must already be
     log1p(T*1e8)-transformed (matching what the FNN was trained against).
@@ -628,30 +705,60 @@ def _render_fnn_scatter(fnn, primary, xy, E_true, T_true, val_idx, output_path,
     T_t = T_true[val_idx]
     E_p, T_p = fnn_predict(fnn, p, x)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.8))
+    fig, axes = plt.subplots(1, 2, figsize=FIGSIZE_SCATTER)
     _scatter(axes[0], E_t.flatten().numpy(), E_p.flatten().numpy(),
              f"log1p(E)",
-             vmin=vmin_E, vmax=vmax_E)
+             vmin=vmin_E, vmax=vmax_E, legend=False)
     _scatter(axes[1], T_t.flatten().numpy(), T_p.flatten().numpy(),
              f"log1p(T·1e8)",
-             vmin=vmin_T, vmax=vmax_T)
-    fig.suptitle(f"Deepsets target vs prediction\n N={T_t.numel():,} detector-samples", fontsize=13)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=130)
+             vmin=vmin_T, vmax=vmax_T, legend=False)
+    fig.suptitle(f"Target vs prediction (N={T_t.numel():,})", fontsize=FS_SUPTITLE_SCATTER)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", fontsize=FS_LEGEND,
+              ncol=len(labels), bbox_to_anchor=(0.5, -0.08))
+    # bottom=0.08 leaves headroom below the axes' own xlabel for the legend
+    # -- tight_layout does not know a legend sits outside the axes it fits.
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    _savefig_multi(fig, output_path, dpi=130, formats=formats)
     plt.close(fig)
-    print(f"[save] {output_path}")
 
 
-def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
-    """Pure rendering — caller supplies both nets (eval mode) and the
-    in-memory primary/xy tensors. Recon target is `primary[val_idx, :4]`."""
+# Shared by every recon render: (label, axis lo, axis hi) per primary channel.
+# dir_x/dir_y are direction cosines and span [-1, 1]; dir_z spans [-0.5, 0.5]
+# (half the others' -- see place_clouds_enu / the v6 primary encoding for why).
+# log_e_norm's TARGET is bounded to [0, 1] BY CONSTRUCTION (encode_primary's
+# (log10(E) - LOG_E_MIN)/(LOG_E_MAX - LOG_E_MIN)), so its window is [0, 1] too --
+# unlike dir_x/y/z, [0, 1] is log_e_norm's real physical range, not an
+# arbitrary choice. The PREDICTION still overshoots slightly past both ends
+# (measured down to about -0.5); that overshoot is real model behaviour and
+# is worth its own diagnostic, but is deliberately NOT what sets this axis --
+# widening the window to fit an overshooting prediction would treat the
+# window as "whatever the model happened to output" rather than the channel's
+# actual domain, which is the same mistake the original lo=0.0-everywhere
+# version made in the other direction.
+#
+# An earlier version of this tuple used lo=0.0 for dir_x/y/z too, copied from
+# the pre-existing (also wrong) implicit lo=0 in the plain scatter's hexbin
+# calls below -- that silently dropped every negative-target/prediction point
+# (hexbin ignores anything outside its extent), invisible as whitespace in a
+# scatter but a false bright spike in the conditional panel, whose column
+# density clips out-of-window values into the edge bin instead of dropping
+# them. Measured fractions of negative PREDICTIONS at that old lo=0 window:
+# dir_x 63.8%, dir_z 33.7%, log_e_norm 7.4%, dir_y 3.1% of N=572,165 -- real
+# recon outputs in a real negative-valued domain (dir_x/y/z), not a defect.
+RECON_CHANNELS = (("dir_x", -1.0, 1.0), ("dir_y", -1.0, 1.0),
+                  ("dir_z", -0.5, 0.5), ("log_e_norm", 0.0, 1.0))
+
+
+def _recon_target_pred(fnn, recon, primary, xy, val_idx):
+    """(target, pred, N) for the recon channels — the shared data prep behind
+    every recon figure. Target = v6 primary encoding [dir_x, dir_y, dir_z,
+    log_e_norm] in raw units; recon runs on FNN-PREDICTED (E, T), not ground
+    truth, same as 04_optimize, so this reflects the end-to-end FNN -> recon
+    error."""
     p = primary[val_idx]
     x = xy[val_idx]
-
-    # Recon sees FNN predictions, not ground-truth (E, T) — same as 04_optimize.
     E_pred, T_pred = fnn_predict(fnn, p, x)
-
-    # Target = v6 primary encoding [dir_x, dir_y, dir_z, log_e_norm] in raw units.
     target = p[:, :4].float()
 
     N = p.shape[0]
@@ -664,21 +771,62 @@ def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path):
             T_b  = T_pred[lo:hi].to(DEVICE)
             feats = torch.stack([xy_b[..., 0], xy_b[..., 1], E_b, T_b], dim=-1)  # (B, n_det, 4)
             pred[lo:hi] = recon(feats).cpu()                                     # DeepSets recon takes (B, n_det, 4)
+    return target, pred, N
 
-    labels = ("dir_x", "dir_y", "dir_z", "log_e_norm")
+
+def _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path, formats=("png",)):
+    """Pure rendering — caller supplies both nets (eval mode) and the
+    in-memory primary/xy tensors. Recon target is `primary[val_idx, :4]`."""
+    target, pred, N = _recon_target_pred(fnn, recon, primary, xy, val_idx)
+
     vmin_s = (1, 1, 1, 1)
     # vmax_s = (100, 100, 100, 200)
     vmax_s = (80, 200, 200, 200)
     # vmax_s = (200, 300, 300, 500)
-    hi = (1, 1, 0.5, 1)
-    fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
-    for i, name in enumerate(labels):
-        _scatter(axes[i], target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}", vmin=vmin_s[i], vmax=vmax_s[i], hi=hi[i]) # TODO
-    fig.suptitle(f"Recon target vs prediction — val split  (N={N:,})", fontsize=13)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=130)
+    # 2x2, not 1x4: four panels side by side left each column too narrow at
+    # print size for its own title next to the suptitle above it.
+    fig, axes = plt.subplots(2, 2, figsize=FIGSIZE_RECON)
+    for ax, i, (name, lo, hi) in zip(axes.flat, range(4), RECON_CHANNELS):
+        _scatter(ax, target[:, i].numpy(), pred[:, i].numpy(), f"Recon  {name}",
+                vmin=vmin_s[i], vmax=vmax_s[i], lo=lo, hi=hi, legend=False)
+    fig.suptitle(f"Recon: target vs prediction (N={N:,})", fontsize=FS_SUPTITLE_SCATTER)
+    handles, labels_leg = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels_leg, loc="lower center", fontsize=FS_LEGEND,
+              ncol=len(labels_leg), bbox_to_anchor=(0.5, -0.04))
+    # top=0.94 reserves headroom for the suptitle above the top row's own
+    # panel titles; bottom=0.06 leaves headroom below the bottom row's xlabel
+    # for the legend -- tight_layout does not know a legend sits outside the
+    # axes it fits, nor does it budget for the suptitle unless told to.
+    fig.tight_layout(rect=(0, 0.06, 1, 0.94))
+    _savefig_multi(fig, output_path, dpi=130, formats=formats)
     plt.close(fig)
-    print(f"[save] {output_path}")
+
+
+def _render_recon_conditional(fnn, recon, primary, xy, val_idx, output_path,
+                              formats=("png",)):
+    """Conditional-density companion to `_render_recon_scatter`, same
+    peak-scaled-column-density + mean/±1σ-band treatment as
+    `_render_fnn_conditional` (see `_conditional_panel`), applied to the 4
+    recon channels instead of the FNN's E/T.
+
+    `hit_only=False` throughout: unlike the FNN's per-detector E/T, every recon
+    target here is a dense, continuous primary-encoding value — there is no
+    dark/hit population to split out, so nothing is filtered before binning."""
+    target, pred, N = _recon_target_pred(fnn, recon, primary, xy, val_idx)
+
+    fig, axes = plt.subplots(2, 2, figsize=FIGSIZE_RECON)
+    for ax, i, (name, lo, hi) in zip(axes.flat, range(4), RECON_CHANNELS):
+        _conditional_panel(ax, target[:, i].numpy(), pred[:, i].numpy(),
+                           f"Recon  {name}", legend=False,
+                           hit_only=False, lo=lo, hi=hi)
+    fig.suptitle(f"Recon: conditional density (N={N:,})",
+                fontsize=FS_SUPTITLE_SCATTER)
+    handles, labels_leg = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels_leg, loc="lower center", fontsize=FS_LEGEND,
+              ncol=len(labels_leg), bbox_to_anchor=(0.5, -0.04))
+    fig.tight_layout(rect=(0, 0.06, 1, 0.94))
+    _savefig_multi(fig, output_path, dpi=130, formats=formats)
+    plt.close(fig)
 
 
 def _load_corpus():
@@ -746,7 +894,8 @@ def plot_recon_only(*, fnn=None, recon=None,
                     primary=None, xy=None,
                     val_idx=None,
                     output_path=None,
-                    recon_folder=RECON_DEEPSETS_FOLDER):
+                    recon_folder=RECON_DEEPSETS_FOLDER,
+                    formats=("png",)):
     """Render recon_target_vs_pred.png. Like `plot_fnn_only`, every argument
     is optional. Training-script callers (03_train_recon.py) pass fnn +
     recon (best weights reloaded) + primary + xy + val_idx; no disk I/O for
@@ -772,7 +921,11 @@ def plot_recon_only(*, fnn=None, recon=None,
     if output_path is None:
         os.makedirs(recon_folder, exist_ok=True)
         output_path = os.path.join(recon_folder, "recon_target_vs_pred.png")
-    _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path)
+    _render_recon_scatter(fnn, recon, primary, xy, val_idx, output_path, formats=formats)
+    base, ext = os.path.splitext(output_path)
+    _render_recon_conditional(
+        fnn, recon, primary, xy, val_idx,
+        base.replace("target_vs_pred", "conditional") + ext, formats=formats)
 
 
 # Per-species hexbin colour (count) limits for the dual FNN scatters:
@@ -823,7 +976,7 @@ def plot_fnn_dual(output_dir=None):
             print(f"[skip] {tag}: no forward_var (not a mean+variance head)")
 
 
-def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER):
+def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER, formats=("png",)):
     """Recon scatter for the dual-species surrogate. The combined
     DualSpeciesSurrogate (fnn_electron.pt + fnn_muon.pt) feeds the recon on the
     FULL corpus — identical to 03_train_recon.py. recon.pt itself is a single
@@ -831,7 +984,7 @@ def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER):
     from modules_v6.dual_surrogate import load_dual_surrogate
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
     plot_recon_only(fnn=dual, output_path=output_path,
-                    recon_folder=recon_folder)
+                    recon_folder=recon_folder, formats=formats)
 
 
 def main():
