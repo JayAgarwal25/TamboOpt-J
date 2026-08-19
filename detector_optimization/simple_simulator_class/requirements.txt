@@ -1,8 +1,0 @@
-h5py
-numpy
-pandas
-matplotlib
-scipy
-tqdm
-jupyter 
-ipywidgets
