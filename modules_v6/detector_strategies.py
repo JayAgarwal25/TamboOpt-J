@@ -111,20 +111,42 @@ def layout_latin_hypercube(mountain, n_det: int = N_DETECTORS, rng=None):
 
 # ── Dataset builder ──────────────────────────────────────────────────────────
 
-# Nine layout strategies; `args` threaded in below.
-_STRATEGIES = [
-    # ("grid_jit20",        "layout_grid",            dict(jitter_sigma=20.0)),
-    # ("grid_jit200",       "layout_grid",            dict(jitter_sigma=200.0)),
-    # ("center_gauss200",   "layout_center_gaussian", dict(sigma=200.0)),
-    ("center_gauss400",   "layout_center_gaussian", dict(sigma=400.0)),
-    # ("rings_R300",        "layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=200.0)),
-    # ("rings_R800",        "layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=200.0)),
-    # ("rings_R1800",       "layout_rings",           dict(outer_radius=1800.0, n_rings=8, jitter_sigma=200.0)),
-    ("uniform_random",    "layout_uniform_random",  dict()),
-    ("uniform_random",    "layout_uniform_random",  dict()),
-    ("latin_hypercube",   "layout_latin_hypercube", dict()),
-    ("latin_hypercube",   "layout_latin_hypercube", dict()),
-]
+# Every layout strategy the builder knows how to run, keyed by the label that
+# shows up in the logs. Which ones a dataset build actually uses is
+# ACTIVE_STRATEGIES below — edit that tuple, not this table.
+_ALL_STRATEGIES = {
+    "grid_jit20":        ("layout_grid",            dict(jitter_sigma=20.0)),
+    "grid_jit200":       ("layout_grid",            dict(jitter_sigma=200.0)),
+    "center_gauss200":   ("layout_center_gaussian", dict(sigma=200.0)),
+    "center_gauss400":   ("layout_center_gaussian", dict(sigma=400.0)),
+    "rings_R300":        ("layout_rings",           dict(outer_radius=300.0,  n_rings=5, jitter_sigma=200.0)),
+    "rings_R800":        ("layout_rings",           dict(outer_radius=800.0,  n_rings=6, jitter_sigma=200.0)),
+    "rings_R1800":       ("layout_rings",           dict(outer_radius=1800.0, n_rings=8, jitter_sigma=200.0)),
+    "uniform_random_a":  ("layout_uniform_random",  dict()),
+    "uniform_random_b":  ("layout_uniform_random",  dict()),
+    "latin_hypercube_a": ("layout_latin_hypercube", dict()),
+    "latin_hypercube_b": ("layout_latin_hypercube", dict()),
+}
+
+# The strategies a dataset build runs, IN ORDER. Position here IS the
+# `strategy_ids` value persisted in the dataset, so reordering or resizing this
+# tuple invalidates every existing dataset and checkpoint — Step 2's
+# `shower_level_split` derives n_showers from `strategy_ids.max() + 1`. Append,
+# never insert.
+#
+# The paired _a/_b entries are deliberate duplicates: same generator, but each
+# gets its own id and draws its own layouts, doubling the random-layout
+# coverage. They used to share a label ("uniform_random" twice, "latin_hypercube"
+# twice), which made two distinct ids indistinguishable in any log.
+ACTIVE_STRATEGIES = (
+    "center_gauss400",
+    "uniform_random_a",
+    "uniform_random_b",
+    "latin_hypercube_a",
+    "latin_hypercube_b",
+)
+
+_STRATEGIES = [(name, *_ALL_STRATEGIES[name]) for name in ACTIVE_STRATEGIES]
 
 _STRATEGY_FNS = {
     "layout_grid":            layout_grid,
