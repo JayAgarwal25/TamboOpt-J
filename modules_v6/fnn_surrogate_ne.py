@@ -1,10 +1,11 @@
 """(North, East) label computation + dataset builder.
 
-v6-local mirror of `compute_labels_batch` and `build_training_pairs` from
-modules_v6/fnn_surrogate.py — diff those two functions against the ones here to
-see the convention change. The signatures and bodies are kept identical except:
+The live label computation + dataset builder. It began as a (North, East) copy
+of the (North, Up) pair in modules_v6/fnn_surrogate.py; those originals have
+since been deleted, so this is now the only implementation. The convention
+differences from the retired (North, Up) version were:
 
-  - `surface` is a `SurfaceUpMap` (North, East)→Up instead of SurfaceEastMap;
+  - `surface` is a `SurfaceUpMap` (North, East)→Up instead of an East map;
   - the kernel's y-coordinate is the *extrapolated* Up = surface(x_det, y_det),
     while `z_cont` comes directly from the **defined** East (= y_det);
   - layouts come from `detector_strategies_ne` (so `xy = (East, North)`, matching
@@ -194,9 +195,9 @@ def build_training_pairs(mountain, surface,
                          resume_every_s:    float = 1800.0):
     """Build (primary, xy, E, T) training tensors from the cached shower corpus.
 
-    Identical to fnn_surrogate.build_training_pairs except layouts/labels use the
-    (North, East) convention (detector_strategies_ne + the NE compute_labels_batch
-    above, with `surface` a SurfaceUpMap). Stored `xy = (North, East)`.
+    Layouts and labels use the (North, East) convention (detector_strategies_ne +
+    the compute_labels_batch above, with `surface` a SurfaceUpMap).
+    Stored `xy = (North, East)`.
 
     **Shower placement.** `place_clouds_enu` puts every cloud at the real ENU decay
     vertex from the Step-0 `<corpus>_positions.pt` sidecar (tau_wholesky.jl); see

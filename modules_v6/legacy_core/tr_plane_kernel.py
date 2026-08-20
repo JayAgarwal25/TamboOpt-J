@@ -33,7 +33,7 @@ def GetCounts_planeaware(
 
     Computes (N_int, T_int) per detector, differentiable w.r.t. x_det, y_det,
     and z_cont (and hence differentiable w.r.t. the learnable North/Up positions
-    via the SurfaceEastMap).
+    via the surface map).
 
     Args:
         samples  : (B, max_points, 5) point-cloud tensor with columns
