@@ -17,7 +17,7 @@ differences from the retired (North, Up) version were:
 
 import os
 import time
-from typing import Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import numpy as np
 import torch
@@ -181,69 +181,34 @@ def compute_labels_batch(clouds:   torch.Tensor,
     return E, T
 
 
-def build_training_pairs(mountain, surface,
-                         shower_cache_path: str,
-                         batch_size:        int = 20,
-                         max_showers:       int = 0,
-                         seed:              int = 0,
-                         device:            torch.device = torch.device("cpu"),
-                         verbose:           bool = True,
-                         east_entry:        float = EAST_ENTRY,
-                         layer_east_dx:     float = LAYER_EAST_DX,
-                         load_chunk:        int = 4096,
-                         resume_path:       Optional[str] = None,
-                         resume_every_s:    float = 1800.0):
-    """Build (primary, xy, E, T) training tensors from the cached shower corpus.
+# ── Dataset builder stages ───────────────────────────────────────────────────
 
-    Layouts and labels use the (North, East) convention (detector_strategies_ne +
-    the compute_labels_batch above, with `surface` a SurfaceUpMap).
-    Stored `xy = (North, East)`.
+class _CorpusMeta(NamedTuple):
+    """Per-shower metadata for the kept rows; clouds are streamed separately."""
+    dirs:      torch.Tensor    # (n_showers, 3) unit tau travel direction E,N,U
+    positions: torch.Tensor    # (n_showers, 3) ENU decay vertices [m]
+    primaries: torch.Tensor    # (n_showers, PRIMARY_DIM) encoded primaries
+    species:   torch.Tensor    # (n_showers,) 0=electron, 1=muon
+    n_file:    int             # rows in the corpus file
+    per_sp:    int             # file rows per species block
+    k_sp:      int             # rows kept per species
+    n_showers: int             # 2 * k_sp
 
-    **Shower placement.** `place_clouds_enu` puts every cloud at the real ENU decay
-    vertex from the Step-0 `<corpus>_positions.pt` sidecar (tau_wholesky.jl); see
-    that function for the frame. No synthetic fallback — a missing sidecar raises
-    rather than silently changing the geometry. The same vertices also feed the
-    primary encoding (`rel_E/N/U`), so input and geometry cannot disagree.
 
-    **Bounded-memory streaming.** Point clouds are never loaded whole — only the
-    tiny metadata (dir/energy/pdg) is read up front; clouds are streamed in
-    chunks of `load_chunk` showers (loaded → used for all strategies → freed).
+def _load_corpus_metadata(mountain, shower_cache_path: str,
+                          max_showers: int = 0) -> _CorpusMeta:
+    """Read the corpus metadata (no point clouds) and encode the primaries.
 
-    **Resume (gpu_requeue preemption).** If `resume_path` is given, progress
-    (the accumulated out_* tensors + how many chunks are done) is checkpointed
-    and reloaded on restart, skipping completed chunks instead of recomputing
-    the whole corpus.
-
-    The interval is a WALL-CLOCK one (`resume_every_s`), not every-N-chunks: a
-    checkpoint is the whole out_* set, ~11.8 GB at the 750k-event scale, so a
-    per-N-chunks policy scales the write volume with corpus size (every 5 of
-    ~352 chunks would be ~830 GB of writes). Time-based instead bounds the
-    overhead to roughly one write per interval regardless of scale, at the cost
-    of re-doing up to `resume_every_s` of work after a preemption.
-
-    Caveat: the per-chunk detector-layout `rng` draws are NOT part of the
-    checkpoint (only the tiny scalar chunk-counter is), so a resumed run draws
-    fresh layouts for the remaining chunks rather than bit-reproducing an
-    uninterrupted run — harmless (still a valid random draw from the same
-    strategies), just not bit-identical.
-
-    Returns:
-        primaries : (N_pairs, PRIMARY_DIM) float32
-        xy        : (N_pairs, 100, 2) float32   columns = (East, North)
-        E         : (N_pairs, 100) float32
-        T         : (N_pairs, 100) float32
-        strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
-        species_ids  : (N_pairs,)  int64 — e/µ component (0=electron, 1=muon)
+    The corpus is two equal species blocks back to back, so keeping `max_showers`
+    rows means the first `k_sp` of each block, not the first `max_showers` rows.
     """
     import showerdata
 
-    # Metadata only (tiny); dense point clouds are streamed in chunks below.
     meta   = showerdata.load_inc_particles(shower_cache_path)
     n_file = meta.pdg.shape[0]
     per_sp = n_file // 2                                  # electron / muon block size
     keep   = n_file if not max_showers else min(int(max_showers), n_file)
     k_sp   = keep // 2                                    # rows kept per species
-    n_showers = 2 * k_sp
 
     keep_idx = np.concatenate([np.arange(0, k_sp),
                                np.arange(per_sp, per_sp + k_sp)])
@@ -263,138 +228,263 @@ def build_training_pairs(mountain, surface,
     # on this sidecar, not on the pdg feature.
     species_all = _load_species_sidecar(shower_cache_path, keep_idx)   # (N,)
 
-    n_strat = len(_STRATEGIES)
-    n_pairs = n_showers * n_strat
-    n_det   = N_DETECTORS
+    return _CorpusMeta(dirs=dirs, positions=positions_all, primaries=primaries_all,
+                       species=species_all, n_file=n_file, per_sp=per_sp,
+                       k_sp=k_sp, n_showers=2 * k_sp)
 
-    # Round load_chunk down to a whole number of batch_size sub-batches. MUST
-    # happen before chunk_list is built below — the original code normalized it
-    # before the streaming loop that consumed it, and building the chunk list
-    # off the raw value instead leaves a short final sub-batch per chunk (and a
-    # different number of per-chunk layout rng draws).
+
+def _build_chunk_list(k_sp: int, per_sp: int, load_chunk: int, batch_size: int):
+    """Flat streaming plan, plus the `load_chunk` actually used.
+
+    Flat and precomputed so resume is just "skip the first N" — no nested-loop
+    index bookkeeping to reconstruct on restart.
+
+    The rounding of `load_chunk` down to a whole number of `batch_size`
+    sub-batches happens HERE, before the list is built, and the rounded value is
+    returned so no caller can build the list off the raw one: a chunk that is not
+    a multiple of `batch_size` leaves a short final sub-batch (and so a different
+    number of per-chunk layout rng draws), which changes the dataset.
+
+    Returns:
+        load_chunk : rounded chunk size.
+        chunk_list : list of (tag, file_start, ds_start, c_lo, c_hi).
+    """
     load_chunk = max(int(batch_size), (int(load_chunk) // int(batch_size)) * int(batch_size))
-    if verbose:
-        print(f"[load] streaming {n_showers} rows ({k_sp}/species) of {n_file} "
-              f"in chunks of {load_chunk}; peak RAM ≈ one chunk, not the corpus")
-
-    # Flat, precomputed chunk list so resume is just "skip the first N" — no
-    # nested-loop index bookkeeping to reconstruct on restart.
     chunk_list = []
     for tag, file_start, ds_start in (("e", 0, 0), ("mu", per_sp, k_sp)):
         for c_lo in range(0, k_sp, load_chunk):
             chunk_list.append((tag, file_start, ds_start, c_lo, min(c_lo + load_chunk, k_sp)))
+    return load_chunk, chunk_list
 
-    chunks_done = 0
-    if resume_path and os.path.exists(resume_path):
-        ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
-        if ckpt.get("n_pairs") == n_pairs:
-            out_primary, out_xy = ckpt["out_primary"], ckpt["out_xy"]
-            out_E, out_T = ckpt["out_E"], ckpt["out_T"]
-            out_strat, out_species = ckpt["out_strat"], ckpt["out_species"]
-            chunks_done = int(ckpt["chunks_done"])
-            if verbose:
-                print(f"[resume] {resume_path}: {chunks_done}/{len(chunk_list)} chunks "
-                      "already done")
-        elif verbose:
-            print(f"[resume] {resume_path} shape mismatch (n_pairs "
-                  f"{ckpt.get('n_pairs')} != {n_pairs}) — ignoring, starting fresh")
 
-    if chunks_done == 0:
-        out_primary = torch.empty((n_pairs, PRIMARY_DIM), dtype=torch.float32)
-        out_xy      = torch.empty((n_pairs, n_det, 2),     dtype=torch.float32)
-        out_E       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
-        out_T       = torch.empty((n_pairs, n_det),        dtype=torch.float32)
-        out_strat   = torch.empty((n_pairs,),              dtype=torch.int64)
-        out_species = torch.empty((n_pairs,),              dtype=torch.int64)
+class _ResumeState:
+    """The accumulating out_* tensors plus their resume checkpoint.
+
+    The interval is a WALL-CLOCK one, not every-N-chunks: a checkpoint is the
+    whole out_* set, ~11.8 GB at the 750k-event scale, so a per-N-chunks policy
+    scales the write volume with corpus size (every 5 of ~352 chunks would be
+    ~830 GB of writes). Time-based bounds the overhead to roughly one write per
+    interval regardless of scale, at the cost of re-doing up to `every_s` of work
+    after a preemption.
+
+    The per-chunk layout `rng` draws are NOT checkpointed (only the scalar chunk
+    counter is), so a resumed run draws fresh layouts for the remaining chunks
+    rather than bit-reproducing an uninterrupted run — harmless (still a valid
+    draw from the same strategies), just not bit-identical.
+    """
+
+    def __init__(self, n_pairs: int, n_det: int,
+                 path: Optional[str] = None,
+                 every_s: float = 1800.0,
+                 verbose: bool = True):
+        self.n_pairs = n_pairs
+        self.n_det   = n_det
+        self.path    = path
+        self.every_s = every_s
+        self.verbose = verbose
+        self.chunks_done = 0
+        self._last_t = time.time()
+
+    def restore(self, n_chunks: int) -> None:
+        """Reload a compatible checkpoint, else allocate the out_* tensors fresh."""
+        if self.path and os.path.exists(self.path):
+            ckpt = torch.load(self.path, map_location="cpu", weights_only=False)
+            if ckpt.get("n_pairs") == self.n_pairs:
+                self.primary, self.xy = ckpt["out_primary"], ckpt["out_xy"]
+                self.E, self.T = ckpt["out_E"], ckpt["out_T"]
+                self.strat, self.species = ckpt["out_strat"], ckpt["out_species"]
+                self.chunks_done = int(ckpt["chunks_done"])
+                if self.verbose:
+                    print(f"[resume] {self.path}: {self.chunks_done}/{n_chunks} chunks "
+                          "already done")
+            elif self.verbose:
+                print(f"[resume] {self.path} shape mismatch (n_pairs "
+                      f"{ckpt.get('n_pairs')} != {self.n_pairs}) — ignoring, starting fresh")
+
+        if self.chunks_done == 0:
+            self.primary = torch.empty((self.n_pairs, PRIMARY_DIM), dtype=torch.float32)
+            self.xy      = torch.empty((self.n_pairs, self.n_det, 2), dtype=torch.float32)
+            self.E       = torch.empty((self.n_pairs, self.n_det),    dtype=torch.float32)
+            self.T       = torch.empty((self.n_pairs, self.n_det),    dtype=torch.float32)
+            self.strat   = torch.empty((self.n_pairs,), dtype=torch.int64)
+            self.species = torch.empty((self.n_pairs,), dtype=torch.int64)
+
+        self._last_t = time.time()
+
+    def maybe_checkpoint(self, chunk_i: int, n_chunks: int) -> None:
+        """Write a checkpoint if the interval has elapsed.
+
+        Skips the final chunk: the checkpoint is deleted immediately after the
+        loop anyway, so writing ~11.8 GB there would be pure waste.
+        """
+        if not self.path or (time.time() - self._last_t) < self.every_s:
+            return
+        if chunk_i + 1 >= n_chunks:
+            return
+        t_ck = time.time()
+        tmp = self.path + ".tmp"
+        torch.save({
+            "n_pairs": self.n_pairs, "chunks_done": chunk_i + 1,
+            "out_primary": self.primary, "out_xy": self.xy,
+            "out_E": self.E, "out_T": self.T,
+            "out_strat": self.strat, "out_species": self.species,
+        }, tmp)
+        os.replace(tmp, self.path)
+        self._last_t = time.time()
+        if self.verbose:
+            print(f"[resume] checkpointed {chunk_i + 1}/{n_chunks} chunks "
+                  f"in {self._last_t - t_ck:.1f}s -> {self.path}")
+
+    def cleanup(self) -> None:
+        """Drop the checkpoint once the build has completed."""
+        if self.path and os.path.exists(self.path):
+            os.remove(self.path)
+
+    def tensors(self):
+        return self.primary, self.xy, self.E, self.T, self.strat, self.species
+
+
+def _label_chunk(clouds_chunk, meta: _CorpusMeta, state: _ResumeState,
+                 mountain, surface, rng, *,
+                 ds_start: int, c_lo: int, csz: int,
+                 batch_size: int, n_det: int, device) -> None:
+    """Label one loaded chunk under every strategy, writing into `state`.
+
+    One layout is drawn per (strategy, sub-batch) and shared by the whole
+    sub-batch. The rng is threaded in from the caller: draw order runs
+    chunk → strategy → sub-batch, and reordering it changes the dataset.
+    """
+    n_showers = meta.n_showers
+    for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
+        fn = _STRATEGY_FNS[fn_name]
+        for sb_lo in range(0, csz, batch_size):
+            sb_hi = min(sb_lo + batch_size, csz)
+            B = sb_hi - sb_lo
+
+            e_det, n_det_xy = fn(mountain, n_det=n_det, rng=rng, **kwargs)  # (East, North)
+            e_det     = e_det.float().to(device)
+            n_det_xy  = n_det_xy.float().to(device)
+
+            clouds = clouds_chunk[sb_lo:sb_hi].to(device)
+            E, T = compute_labels_batch(clouds, e_det, n_det_xy, surface)
+            E = torch.nan_to_num(E, nan=0.0, posinf=0.0, neginf=0.0)
+            T = torch.nan_to_num(T, nan=0.0, posinf=0.0, neginf=0.0)
+
+            ds_lo = ds_start + c_lo + sb_lo
+            ds_hi = ds_start + c_lo + sb_hi
+            dst = slice(s_idx * n_showers + ds_lo, s_idx * n_showers + ds_hi)
+            state.primary[dst]  = meta.primaries[ds_lo:ds_hi]
+            state.xy[dst, :, 0] = e_det.cpu().unsqueeze(0).expand(B, -1)     # East  (col 0)
+            state.xy[dst, :, 1] = n_det_xy.cpu().unsqueeze(0).expand(B, -1)  # North (col 1)
+            state.E[dst] = E.cpu()
+            state.T[dst] = T.cpu()
+            state.strat[dst] = s_idx
+            state.species[dst] = meta.species[ds_lo:ds_hi]
+
+
+def _load_clouds(shower_cache_path: str, meta: _CorpusMeta, chunk, east_entry, layer_east_dx):
+    """Stream one chunk of point clouds and place it at its real decay vertices.
+
+    Returns the placed clouds and how many non-finite points were zeroed
+    (float32 energy overflow in the corpus).
+    """
+    import showerdata
+
+    _tag, file_start, ds_start, c_lo, c_hi = chunk
+    sub = showerdata.load(shower_cache_path,
+                          start=file_start + c_lo, stop=file_start + c_hi)
+    clouds_chunk = torch.as_tensor(sub.points, dtype=torch.float32)
+    del sub
+
+    bad = ~torch.isfinite(clouds_chunk).all(dim=-1)
+    n_bad = int(bad.sum())
+    if n_bad:
+        clouds_chunk[bad] = 0.0
+
+    # One shared implementation, also used by the notebooks and the floor script.
+    clouds_chunk = place_clouds_enu(
+        clouds_chunk,
+        meta.positions[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
+        meta.dirs[ds_start + c_lo: ds_start + c_hi],        # (csz,3) unit dir
+        east_entry=east_entry, layer_east_dx=layer_east_dx)
+    return clouds_chunk, n_bad
+
+
+def build_training_pairs(mountain, surface,
+                         shower_cache_path: str,
+                         batch_size:        int = 20,
+                         max_showers:       int = 0,
+                         seed:              int = 0,
+                         device:            torch.device = torch.device("cpu"),
+                         verbose:           bool = True,
+                         east_entry:        float = EAST_ENTRY,
+                         layer_east_dx:     float = LAYER_EAST_DX,
+                         load_chunk:        int = 4096,
+                         resume_path:       Optional[str] = None,
+                         resume_every_s:    float = 1800.0):
+    """Build (primary, xy, E, T) training tensors from the cached shower corpus.
+
+    Runs as four stages — `_load_corpus_metadata`, `_build_chunk_list`, then per
+    chunk `_load_clouds` (stream + place at the real ENU decay vertex) and
+    `_label_chunk` (strategies × sub-batches) — accumulating into a
+    `_ResumeState`, which also owns the gpu_requeue resume checkpoint. Point
+    clouds are never loaded whole: peak RAM is one chunk, not the corpus.
+
+    Layouts and labels use the (North, East) convention (`detector_strategies_ne`
+    plus `compute_labels_batch` above, with `surface` a SurfaceUpMap).
+
+    Returns:
+        primaries : (N_pairs, PRIMARY_DIM) float32
+        xy        : (N_pairs, 100, 2) float32   columns = (East, North)
+        E         : (N_pairs, 100) float32
+        T         : (N_pairs, 100) float32
+        strategy_ids : (N_pairs,)  int64 — index into `_STRATEGIES`
+        species_ids  : (N_pairs,)  int64 — e/µ component (0=electron, 1=muon)
+    """
+    meta    = _load_corpus_metadata(mountain, shower_cache_path, max_showers)
+    n_strat = len(_STRATEGIES)
+    n_det   = N_DETECTORS
+
+    load_chunk, chunk_list = _build_chunk_list(meta.k_sp, meta.per_sp,
+                                               load_chunk, batch_size)
+    if verbose:
+        print(f"[load] streaming {meta.n_showers} rows ({meta.k_sp}/species) of "
+              f"{meta.n_file} in chunks of {load_chunk}; peak RAM ≈ one chunk, "
+              "not the corpus")
+
+    state = _ResumeState(meta.n_showers * n_strat, n_det,
+                         path=resume_path, every_s=resume_every_s, verbose=verbose)
+    state.restore(len(chunk_list))
 
     rng = np.random.default_rng(seed)
     n_sanitized = 0
 
-    def _save_resume_ckpt(n_done):
-        assert resume_path is not None      # only called when resume_path is truthy
-        tmp = resume_path + ".tmp"
-        torch.save({
-            "n_pairs": n_pairs, "chunks_done": n_done,
-            "out_primary": out_primary, "out_xy": out_xy,
-            "out_E": out_E, "out_T": out_T,
-            "out_strat": out_strat, "out_species": out_species,
-        }, tmp)
-        os.replace(tmp, resume_path)
-
-    last_ckpt_t = time.time()
-    for chunk_i, (tag, file_start, ds_start, c_lo, c_hi) in enumerate(chunk_list):
-        if chunk_i < chunks_done:
+    for chunk_i, chunk in enumerate(chunk_list):
+        if chunk_i < state.chunks_done:
             continue
-        csz  = c_hi - c_lo
+        tag, _file_start, ds_start, c_lo, c_hi = chunk
 
-        sub = showerdata.load(shower_cache_path,
-                              start=file_start + c_lo, stop=file_start + c_hi)
-        clouds_chunk = torch.as_tensor(sub.points, dtype=torch.float32)
-        del sub
+        clouds_chunk, n_bad = _load_clouds(shower_cache_path, meta, chunk,
+                                           east_entry, layer_east_dx)
+        n_sanitized += n_bad
 
-        bad = ~torch.isfinite(clouds_chunk).all(dim=-1)
-        nb  = int(bad.sum())
-        if nb:
-            clouds_chunk[bad] = 0.0
-            n_sanitized += nb
-
-        # One shared implementation, also used by the notebooks and the floor script.
-        clouds_chunk = place_clouds_enu(
-            clouds_chunk,
-            positions_all[ds_start + c_lo: ds_start + c_hi],   # (csz,3) decay E,N,U
-            dirs[ds_start + c_lo: ds_start + c_hi],            # (csz,3) unit dir
-            east_entry=east_entry, layer_east_dx=layer_east_dx)
-
-        for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
-            fn = _STRATEGY_FNS[fn_name]
-            for sb_lo in range(0, csz, batch_size):
-                sb_hi = min(sb_lo + batch_size, csz)
-                B = sb_hi - sb_lo
-
-                e_det, n_det_xy = fn(mountain, n_det=n_det, rng=rng, **kwargs)  # (East, North)
-                e_det     = e_det.float().to(device)
-                n_det_xy  = n_det_xy.float().to(device)
-
-                clouds = clouds_chunk[sb_lo:sb_hi].to(device)
-                E, T = compute_labels_batch(clouds, e_det, n_det_xy, surface)
-                E = torch.nan_to_num(E, nan=0.0, posinf=0.0, neginf=0.0)
-                T = torch.nan_to_num(T, nan=0.0, posinf=0.0, neginf=0.0)
-
-                ds_lo = ds_start + c_lo + sb_lo
-                ds_hi = ds_start + c_lo + sb_hi
-                dst = slice(s_idx * n_showers + ds_lo, s_idx * n_showers + ds_hi)
-                out_primary[dst]  = primaries_all[ds_lo:ds_hi]
-                out_xy[dst, :, 0] = e_det.cpu().unsqueeze(0).expand(B, -1)     # East  (col 0)
-                out_xy[dst, :, 1] = n_det_xy.cpu().unsqueeze(0).expand(B, -1)  # North (col 1)
-                out_E[dst] = E.cpu()
-                out_T[dst] = T.cpu()
-                out_strat[dst] = s_idx
-                out_species[dst] = species_all[ds_lo:ds_hi]
+        _label_chunk(clouds_chunk, meta, state, mountain, surface, rng,
+                     ds_start=ds_start, c_lo=c_lo, csz=c_hi - c_lo,
+                     batch_size=batch_size, n_det=n_det, device=device)
 
         del clouds_chunk
         if verbose:
-            print(f"[build] {tag} rows {c_lo}-{c_hi}/{k_sp} done "
+            print(f"[build] {tag} rows {c_lo}-{c_hi}/{meta.k_sp} done "
                   f"(×{n_strat} strategies)")
+        state.maybe_checkpoint(chunk_i, len(chunk_list))
 
-        # Skip the final chunk: the checkpoint is deleted immediately after the
-        # loop anyway, so writing ~11.8 GB there would be pure waste.
-        if resume_path and (time.time() - last_ckpt_t) >= resume_every_s \
-                and chunk_i + 1 < len(chunk_list):
-            t_ck = time.time()
-            _save_resume_ckpt(chunk_i + 1)
-            last_ckpt_t = time.time()
-            if verbose:
-                print(f"[resume] checkpointed {chunk_i + 1}/{len(chunk_list)} chunks "
-                      f"in {last_ckpt_t - t_ck:.1f}s -> {resume_path}")
-
-    if resume_path and os.path.exists(resume_path):
-        os.remove(resume_path)
+    state.cleanup()
 
     if verbose:
         print(f"[place] real ENU decay positions from tau_wholesky.jl "
-              f"(N={positions_all.shape[0]}; East/North offsets + Up along the axis, "
+              f"(N={meta.positions.shape[0]}; East/North offsets + Up along the axis, "
               f"east_entry={east_entry:g}, dx={layer_east_dx:g})")
     if verbose and n_sanitized:
         print(f"[sanitize] zeroed {n_sanitized} non-finite points (float32 energy overflow)")
 
-    return out_primary, out_xy, out_E, out_T, out_strat, out_species
+    return state.tensors()
