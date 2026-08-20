@@ -30,7 +30,7 @@ from .constants import (
 from .dual_surrogate import load_dual_surrogate
 from .reconstruction import build_recon_from_ckpt
 # modules_v6/__init__ injected the v3 (`modules`) path on package import.
-from modules_v6.legacy_core.utility_functions import reconstructability, U_E, U_angle, U_PR
+from modules_v6.utility_functions import reconstructability, U_E, U_angle, U_PR
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 

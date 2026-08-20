@@ -10,7 +10,7 @@ from .constants import N_DETECTORS
 import numpy as np
 from typing import Tuple
 
-from modules_v6.legacy_core.geometry import Layouts as _v3_Layouts
+from modules_v6.geometry import Layouts as _v3_Layouts
 from .tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
 
 # ── Layout generators (all return (North, East) tensors on the mountain) ─────

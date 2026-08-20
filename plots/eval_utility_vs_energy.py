@@ -53,7 +53,7 @@ from modules_v6.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
 # modules_v6/__init__ injected the v3 (`modules`) path on package import.
-from modules_v6.legacy_core.utility_functions import reconstructability, _soft_cap
+from modules_v6.utility_functions import reconstructability, _soft_cap
 from eval_true_utility import load_events, utility_of_xy
 
 

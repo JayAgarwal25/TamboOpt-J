@@ -17,7 +17,7 @@ from typing import NamedTuple, Optional, Tuple
 import numpy as np
 import torch
 
-from modules_v6.legacy_core.tr_plane_kernel import GetCounts_planeaware
+from modules_v6.tr_plane_kernel import GetCounts_planeaware
 
 from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM, SIGMA_SPATIAL
 from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
