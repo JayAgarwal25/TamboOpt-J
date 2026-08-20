@@ -1,6 +1,6 @@
 # refactor: make `modules_v6/` maintainable
 
-## Status (2026-08-20) — 6 of 9 steps done
+## Status (2026-08-20) — all 9 steps done
 
 | Step | State | Commit |
 |---|---|---|
@@ -10,25 +10,59 @@
 | 8 split sampler + memoize `_ne_max_gap` | done, verified | `4ae9413` |
 | 6 split `load_tr_mountain` | done, verified | `fe4629a` |
 | 7 split `utility_of_xy` | done, verified | `6a52198` |
-| **5 split `build_training_pairs`** | **TODO** — the only >80-line callable left (217 loc) | — |
-| **10 drop `_ne` suffixes** | **TODO** | — |
-| **11 fix `_STRATEGIES`** | **TODO** | — |
-| **12 reconsider `legacy_core/`** | **TODO** | — |
+| 5 split `build_training_pairs` | done, verified | `d3c96f0` |
+| 10 drop `_ne` suffixes | done, verified | `dd69526` |
+| 11 fix `_STRATEGIES` | done, verified | `e2e0c63` |
+| 12 promote live modules out of `legacy_core` | done, verified | `c9133f4` |
 
-Acceptance criteria as of `6a52198`: unreachable modules **0** ✅ · duplicate names
-**0** ✅ · callables **83** (ceiling 85) ✅ · entry points import **28/28** ✅ ·
-callables >80 lines **1** ❌ (that is Step 5) · loc **2,930** vs ceiling 2,900 —
-30 over, and Step 5 will add more. Treat 3,000 as the working ceiling.
+### Acceptance criteria as of `c9133f4`
 
-### What a fresh session needs to finish this
+| Criterion | Target | Actual | |
+|---|---|---|---|
+| unreachable modules | 0 | **0** | ✅ |
+| names defined in two files | 0 | **0** | ✅ |
+| callables over 80 lines | 0 | **0** (longest: `build_training_pairs`, 78) | ✅ |
+| entry points that import | 28/28 | **28/28** | ✅ |
+| callable count | ≤ 85 | **92** | ❌ |
+| line count | ≤ ~3,000 | **3,060** | ❌ |
+
+The two count ceilings are missed and that is the honest outcome, not a
+rounding error. They were set before anyone knew how much scaffolding the
+extractions would add, and Phases 2–3 *deliberately* add callables — Step 5
+alone turned one function into five named stages plus a class. The structural
+goals those numbers were a proxy for are all met: nothing unreachable, nothing
+defined twice, nothing over 80 lines. Re-baseline the ceilings at 95 / 3,100 or
+drop them in favour of the three structural checks.
+
+### Verification actually run
+
+- **Step 5**, on the real corpus (SLURM `-p test`): 200 showers, seed 0,
+  `batch_size=20`, `load_chunk=60` (deliberately ragged final chunk), pre-split
+  vs split → `torch.equal` on all six outputs, maxdiff `0.000e+00`.
+- **Step 5 resume**: SIGKILLed a build after 2 of 4 chunks and restarted. It
+  reported `2/4 chunks already done`, skipped them, restored rows bit-identical
+  to an uninterrupted run, all outputs finite, checkpoint removed on completion.
+- **Steps 10+11**: a 200-shower build at seed 0 after both is `torch.equal` to
+  the reference built before them; `strategy_ids` spans `[0..4]` and
+  `shower_level_split`'s `max()+1` still derives `n_showers` correctly.
+- **Steps 10 and 12**: `tools/codeonly.py` shows every moved/renamed module
+  identical in executable tokens, and each importer differing only by the
+  renamed identifier or the dropped `legacy_core` path segment.
+
+### Not run
+
+`sbatch slurm/run_all_script_batch_grid.sh` end to end against a scratch
+`RUN_LOCATION` (`pipeline_status.json` walking 00→04, final `U` near ~35).
+That is a multi-hour full-pipeline job, not a refactor gate.
+
+### Environment notes
 
 - Interpreter (has torch; system `python3` does NOT, and its `ast` lacks
   `end_lineno`): `/n/home05/zdimitrov/.conda/envs/multiproc_env/bin/python`
-- Corpus for Step 5's gate exists (197 GB, streamed in chunks — a small
-  `max_showers` build is cheap): `constants.DUAL_SHOWER_CACHE_PATH` plus the
-  `_species.pt` / `_positions.pt` sidecars beside it.
-- Checkpoints for any `opt_core` re-check exist under `constants.FNN_FOLDER`
-  (`fnn_electron.pt`, `fnn_muon.pt`) and `RECON_FOLDER + "_deepsets"`.
+- SLURM: `-p test` for CPU checks, `-p gpu_test` for GPU. Never run these on a
+  login node, and note `/tmp` is node-local — a job script and its `-o` log must
+  live on shared storage. The gate scripts are in
+  `/n/home05/zdimitrov/tambo/.refactor_gate/` (outside the repo).
 - Baseline for a before/after diff: `git show HEAD:<path>`. **Never** `git stash`
   or `git commit -a` here.
 - To load a baseline copy that uses relative imports, give it a dotted name
@@ -113,43 +147,43 @@ removes a 95-line method that would otherwise be a split target.
 
 ### Phase 1 — Delete (no design risk; do it in one commit)
 
-- [ ] **1. Remove the three unreachable modules.** Delete
+- [x] **1. Remove the three unreachable modules.** Delete
   `legacy_core/{detector_response,reconstruction,tr_surface_map}.py`.
   `SmearN`/`TimeAverage_vectorized` appear in `GetCounts_planeaware`'s signature but
   are never called — callers pass `None`, so the kernel is untouched.
-- [ ] **2. Remove `detector_strategies.py` and its cascade.** Delete the module, then
+- [x] **2. Remove `detector_strategies.py` and its cascade.** Delete the module, then
   delete `MountainData.sample_initial_layout` (95 loc) and
   `MountainData.project_to_mountain` (44 loc) from `legacy_core/tr_geometry.py` —
   after Step 2's deletion nothing calls them. Keep `plane_dx` and `east_to_z_cont`.
-- [ ] **3. Remove the unreachable half of `fnn_surrogate.py`.** Delete
+- [x] **3. Remove the unreachable half of `fnn_surrogate.py`.** Delete
   `build_training_pairs` and `compute_labels_batch`, plus the now-unused
   `from .detector_strategies import ...`. Keep `encode_primary`,
   `compute_normalization`, `_species_sidecar_path`, `_load_species_sidecar`, and the
   `FNNSurrogate` class (`plots/02_plot_nn_target_vs_pred.py` needs it to load
   pre-DeepSets checkpoints).
-- [ ] **4. Remove dead functions inside live modules.** `project_to_triangle` and
+- [x] **4. Remove dead functions inside live modules.** `project_to_triangle` and
   `barycentric_coords` from `legacy_core/geometry.py` (keep `Layouts` — it is live);
   `symmetry_loss` and `push_apart` from `legacy_core/layout_optimization.py` (keep
   `LearnableXY` — both 04 optimizers use it).
 
 ### Phase 2 — Split the long functions (behaviour-preserving; one commit each)
 
-- [ ] **5. Split `build_training_pairs`** in `modules_v6/fnn_surrogate_ne.py` (217 loc,
+- [x] **5. Split `build_training_pairs`** in `modules_v6/fnn_surrogate_ne.py` (217 loc,
   eight jobs) into `_load_corpus_metadata`, `_build_chunk_list`, a `_ResumeState`
   class wrapping the `out_*` tensors + atomic `tmp`→`os.replace` write, and
   `_label_chunk` for the strategy×batch loop. **Keep the `load_chunk` rounding before
   the chunk list is built** — the existing comment warns that building the list off
   the raw value leaves a short final sub-batch and changes the per-chunk RNG draws.
-- [ ] **6. Split `load_tr_mountain`** (85 loc) in `legacy_core/tr_geometry.py` along its
+- [x] **6. Split `load_tr_mountain`** (85 loc) in `legacy_core/tr_geometry.py` along its
   existing comment sections: read h5 + select detector-region faces, resolve ENU
   origin (explicit arg > mesh `location` > module default), ECEF centroids, rotate to
   ENU, unique region vertices. Move the 1-based-Julia-face-index explanation onto the
   extracted selector.
-- [ ] **7. Split `utility_of_xy`** (74 loc) in `modules_v6/opt_core.py` into: batch the
+- [x] **7. Split `utility_of_xy`** (74 loc) in `modules_v6/opt_core.py` into: batch the
   layout + run the dual surrogate; assemble recon features and decode to physical
   labels; compute the four terms and apply the penalty. Extract the middle stage as
   `_predict_primary(...)` so `activation_of_xy` (62 loc) can share it.
-- [ ] **8. Split `sample_initial_layout_ne`** (66 loc) in `modules_v6/tr_geometry_ne.py`
+- [x] **8. Split `sample_initial_layout_ne`** (66 loc) in `modules_v6/tr_geometry_ne.py`
   into `_layout_grid_candidates` / `_layout_random` / `_layout_center` behind a
   dispatch dict, mirroring `_STRATEGY_FNS`. In the same pass memoize `_ne_max_gap` on
   the mountain object — it is deterministic (`default_rng(0)`) but recomputed on every
@@ -157,22 +191,22 @@ removes a 95-line method that would otherwise be a split target.
 
 ### Phase 3 — De-duplicate and rename (mechanical; separate commits)
 
-- [ ] **9. Extract the shared `_mlp`** into `[NEW] modules_v6/nn_blocks.py` with
+- [x] **9. Extract the shared `_mlp`** into `[NEW] modules_v6/nn_blocks.py` with
   `dropout: float = 0.0`; import it in `deepsets_surrogate.py` and `reconstruction.py`.
   Bodies are already byte-identical — only a default and a docstring differ.
-- [ ] **10. Drop the `_ne` suffixes** now the twins are gone: `fnn_surrogate_ne.py` →
+- [x] **10. Drop the `_ne` suffixes** now the twins are gone: `fnn_surrogate_ne.py` →
   `dataset_builder.py` (it builds the Step-1 dataset and is not a surrogate),
   `detector_strategies_ne.py` → `detector_strategies.py`, `tr_surface_map_ne.py` →
   `surface_map.py`. Keep `tr_geometry_ne.py` — it still coexists with
   `legacy_core/tr_geometry.py`. Update every import site. **Commit this alone**, so the
   rename noise doesn't bury the substantive diffs.
-- [ ] **11. Fix `_STRATEGIES`** in the renamed `detector_strategies.py`: it is configured
+- [x] **11. Fix `_STRATEGIES`** in the renamed `detector_strategies.py`: it is configured
   by commenting lines out (7 of 12 commented), and two live labels each appear twice
   (`uniform_random`, `latin_hypercube`), so one label maps to two ids and logs are
   ambiguous. Replace with a named `_ALL_STRATEGIES` dict plus an explicit
   `ACTIVE_STRATEGIES` tuple, giving duplicates distinct labels. **Preserve the current
   order and count** — see Risks.
-- [ ] **12. Reconsider `legacy_core/`.** After Step 1 it holds six files, three of which
+- [x] **12. Reconsider `legacy_core/`.** After Step 1 it holds six files, three of which
   are central rather than legacy: `tr_plane_kernel.py` (ground-truth kernel),
   `utility_functions.py` (the U terms), `geometry.py` (one live function). Promote
   those to `modules_v6/`, leaving `generate_showers.py` (the genuine external
