@@ -28,20 +28,7 @@ import torch
 import torch.nn as nn
 
 from .constants import N_DETECTORS, PRIMARY_DIM
-
-
-def _mlp(in_dim: int, hidden: int, out_dim: int, n_layers: int, dropout: float) -> nn.Sequential:
-    """[in→hidden]→(hidden→hidden)×(n_layers-2)→[hidden→out], ReLU + dropout between."""
-    assert n_layers >= 2
-    layers = [nn.Linear(in_dim, hidden), nn.ReLU()]
-    if dropout > 0:
-        layers.append(nn.Dropout(dropout))
-    for _ in range(n_layers - 2):
-        layers += [nn.Linear(hidden, hidden), nn.ReLU()]
-        if dropout > 0:
-            layers.append(nn.Dropout(dropout))
-    layers.append(nn.Linear(hidden, out_dim))
-    return nn.Sequential(*layers)
+from .nn_blocks import _mlp
 
 
 class DeepSetsSurrogate(nn.Module):
