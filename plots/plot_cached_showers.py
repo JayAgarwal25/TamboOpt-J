@@ -32,7 +32,7 @@ for _p in (_V6, _HERE):
 import numpy as np
 import showerdata
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.constants import (
     SHOWER_CACHE,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,

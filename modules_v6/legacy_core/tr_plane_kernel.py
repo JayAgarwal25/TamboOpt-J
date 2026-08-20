@@ -1,32 +1,22 @@
-"""Plane-aware differentiable detector response kernel for v4.
+"""Plane-aware differentiable detector response kernel.
 
-v3's GetCounts_differentiable uses a 2D Gaussian spatial kernel over the point
-cloud and ignores the layer_index column (column 2 of the (B, max_points, 5)
-samples tensor).  v3 compensates by zeroing out all points whose layer_index
-differs from the target plane (filter_plane=20 in ComputeShowerDetection).
+Ground truth for the Step-1 labels: (E, T) per detector from a shower point
+cloud, differentiable in the detector positions AND in the plane index, so
+gradients reach z_cont -> East -> (North, Up).
 
-v4 needs the kernel to be differentiable in the *plane index* as well, so that
-gradients flow from the loss back through z_cont → East → (North, Up).  The
-solution is a triangular plane weight:
+The plane weight is triangular,
 
     plane_w[b, p, i] = relu(1 - |layer_p[b, p] - z_cont[i]|)
 
-This is 1 when layer_p == z_cont_i (exact match), linearly decreases to 0 at
-±1 layer away, and is 0 everywhere else.  It is differentiable in z_cont
-almost everywhere (non-differentiable only at the kink z_cont = layer_p ± 1,
-which has measure zero).
+i.e. 1 on an exact layer match, falling linearly to 0 one layer away. It is
+differentiable in z_cont except at the kinks z_cont = layer_p +- 1 (measure
+zero). Combined with the spatial Gaussian:
 
-The combined kernel is:
     kernel = spatial_gaussian * plane_w      (B, max_points, n_det)
-
-This is exactly v3's kernel when z_cont ≡ 20 for all detectors: plane_w
-becomes 1 for all layer-20 points and 0 for the rest, reproducing filter_plane=20.
-
-Post-processing (SmearN, TimeAverage_vectorized) is identical to v3 — the
-callables are imported from v3's modules.detector_response and passed in.
 """
 
 import torch
+
 
 
 def GetCounts_planeaware(
@@ -52,14 +42,13 @@ def GetCounts_planeaware(
         y_det    : (n_det,) Up   coordinates [m], requires_grad may be True.
         z_cont   : (n_det,) continuous plane index ∈ [0, n_planes-1],
                    derived as (East - east_min) / plane_dx.  requires_grad may be True.
-        SmearN_fn             : accepted for interface compatibility, not called.
-        fluxB_e               : accepted for interface compatibility, not called.
-        TimeAverage_vectorized_fn : accepted for interface compatibility, not called.
-        sigma    : Gaussian spatial kernel width [m] (default 200 m, same as v3).
+        SmearN_fn, fluxB_e, TimeAverage_vectorized_fn :
+                   accepted for interface compatibility; never called.
+        sigma    : Gaussian spatial kernel width [m].
 
     Returns:
-        (local_intensity, et) : each (B, n_det), differentiable in x_det, y_det, z_cont.
-        Matches v3's GetCounts_differentiable return convention (raw values, no post-processing).
+        (local_intensity, arrival_time) : each (B, n_det), raw (no post-processing),
+        differentiable in x_det, y_det, z_cont.
     """
     point_x = samples[..., 0]    # (B, P)
     point_y = samples[..., 1]    # (B, P)
@@ -67,30 +56,21 @@ def GetCounts_planeaware(
     point_e = samples[..., 3]    # (B, P)  energy
     point_t = samples[..., 4]    # (B, P)  time
 
-    # ── Spatial Gaussian — identical to v3 ────────────────────────────────────
     # dx, dy : (B, P, n_det)
     dx = point_x.unsqueeze(2) - x_det.unsqueeze(0).unsqueeze(0)
     dy = point_y.unsqueeze(2) - y_det.unsqueeze(0).unsqueeze(0)
     spatial = torch.exp(-(dx ** 2 + dy ** 2) / (2.0 * sigma ** 2))
 
-    # ── Triangular plane weight — differentiable in z_cont ────────────────────
     # delta_l : (B, P, n_det)
     delta_l = point_l.unsqueeze(2) - z_cont.unsqueeze(0).unsqueeze(0)
     plane_w = torch.relu(1.0 - delta_l.abs())
 
-    # ── Combined kernel ───────────────────────────────────────────────────────
     kernel        = spatial * plane_w                              # (B, P, n_det)
     energy_kernel = point_e.unsqueeze(2) * kernel                 # (B, P, n_det)
 
     local_intensity = energy_kernel.sum(dim=1)                    # (B, n_det)
+    # NOTE: mean over ALL P points, padding rows included. Looks wrong, but it
+    # defines every existing label — changing it invalidates the corpus.
     arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
-    # et = (
-    #     (point_t.unsqueeze(2) * energy_kernel).sum(dim=1)
-    #     / local_intensity.clamp(min=1e-8)
-    # )                                                              # (B, n_det)
 
-    # Return raw (local_intensity, et), matching v3's GetCounts_differentiable
-    # behaviour.  SmearN_fn / TimeAverage_vectorized_fn are accepted for
-    # interface compatibility but not called — v3 also accepts them as kwargs
-    # without calling them.
     return local_intensity, arrival_time

@@ -7,7 +7,7 @@ during training or optimization.
 
 Usage (from a driver script living in the v6 folder):
 
-    import modules_v6   # triggers sys.path injection for v3 + v4
+    import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
     from modules_v6.fnn_surrogate import (
         SHOWER_CACHE, GEOMETRY_PATH, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
         encode_primary, build_training_pairs, FNNSurrogate,
@@ -21,7 +21,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# Require the v3+v4 sys.path injection (triggered by `import modules_v6`).
 from modules_v6.legacy_core.tr_plane_kernel import GetCounts_planeaware
 
 from .constants import (EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, SHOWER_CACHE, PRIMARY_DIM,

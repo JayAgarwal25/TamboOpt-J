@@ -1,9 +1,8 @@
-"""(North, East) layout strategies — v6-local mirror of detector_strategies.py.
+"""(North, East) layout strategies.
 
-Diff against modules_v6/detector_strategies.py to see the (North, Up)→(North,
-East) change: the bbox anchor uses East (centroid col 2) and the East bbox, and
-sampling/projection go through `tr_geometry_ne` instead of the MountainData
-methods. All generators return (North, East) tensors on the mountain surface.
+The bbox anchor uses East (centroid col 2) and the East bbox; sampling and
+projection go through `tr_geometry_ne`. All generators return (North, East)
+tensors on the mountain surface.
 """
 
 import torch

@@ -30,7 +30,7 @@ if _V6 not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
 
 

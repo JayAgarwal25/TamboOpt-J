@@ -1,49 +1,27 @@
-"""DeepSets surrogate for detector optimization v6 (drop-in for FNNSurrogate).
+"""Permutation-equivariant per-detector surrogate. Drop-in for FNNSurrogate.
 
-Motivation (see THEORY.md §10): the true detector-response kernel is strictly
-per-detector-local — `(E_i, T_i) = φ(q, x_i, y_i)` with no cross-detector term
-(modules_v4/tr_plane_kernel.py). The production flat MLP must learn this same
-local map separately for all 100 input slots and be made permutation-invariant
-to 100! orderings via expensive augmentation; its minimum-loss fixed point is
-predict-the-mean. The architecture search found a per-detector **DeepSets**
-model — the only lever that broke the flat-MLP plateau (−23%).
+The response kernel is strictly per-detector-local, `(E_i, T_i) = phi(q, x_i, y_i)`
+with no cross-detector term, so a shared per-detector map is the right inductive
+bias. A flat MLP had to learn it separately for all 100 slots and approximate
+permutation invariance by augmentation; DeepSets is equivariant by construction
+(-23% val loss, the only lever that broke the flat-MLP plateau — THEORY.md 10).
 
-This module is permutation-EQUIVARIANT by construction, so the trainer can drop
-the permutation augmentation entirely. It preserves FNNSurrogate's call contract
-exactly:
+    token_i = [q (8), x_i, y_i]              # 10 features per detector
+    h_i     = psi(token_i)                   # shared encoder
+    c       = mean_i h_i -> context proj     # permutation-INVARIANT pool
+    (mu_i, logvar_i) = rho([h_i, c])         # shared decoder, per channel
 
-    model = DeepSetsSurrogate(n_det=100, primary_dim=PRIMARY_DIM, ...)
-    model.set_normalization(stats)          # same stats dict as compute_normalization()
-    et = model(primary, xy)                 # (B, n_det, 2): col0=E, col1=T, raw units
+Heteroscedastic: the decoder emits mu AND logvar per channel. `forward()` returns
+the mean only in raw units, preserving FNNSurrogate's contract so Steps 3-4 and
+dual_surrogate.py are unchanged; `forward_dist()` adds the logvar for the Gaussian
+NLL trainer, letting the model express the aleatoric floor explicitly instead of
+collapsing to a conditional mean.
 
-so it is a literal drop-in for Steps 3 and 4 (which only ever call
-`fnn(primary, xy)` and `set_normalization`).
-
-Architecture (classic DeepSets: shared per-detector encoder → pooled context →
-shared per-detector decoder):
-
-    token_i = [q (5), x_i, y_i]                       # 7 features, per detector
-    h_i     = ψ(token_i)                              # shared encoder MLP
-    c       = mean_i h_i  → context projection        # permutation-INVARIANT pool
-    (mu_i, logvar_i) = ρ([h_i, c])                    # shared decoder MLP, per channel
-
-Heteroscedastic head: the decoder outputs a per-channel mean AND log-variance
-(4 numbers per detector: mu_E, mu_T, logvar_E, logvar_T) instead of a bare
-point estimate. `forward()` keeps the original 2-channel contract (mean only,
-raw units) so Steps 3-4 and dual_surrogate.py need no changes; the trainer
-uses `forward_dist()` to get both moments for a Gaussian NLL loss. This lets
-the model represent the physical shower-to-shower aleatoric floor
-(plots/compute_aleatoric_floor.py) as an explicit per-input uncertainty rather
-than being forced toward a single conditional-mean point estimate.
-
-Z-scoring is baked into forward via the SAME registered buffers FNNSurrogate
-uses (in_mean(205), in_std(205), out_mean(200), out_std(200)), so
-`set_normalization` is byte-identical and the trainer's in-place log-T stat
-mutation (out_mean[n_det:] / out_std[n_det:]) flows through unchanged. In
-forward we read the per-detector scalars out of those broadcast-shared buffers
-(every xy/E/T slot holds the same stat by construction of compute_normalization).
-The log-variance head lives entirely in z-scored space (no un-normalization
-needed — it is a dimensionless training target, not a physical unit).
+Normalization uses the SAME buffers as FNNSurrogate — in/out mean+std of width
+`primary_dim + 2*n_det` (208) and `2*n_det` (200) — so `set_normalization` is
+identical and the trainer's in-place log-T stat mutation flows through. Every
+xy/E/T slot holds the same stat by construction, so forward reads per-detector
+scalars straight out of them. The logvar head stays in z-scored space.
 """
 
 import torch

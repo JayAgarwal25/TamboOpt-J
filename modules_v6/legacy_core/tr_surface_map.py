@@ -8,8 +8,8 @@ ingredient that lets gradients flow from the loss back through z_cont to the
 learnable detector positions.
 
 Usage:
-    from modules_v4.tr_geometry   import load_tr_mountain
-    from modules_v4.tr_surface_map import SurfaceEastMap
+    from modules_v6.legacy_core.tr_geometry    import load_tr_mountain
+    from modules_v6.legacy_core.tr_surface_map import SurfaceEastMap
 
     mountain = load_tr_mountain(...)
     surface  = SurfaceEastMap.from_mountain(mountain, grid_h=256, grid_w=256).to(device)

@@ -1,50 +1,32 @@
 """Target vs prediction scatter for the trained FNN and recon nets.
 
-Loads the cached corpus (primary / xy / E / T / strategy_ids) and the two
-frozen checkpoints (fnn.pt, recon.pt), evaluates each on its respective
-shower-level validation split, and saves scatter plots of target vs
-prediction with a 1:1 reference line.
+Loads the cached corpus and the frozen checkpoints, evaluates each on its
+shower-level validation split, and plots target vs prediction against a 1:1 line.
+The recon runs on FNN-predicted (E, T) rather than ground truth, so its scatter
+shows end-to-end FNN -> recon error.
 
-FNN plot        : flattened (E, T) over all detectors in the val split.
-Recon plot      : raw primary encoding (dir_x, dir_y, dir_z, log_e_norm) over
-                  the val split. The recon runs on FNN-predicted (E, T) rather
-                  than ground truth, so the scatter reflects the end-to-end
-                  FNN -> recon error.
-
-Artifacts (single-model path; the --dual set is listed below):
-    FNN_FOLDER/fnn_target_vs_pred.png
-    RECON_FOLDER/recon_target_vs_pred.png
-
-Run from the v6 folder:
-
-    cd TambOpt
     python plots/02_plot_nn_target_vs_pred.py
     python plots/02_plot_nn_target_vs_pred.py --dual   # dual-species surrogate
 
-Dual mode (--dual): the FNN scatter is rendered PER SPECIES — each per-species
-DeepSets model (fnn_electron.pt / fnn_muon.pt) is compared against its own
-species-filtered corpus subset (split on the Step-1 species_ids sidecar), since
-the corpus E/T ground truth is per-species.
-The recon scatter uses the combined DualSpeciesSurrogate on the full corpus,
-exactly as 03_train_recon.py does. Outputs:
-    FNN_FOLDER/fnn_electron_target_vs_pred.png
-    FNN_FOLDER/fnn_muon_target_vs_pred.png
+In --dual mode the FNN scatter is rendered PER SPECIES — each per-species DeepSets
+model against its own species-filtered subset (split on the Step-1 species_ids
+sidecar), since the corpus E/T ground truth is per-species. The recon scatter uses
+the combined DualSpeciesSurrogate on the full corpus, as Step 3 does. Outputs:
+
+    FNN_FOLDER/fnn_<species>_target_vs_pred.png
     FNN_FOLDER/fnn_<species>_conditional.png    P(pred | target), hit-only
-    FNN_FOLDER/fnn_<species>_calibration.png    predicted σ vs realised error
+    FNN_FOLDER/fnn_<species>_calibration.png    predicted sigma vs realised error
     RECON_FOLDER_deepsets/recon_target_vs_pred.png
-    RECON_FOLDER_deepsets/recon_conditional.png     P(pred | target), same
-                                                     treatment as the FNN's,
-                                                     over the recon's 4 channels
+    RECON_FOLDER_deepsets/recon_conditional.png
 
-`*_conditional.png` is the one to read for surrogate quality. The joint hexbin in
+**Read `*_conditional.png` for surrogate quality.** The joint hexbin in
 `*_target_vs_pred.png` is dominated by the dark-detector population (target = 0)
-and by the fact that the mean head is fitted to a stochastic target, so it
-understates the model; the conditional figure drops the dark samples, normalises
-per target-column, and puts the compression on the plot as a slope.
+and by the mean head being fitted to a stochastic target, so it understates the
+model; the conditional figure drops dark samples, normalises per target-column,
+and shows the compression as a slope.
 
-Note the recon folder: 03_train_recon_deepsets.py writes to
-RECON_FOLDER + "_deepsets", so that is where --dual reads recon.pt and writes
-its scatter. Plain RECON_FOLDER belongs to the older flat-MLP 03_train_recon.py.
+Recon folder: Step 3 writes to RECON_FOLDER + "_deepsets", so that is where
+--dual reads recon.pt and writes its scatter.
 """
 import os
 import sys
@@ -79,7 +61,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import modules_v6  # noqa: F401 — triggers sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.fnn_surrogate import FNNSurrogate
 from modules_v6.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,

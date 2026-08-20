@@ -48,7 +48,7 @@ import numpy as np
 import torch
 from scipy.optimize import differential_evolution
 
-import modules_v6   # sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.reconstruction import Reconstruction
 from modules_v6.tr_geometry_ne import (
     _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,

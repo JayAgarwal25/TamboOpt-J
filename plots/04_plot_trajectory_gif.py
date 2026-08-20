@@ -58,7 +58,7 @@ import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,

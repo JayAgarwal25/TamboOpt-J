@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne

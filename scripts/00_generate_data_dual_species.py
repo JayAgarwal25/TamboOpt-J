@@ -40,7 +40,7 @@ import torch._utils  # noqa: F401 — torch 2.x lazy submodule needed by torch.s
 torch.set_float32_matmul_precision("high")
 
 import showerdata
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.constants import (
     LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,

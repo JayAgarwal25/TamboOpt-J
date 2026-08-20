@@ -1,85 +1,51 @@
 """Optimize detector positions for COLLECTION, not reconstruction.
 
-Copy of ``04_optimize_lbfgs_ensemble.py`` with one thing changed: the objective.
-That script maximizes the composite U — how well the frozen recon recovers
-(theta, phi, E) — and `plots/eval_activation_counts.py` showed the layouts it
-returns light up FEWER detectors and collect FEWER particles than a plain grid
-(-1.6 detectors, -3.8e4 particles/shower, both far outside their standard errors)
-while scoring +3.1 higher on U. So the two goals genuinely pull apart, and this
-script optimizes the other one: `opt_core.activation_of_xy`, maximizing either
+Same ensemble machinery as ``04_optimize_lbfgs_ensemble.py``; only the objective
+differs. That script maximizes the composite U (how well the frozen recon recovers
+theta, phi, E), and `plots/eval_activation_counts.py` showed its layouts light up
+FEWER detectors and collect FEWER particles than a plain grid (-1.6 detectors,
+-3.8e4 particles/shower, both outside their standard errors) while scoring +3.1
+higher on U. The two goals genuinely pull apart; this optimizes the other one,
+`opt_core.activation_of_xy`, with `--objective` selecting:
 
-    particles   summed flux over the array, /PARTICLE_SCALE. The kernel gives each
-                detector its own unnormalised Gaussian with no exclusivity, so a
-                particle seen by two detectors is counted twice — meaning this is
-                maximized by STACKING the whole array on the densest point.
-    detectors   mean SOFT trigger count, sum of sigmoid(TAU_LAYOUT*(counts-thr)).
-                Saturates at 1 per detector, so it pays to spread.
-    distinct    particles counted ONCE each: each detector's flux divided by
-                `opt_core.overlap_multiplicity`, the kernel weight its particles
-                also receive from other detectors. Collection area, with the
-                stacking degeneracy removed from inside the objective.
+    particles   summed flux / PARTICLE_SCALE. The kernel double-counts particles
+                seen by overlapping detectors, so this is maximized by STACKING.
+    detectors   mean soft trigger count; saturates per detector, so it pays to spread.
+    distinct    flux counted once each (opt_core.overlap_multiplicity) — collection
+                area, with the stacking degeneracy removed.
 
-selected by `OBJECTIVE` / ``--objective``. All three are logged whichever is
-chosen, so a run optimizing one can be read against the others.
+All three are logged whichever is chosen.
 
-Caveats worth keeping in view:
+Per scheme: K Gaussian perturbations of the init layout -> independent Adam runs ->
+L-BFGS refinement from each Adam-best on a FIXED primary batch (deterministic
+objective for the line search) -> Hungarian alignment of the K layouts by physical
+position (detector INDEX is meaningless across runs, the nets being
+permutation-equivariant) -> per-group mean and std. A "combined" run pools the
+Adam-bests from every scheme before refining.
 
-* The objective runs through the SURROGATE, because the kernel
-  (`compute_labels_batch`) is `@torch.no_grad()` and cannot be optimized through.
-  `plots/eval_activation_counts.py` scores the result against the kernel on the
-  untouched held-out reserve afterwards; that is the number that counts.
-* Nothing here rewards reconstruction. Expect the returned layout to LOSE on U
-  against the ensemble script — that is the experiment, not a bug. Read both.
-* U in the logs/plots is the activation objective, not the composite. Curves from
-  the two scripts are NOT on the same scale, PARTICLE_SCALE notwithstanding.
+Caveats:
+  * The objective runs through the SURROGATE — the kernel is `@torch.no_grad()`
+    and cannot be optimized through. `plots/eval_activation_counts.py` scores the
+    result against the kernel on the held-out reserve afterwards; that is the
+    number that counts.
+  * Nothing here rewards reconstruction, so expect this layout to LOSE on U
+    against the ensemble script. That is the experiment, not a bug.
+  * U in the logs is the activation objective. Curves from the two scripts are
+    NOT on the same scale.
 
-Everything else — the ensemble structure, off-mesh penalty, scoring set, resume —
-is unchanged, so the two files stay diffable.
+Artifacts land in ``<OPT_FOLDER>_lbfgs_activation_{scheme}/`` (separate tree from
+the ensemble script, so the two never overwrite):
 
-Frequentist sibling of ``04_optimize_hmc_chains.py``. Instead of sampling a
-posterior with NUTS, stage 2 runs **L-BFGS to a local optimum from each of the
-K perturbed Adam warm-starts**, then summarizes the ensemble of K optimized
-layouts with a per-position mean and std.
+    layout_best.pt      best-scoring L-BFGS layout (mountain-projected)
+    layout_mean.pt      per-group mean position + std (aligned ensemble)
+    layouts_all.pt      aligned (K, n_det, 2) + per-run U + source + perm
+    optimize_log.json   Adam + L-BFGS logs + ensemble stats + config
+    optimize_curves.png / layout_ensemble.png
 
-Per scheme:
+Usage:
 
-1.  Sample the scheme's initial layout (`mountain.sample_initial_layout`) and
-    create K = `N_CHAINS` Gaussian perturbations of it (std
-    `INIT_OVERDISP_SIGMA`, projected back to the mountain).
-2.  Run Adam (`N_ADAM_EPOCHS`) independently from each perturbed start → K
-    Adam-best layouts.
-3.  Run L-BFGS (`LBFGS_MAX_ITER`) from each Adam-best on a FIXED primary batch
-    (deterministic objective for the line search) → K refined layouts.
-4.  **Align** the K refined layouts so each output group corresponds to the
-    same *physical position*, not the same detector index. Because the FNN /
-    recon are permutation-equivariant, detector index i is not the same unit
-    across runs — so we match each run's detectors to a reference layout by
-    closest position (Hungarian / `linear_sum_assignment`). This makes the
-    grouping network-input invariant.
-5.  Per aligned group: **mean and std** of (x, y) across the K runs.
-
-The "combined" run pools the K Adam-bests from every scheme, refines all of
-them with L-BFGS, and aligns the full K * len(INIT_SCHEMES) ensemble.
-
-Artifacts (per scheme + "combined") land in
-``<OPT_FOLDER>_lbfgs_activation_{scheme}/`` — a separate tree from the ensemble
-script's, so the two runs never overwrite each other:
-
-    layout_best.pt          best-scoring L-BFGS layout (mountain-projected)
-    layout_mean.pt          per-group mean position + std (aligned ensemble)
-    layouts_all.pt          aligned (K, n_det, 2) + per-run U + source + perm
-    optimize_log.json       Adam + L-BFGS logs + ensemble stats + config
-    optimize_curves.png     all Adam chains U + all L-BFGS refinements U
-    layout_ensemble.png     mountain top-down: ensemble points + mean + 1σ ellipses
-
-Run from the v6 folder:
-
-    cd TambOpt
-    python 04_optimize_lbfgs_activation.py
-    python 04_optimize_lbfgs_activation.py --objective detectors --chains 1
-
-Then score it against the kernel on events nothing has touched:
-
+    python scripts/04_optimize_lbfgs_activation.py
+    python scripts/04_optimize_lbfgs_activation.py --objective detectors --chains 1
     python plots/eval_activation_counts.py --layout \\
         "<OPT_FOLDER>_lbfgs_activation_grid/layout_best.pt"
 """
@@ -97,7 +63,7 @@ from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 import numpy as np
 import torch
 
-import modules_v6   # sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.dual_surrogate import DualSpeciesSurrogate
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,

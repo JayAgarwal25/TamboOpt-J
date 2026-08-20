@@ -1,12 +1,9 @@
 """Differentiable mountain surface function Up = g(North, East).
 
-v6-local mirror of modules_v4/tr_surface_map.py (`SurfaceEastMap`) with the roles
-of Up and East swapped — diff the two files to see the (North, Up)→East vs
-(North, East)→Up change. SurfaceUpMap builds a regular 256×256 grid of Up values
-over the (North, East) bounding box of the detector centroids using scipy's
-LinearNDInterpolator on the 2161 centroid scatter. At runtime, forward(north,
-east) performs an F.grid_sample bilinear lookup which is differentiable w.r.t.
-(north, east).
+`SurfaceUpMap` builds a regular 256x256 grid of Up over the (North, East) bbox of
+the detector centroids (scipy `LinearNDInterpolator` on the 2161-centroid
+scatter). `forward(north, east)` is an `F.grid_sample` bilinear lookup, so it is
+differentiable in (north, east).
 
 Usage:
     from modules_v6.legacy_core.tr_geometry      import load_tr_mountain

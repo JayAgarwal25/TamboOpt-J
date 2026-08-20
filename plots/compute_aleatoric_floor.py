@@ -47,7 +47,7 @@ if _HERE not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
 from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
 from modules_v6.tau_showers import load_tau_primaries

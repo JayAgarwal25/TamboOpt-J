@@ -45,7 +45,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
-import modules_v6  # triggers sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.deepsets_surrogate import DeepSetsSurrogate
 from modules_v6.fnn_surrogate import compute_normalization
 from modules_v6.constants import (

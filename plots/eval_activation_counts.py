@@ -66,7 +66,7 @@ import matplotlib.tri as mtri
 from matplotlib.colors import Normalize
 from matplotlib.ticker import MaxNLocator
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 import showerdata
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.fnn_surrogate_ne import place_clouds_enu

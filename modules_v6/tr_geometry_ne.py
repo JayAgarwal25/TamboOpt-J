@@ -1,12 +1,8 @@
 """(North, East) projection + initial-layout helpers.
 
-v6-local mirror of `MountainData.project_to_mountain` and
-`MountainData.sample_initial_layout` from modules_v4/tr_geometry.py — diff those
-methods against the functions here to see the (North, Up)→(North, East) change.
-They are free functions (not MountainData methods) because MountainData lives in
-modules_v4 and stays untouched; pass the loaded `mountain` in. Centroid columns
-are East = 0 and **North = 1** of `mountain.centroids_ENU`, and the East bbox
-`[east_lo, east_hi]` replaces the Up box `[u_min, u_max]`.
+Free functions rather than `MountainData` methods — pass the loaded `mountain`
+in. Centroid columns are East = 0 and **North = 1** of `mountain.centroids_ENU`;
+the detector box is the East bbox `[east_lo, east_hi]`.
 """
 
 import math

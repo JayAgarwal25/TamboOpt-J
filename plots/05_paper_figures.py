@@ -62,7 +62,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-import modules_v6  # noqa: F401 -- sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.constants import PAPER_FIGURES_DIR
 import paper_style as ps
 import geometry_plots as gp

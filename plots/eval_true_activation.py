@@ -47,7 +47,7 @@ for _p in (_V6, _HERE):                                     # _HERE: eval_true_u
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.opt_core import (

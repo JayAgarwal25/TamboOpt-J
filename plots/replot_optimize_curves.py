@@ -21,7 +21,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(_HERE) not in sys.path:
     sys.path.insert(0, os.path.dirname(_HERE))
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 import plots.opt_plotting as _plt
 from modules_v6.constants import OPT_FOLDER
 

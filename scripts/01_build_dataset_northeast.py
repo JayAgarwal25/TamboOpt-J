@@ -25,7 +25,7 @@ from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
 import torch
 
-import modules_v6   # triggers sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.fnn_surrogate_ne import (
     build_training_pairs, compute_normalization,
 )

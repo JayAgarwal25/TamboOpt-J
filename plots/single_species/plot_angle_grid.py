@@ -29,7 +29,7 @@ for _p in (_V6, _HERE):
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.legacy_core.generate_showers import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in legacy_core.generate_showers
 from allshowers.generate_showers import (
     run_point_count_fm, run_allshowers, build_direction_vector,

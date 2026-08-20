@@ -44,18 +44,10 @@ W_PR    = 5e5
 W_DIV   = 1e3
 
 # Reconstructability thresholds.
-#
-# LAYOUT_THRESHOLD was 5e-2, which is not a physical hit criterion (a detector
-# "seeing" 0.05 particles) and, worse, sits far inside the soft indicator's own
-# transition width (~1/tau_layout = 0.2): sigmoid(5*(0 - 0.05)) = 0.44, so a
-# COMPLETELY DARK detector contributed 0.44 to the count and 100 dark detectors
-# floored the count at ~44/100. Measured counts never fell below 61 and r
-# pinned at exactly 1.0000 for every event, making the whole term (and U_PR)
-# a layout-independent constant with zero gradient.
-#
-# 1.0 = "detector saw at least one particle": dark -> 0.0067, floor 0.67/100.
-# The detector count then spans p10=13 / p50=48 / p90=82, so the 10-detector
-# minimum below is finally a binding constraint rather than a vacuous one.
+# 1.0 = "saw at least one particle". Do NOT lower it: at the old 5e-2 a DARK
+# detector scored sigmoid(5*(0-0.05)) = 0.44, flooring the count at ~44/100, so
+# r pinned at 1.0000 for every event and the term had zero gradient. At 1.0 a
+# dark detector gives 0.0067 and the count spans p10=13 / p50=48 / p90=82.
 LAYOUT_THRESHOLD      = 1.0
 RECONSTRUCT_THRESHOLD = 10.0   # physical minimum detectors to reconstruct
 
@@ -67,19 +59,13 @@ RECONSTRUCT_THRESHOLD = 10.0   # physical minimum detectors to reconstruct
 TAU_LAYOUT      = 5.0
 TAU_RECONSTRUCT = 0.2
 
-# Soft caps on the per-event 1/(err^2 + eps) reward, sized from the measured
-# reward distribution on the trained nets (20k events, grid layout) rather than
-# from the eps ceiling alone. Rule: keep the cap well above the term's MEDIAN
-# reward so the bulk still discriminates, low enough to pull in the tail.
-#
-#   term   median  hard ceiling  top-5% share of U   -> with cap below
-#   theta   218      1000            14.5%              10.3%
-#   phi       7.8    1000            49.2%              14.1%
-#   E        27.6     100            12.9%               9.3%
-#
-# phi is the genuinely concentrated one (the recon is poor at phi: median error
-# 0.36 rad), so it gets a much tighter cap; its median is far below 50 so the
-# bulk is untouched. theta/phi share U_angle but need different caps.
+# Soft caps on the per-event 1/(err^2 + eps) reward. Sized from the measured
+# reward distribution (20k events, grid layout): well above each term's MEDIAN so
+# the bulk still discriminates, low enough to pull in the tail.
+#   term   median   top-5% share of U   -> with cap
+#   theta   218          14.5%             10.3%
+#   phi       7.8        49.2%             14.1%   (recon is poor at phi: median
+#   E        27.6        12.9%              9.3%    error 0.36 rad -> tighter cap)
 CAP_THETA = 500.0
 CAP_PHI   = 50.0
 CAP_E     = 80.0
@@ -136,33 +122,24 @@ def offmesh_penalty(x_det: torch.Tensor, y_det: torch.Tensor,
                     mesh_en: torch.Tensor, r0: float) -> torch.Tensor:
     """Mean penalised excess distance beyond `r0` of the nearest mesh centroid.
 
-    Huber-shaped in the normalised excess u = (d - r0)/r0: u^2 while u <= a,
-    then a linear continuation 2a*u - a^2 (value and slope both continuous at
-    u = a). Quadratic near the wall so it is smooth where the optimizer
-    actually works, linear far away so the far field cannot dominate.
+    Huber-shaped in the normalised excess u = (d - r0)/r0: u^2 up to u = a, then
+    the linear continuation 2a*u - a^2 (value and slope continuous at the knee).
+    Quadratic where the optimizer works, linear far away so the far field cannot
+    dominate. Normalised by r0 and averaged over detectors, so the weight means
+    the same thing at any mesh scale or detector count.
 
-    Why this exists: nothing in U knew the mountain existed. The only geometry
-    was `project_to_mountain_ne`, applied under no_grad AFTER the optimizer
-    step, and in L-BFGS only once per sweep chunk. So for a whole chunk the
-    optimizer ran free, took the layout a median 29 m / p99 187 m / max 1272 m
-    off the mesh — past the 91.3 m radius where the stage-1 training layouts
-    were snapped, i.e. where the surrogate has no data — and happily hill-
-    climbed the extrapolation, reporting U 36.2 -> 37.7 out there. The snap at
-    the chunk end then dragged it back and U collapsed to 16.18 (one run
-    returned 100 detectors on 11 distinct points, 28 stacked on one).
+    Why it exists: U itself knew nothing about the mountain. `project_to_mountain_ne`
+    ran under no_grad AFTER the step (once per L-BFGS chunk), so the optimizer was
+    free to hill-climb the surrogate's extrapolation a median 29 m / p99 187 m /
+    max 1272 m off-mesh — past the 91.3 m radius where training layouts were
+    snapped — reporting U 36.2 -> 37.7 out there. The end-of-chunk snap then
+    collapsed U to 16.18 (one run: 100 detectors on 11 distinct points).
 
-    This makes the boundary part of the objective, so the optimizer feels it
-    DURING the chunk instead of being caught at the end. Normalised by r0 and
-    averaged over detectors, so the weight means the same thing at any mesh
-    scale or detector count.
-
-    `r0` is the ONSET radius, which callers set to PENALTY_ONSET_FRAC * max_gap
-    — inside the snap radius on purpose (see that constant). At the default
-    0.75 the wall starts at 68.5 m and bites at the 91.3 m snap radius with a
-    gradient of 9.7e-3 per metre, ~20x the utility's measured outward pull of
-    ~5e-4, putting the balance point at ~70 m — in-band, which is the whole
-    point. A layout in the inner three quarters of the band still scores
-    exactly as it did before.
+    `r0` is the ONSET radius (callers pass PENALTY_ONSET_FRAC * max_gap), inside
+    the snap radius on purpose. At 0.75 the wall starts at 68.5 m and at the
+    91.3 m snap radius pushes back with 9.7e-3 per metre, ~20x the utility's
+    outward pull of ~5e-4 — balance point ~70 m, in-band. Layouts in the inner
+    three quarters of the band score exactly as before.
     """
     d2 = ((x_det[:, None] - mesh_en[None, :, 0]) ** 2
           + (y_det[:, None] - mesh_en[None, :, 1]) ** 2)
@@ -184,32 +161,24 @@ def utility_of_xy(x_det: torch.Tensor,
                   penalty_r0: float = None):
     """Composite U for an (East, North) layout against a primary batch.
 
-    Detector coords are (East, North) to match the ENU h5 convention — but this
-    function is order-agnostic: it feeds the pair straight to the FNN + recon,
-    both trained on the same `xy` column order, so consistency (not the physical
-    axis meaning) is all that matters here.
+    Order-agnostic: the pair goes straight to the FNN + recon, both trained on the
+    same `xy` column order, so only consistency matters here, not axis meaning.
 
-    `fnn` is the dual-species wrapper: both per-species surrogates are evaluated
-    with the same primary + layout and physically combined, so the backprop into
-    (x_det, y_det) flows through BOTH models. Mirrors the inner loop of
-    `_run_optimization` in 04_optimize.py (the U_PR term is computed but
-    deliberately omitted from the composite, matching production).
+    `fnn` is the dual-species wrapper — both per-species surrogates run on the same
+    primary + layout and combine physically, so gradients reach (x_det, y_det)
+    through BOTH. U_PR is computed but deliberately left out of the composite,
+    matching production.
 
-    NOT decorated with `@torch.no_grad()` so the L-BFGS optimizer can
-    differentiate it; the gradient-free DE optimizers call it inside their own
-    `no_grad` block.
+    NOT `@torch.no_grad()`-decorated, so L-BFGS can differentiate it; the DE
+    optimizers wrap their own calls instead.
 
-    `mesh_en` (n_centroids, 2) + `penalty_w` > 0 subtract the differentiable
-    off-mesh penalty (see offmesh_penalty), putting the mountain boundary into
-    the objective itself. OFF by default, so every existing caller — including
-    plots/eval_true_utility.py, which relies on this function being unmodified
-    to guarantee it scores exactly what the optimizer scored — gets the same
-    number as before. `penalty_r0` defaults to the caller's max_gap.
-
-    The returned U is the PENALISED objective, i.e. what the optimizer should
-    select on; the raw utility and the penalty are both in `parts` so the logs
-    can separate them. With r0 = max_gap a converged in-band layout has penalty
-    exactly 0, so reported U stays comparable to earlier runs."""
+    `mesh_en` + `penalty_w` > 0 subtract the differentiable off-mesh penalty,
+    putting the mountain boundary inside the objective. OFF by default so existing
+    callers — notably plots/eval_true_utility.py, which depends on scoring exactly
+    what the optimizer scored — get identical numbers. The returned U is the
+    PENALISED objective; raw utility and penalty are both in `parts`. With
+    r0 = max_gap a converged in-band layout has penalty exactly 0.
+    """
     B = primary_batch.shape[0]
     xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
     xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
@@ -258,45 +227,28 @@ def utility_of_xy(x_det: torch.Tensor,
     return U, r, parts
 
 
-# Divisor putting particles/shower into the same range as the composite U.
+# Divisor putting particles/shower into the same range as the composite U (~35).
+# The 04 optimizers assume an objective of order tens (OFFMESH_PENALTY_W is quoted
+# "in units of U", GRAD_CLIP=100), so an unscaled objective would swamp the
+# boundary penalty.
 #
-# Every constant the 04 optimizers were tuned with assumes an objective of order
-# tens: OFFMESH_PENALTY_W is quoted "in units of U", GRAD_CLIP is 100,
-# SCORING_ACCEPT_TOL is a 5% band. Unscaled particles/shower would swamp the
-# off-mesh penalty and the boundary would stop existing.
-#
-# Calibrated on the SURROGATE, which is what this objective actually reads, and
-# that distinction is the whole reason this comment is long. Measured on the grid
-# layout over 4000 corpus primaries:
-#
-#     surrogate   1.98e4 particles/shower,  47.4 soft detectors
-#     kernel      3.77e5 particles/shower,  34.8 soft detectors   (held-out reserve,
-#                                                     plots/eval_activation_counts.py)
-#
-# The surrogate is ~19x LOW on total particles while ~36% HIGH on detector count —
-# it spreads too little signal over too many detectors. So a scale picked from the
-# kernel number puts the objective at ~2 and leaves the penalty ~19x overweight,
-# which is what 1e4 did. 500 puts the grid layout at ~40, next to U ~ 35.
-#
-# It is a pure rescale — it cannot change which layout wins a run — but it does set
-# the objective-to-penalty ratio, so it is not free to get wrong.
+# Calibrated on the SURROGATE, not the kernel — that is what this objective reads.
+# Grid layout, 4000 corpus primaries:
+#     surrogate   1.98e4 particles/shower, 47.4 soft detectors
+#     kernel      3.77e5 particles/shower, 34.8 soft detectors
+# The surrogate is ~19x low on particles but ~36% high on detector count, so a
+# kernel-derived scale leaves the penalty ~19x overweight. 500 puts grid at ~40.
+# Pure rescale — cannot change which layout wins, but does set the
+# objective-to-penalty ratio.
 PARTICLE_SCALE = 500.0
 
-# Same job as PARTICLE_SCALE for mode="distinct", kept separate because the overlap
-# correction divides the summed flux by m_d, so the two modes do not share a range.
-#
-# MEASURED m_d (median over detectors), not the idealised square-lattice estimate:
-#
-#     baseline grid          1.61   (NN spacing 67 m against sigma = 50 m)
-#     distinct-optimised     1.25   (NN spacing 120 m — the optimiser spreads until
-#                                    the double counting is nearly gone)
-#
-# At 100 the objective runs ~123 (grid) to ~159 (optimised), i.e. ~3-4x above the
-# composite U ~ 35 that OFFMESH_PENALTY_W is quoted against, so the boundary is
-# correspondingly softer here than in the ensemble script. Left at 100 anyway
-# because runs already exist at this value and rescaling would silently break
-# comparison against them; revisit only alongside OFFMESH_PENALTY_W, and never
-# mid-experiment. See the calibration note on PARTICLE_SCALE for the method.
+# PARTICLE_SCALE's counterpart for mode="distinct"; separate because the overlap
+# correction divides by m_d, so the two modes do not share a range.
+# MEASURED m_d (median over detectors): grid 1.61 (NN spacing 67 m vs sigma 50 m),
+# distinct-optimised 1.25 (NN spacing 120 m). At 100 the objective runs ~123-159,
+# i.e. ~3-4x above the U ~ 35 that OFFMESH_PENALTY_W is quoted against.
+# Left at 100: runs exist at this value and rescaling breaks comparison against
+# them. Revisit only alongside OFFMESH_PENALTY_W, never mid-experiment.
 DISTINCT_SCALE = 100.0
 
 
@@ -305,38 +257,25 @@ def overlap_multiplicity(x_det: torch.Tensor, y_det: torch.Tensor,
     """Per-detector `m_d = sum_j exp(-r_dj^2 / (2 sigma^2))` (>= 1): how many
     detectors' worth of kernel weight lands on the particles detector d sees.
 
-    Why the double counting exists. `tr_plane_kernel` gives every detector its own
-    UNNORMALISED Gaussian, `spatial = exp(-(dx^2+dy^2) / (2 sigma^2))` (peak 1),
-    reduced independently per detector with no exclusivity. So
+    The kernel gives each detector its own UNNORMALISED Gaussian with no
+    exclusivity, so `sum_d count_d = sum_p e_p * M_p` with M_p the total weight
+    particle p receives. Counting each particle once means dividing by M_p, but
+    the surrogate only exposes per-detector aggregates — so evaluate it at the
+    detector instead, which is >= 1 automatically (the j = d term is 1, no clamp).
 
-        sum_d count_d = sum_p e_p * M_p,      M_p = sum_d exp(-r_pd^2 / 2 sigma^2)
+    The weight must be the kernel's OWN Gaussian, not an overlap integral:
+    `exp(-r^2/(4 sigma^2))` (two normalised Gaussians) looks natural but
+    over-corrects by exactly 2x when detectors are dense. With the form above both
+    limits are right — spacing >> sigma gives m -> 1, spacing << sigma gives
+    m -> 2 pi sigma^2 / s^2, so the corrected sum tends to rho * area.
 
-    where `M_p` is the total kernel weight particle p receives. Counting each
-    particle ONCE means dividing its contribution by max(1, M_p). The surrogate
-    only reports per-detector aggregates, so `M_p` per particle is unavailable —
-    but evaluating it at the detector position instead gives `m_d` above, which is
-    >= 1 automatically (the j = d term is exactly 1) and so needs no clamp.
+    Two coincident detectors give m = 2 and half a count each, so stacking gains
+    nothing — the collapse degeneracy is removed inside the objective rather than
+    fenced off by a spacing penalty.
 
-    WEIGHT MATTERS, and it is the kernel's own Gaussian, not an overlap integral.
-    `exp(-r^2 / (4 sigma^2))` — the overlap of two NORMALISED Gaussians — is the
-    natural-looking choice and is wrong here: it gets the isolated limit right but
-    over-corrects by exactly 2x when detectors are dense, because
-    `int exp(-r^2/4 sigma^2) = 4 pi sigma^2` against the kernel's own
-    `int exp(-r^2/2 sigma^2) = 2 pi sigma^2`. With the form above both limits are
-    right: spacing s >> sigma gives m -> 1 (sum unchanged), and s << sigma gives
-    m -> 2 pi sigma^2 / s^2, so `sum_d count_d / m_d -> rho * area` — the flux
-    through the covered region, counted once.
-
-    Two coincident detectors therefore give m = 2 and half a count each: stacking
-    gains exactly nothing, which removes the collapse degeneracy from inside the
-    objective rather than fencing it off with a minimum-spacing penalty.
-
-    The approximation that could bite: it assumes particle density is smooth over
-    `sigma`, so a detector's own count stands in for the local density. A shower
-    core much narrower than 50 m would be over-corrected. Counting distinct
-    particles exactly needs the per-PARTICLE (point, detector) tensor, which the
-    surrogate does not expose — it predicts one aggregate per detector, and a union
-    cannot be recovered from marginals.
+    Assumes particle density is smooth over `sigma`; a shower core much narrower
+    than 50 m is over-corrected. Exact distinct counting needs the per-particle
+    (point, detector) tensor, which the surrogate does not expose.
     """
     d2 = ((x_det[:, None] - x_det[None, :]) ** 2
           + (y_det[:, None] - y_det[None, :]) ** 2)
@@ -351,47 +290,31 @@ def activation_of_xy(x_det: torch.Tensor,
                      mesh_en: Optional[torch.Tensor] = None,
                      penalty_w: float = 0.0,
                      penalty_r0: Optional[float] = None):
-    """How much a layout COLLECTS, differentiably — the objective for
-    `04_optimize_lbfgs_activation.py`.
+    """How much a layout COLLECTS, differentiably — the activation objective.
 
-    The training-time twin of `plots/eval_activation_counts.py::activation`, with
-    two differences forced by what it is for:
+    Training-time twin of `plots/eval_activation_counts.py::activation`, but fed by
+    the SURROGATE, because the kernel's `compute_labels_batch` is `@torch.no_grad()`
+    and cannot be optimized through. The two disagree ~19x on total particles (see
+    PARTICLE_SCALE), so these numbers are NOT comparable to the evaluator's — that
+    script's kernel scoring on held-out events is the honest check.
 
-      * labels come from the SURROGATE, not the kernel — `compute_labels_batch` is
-        decorated `@torch.no_grad()`, so the ground truth cannot be optimized
-        through. The two disagree by ~19x on total particles (see PARTICLE_SCALE),
-        so the numbers here are NOT comparable to the evaluator's; that script's
-        kernel scoring on held-out events is the honest check afterwards.
-      * the summed modes are divided by a scale constant (see PARTICLE_SCALE).
-
-        counts    = expm1(fnn(primary, xy)[..., 0])       raw particles/detector
+        counts    = expm1(fnn(primary, xy)[..., 0])       particles/detector
         p         = sigmoid(TAU_LAYOUT * (counts - LAYOUT_THRESHOLD))
         particles = counts.sum(1) / PARTICLE_SCALE
-        detectors = p.sum(1)                              the soft trigger count
+        detectors = p.sum(1)                              soft trigger count
         distinct  = (counts / m).sum(1) / DISTINCT_SCALE  m = overlap_multiplicity
 
-    `mode` picks which mean is maximized; ALL THREE land in `parts` either way, so
-    a run optimizing one can be read against the others. What each is for:
+    `mode` picks which is maximized; all three land in `parts` either way.
+        particles  total flux — maximized EXACTLY by stacking on the densest point,
+                   since the kernel double-counts. Use only knowing that.
+        detectors  coverage; saturates at 1 each, so it pays to spread. The
+                   composite U's reconstructability gate is a function of this.
+        distinct   overlap-corrected flux: collection area, no stacking degeneracy.
 
-        particles   total flux through the instrumented positions. Maximized
-                    EXACTLY by stacking every detector on the densest point — the
-                    kernel double-counts shared particles — so use it only when
-                    that is understood.
-        detectors   trigger multiplicity / footprint coverage. Saturates at 1 per
-                    detector, so it pays to spread. This is the one the composite
-                    U's reconstructability gate is a function of.
-        distinct    particles counted once each, via the geometric overlap
-                    correction. What "maximize collection area" actually means,
-                    and it has no stacking degeneracy.
-
-    What this deliberately does NOT contain: any reconstruction term. It rewards a
-    layout for sitting where the flux is, not for resolving direction or energy —
-    which is why it is a separate script rather than a term bolted onto
-    `utility_of_xy`, and why the two runs are expected to disagree.
-
-    Returns (U, r, parts) with the same shape as `utility_of_xy` so the ensemble
-    machinery is a drop-in; `r` is the same reconstructability the composite uses,
-    reported (not optimized) so the two runs' logs stay comparable.
+    Contains NO reconstruction term by design — it rewards sitting where the flux
+    is, not resolving direction or energy, so it is expected to disagree with
+    `utility_of_xy`. Returns (U, r, parts) in the same shape so the ensemble
+    machinery is a drop-in; `r` is reported, not optimized.
     """
     if mode not in ("particles", "detectors", "distinct"):
         raise ValueError("mode must be 'particles', 'detectors' or 'distinct', "

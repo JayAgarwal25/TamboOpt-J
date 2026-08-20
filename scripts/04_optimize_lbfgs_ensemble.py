@@ -1,44 +1,31 @@
 """Optimize detector positions: pre-Adam perturbation, then L-BFGS ensemble.
 
-Frequentist sibling of ``04_optimize_hmc_chains.py``. Instead of sampling a
-posterior with NUTS, stage 2 runs **L-BFGS to a local optimum from each of the
-K perturbed Adam warm-starts**, then summarizes the ensemble of K optimized
-layouts with a per-position mean and std.
+The recommended Stage-4 entry. Per scheme:
 
-Per scheme:
+1. Perturb the scheme's initial layout into K = `N_CHAINS` Gaussian variants
+   (std `INIT_OVERDISP_SIGMA`, projected back to the mountain).
+2. Run Adam (`N_ADAM_EPOCHS`) independently from each -> K Adam-best layouts.
+3. Refine each with L-BFGS (`LBFGS_MAX_ITER`) on a FIXED primary batch, so the
+   line search sees a deterministic objective -> K refined layouts.
+4. **Align** the K layouts by physical position, not detector index: the nets are
+   permutation-equivariant, so index i is not the same unit across runs. A
+   Hungarian assignment (`linear_sum_assignment`) matches each run's detectors to
+   a reference, making the grouping network-input invariant.
+5. Report per-group mean and std of (x, y) across the K runs.
 
-1.  Sample the scheme's initial layout (`mountain.sample_initial_layout`) and
-    create K = `N_CHAINS` Gaussian perturbations of it (std
-    `INIT_OVERDISP_SIGMA`, projected back to the mountain).
-2.  Run Adam (`N_ADAM_EPOCHS`) independently from each perturbed start → K
-    Adam-best layouts.
-3.  Run L-BFGS (`LBFGS_MAX_ITER`) from each Adam-best on a FIXED primary batch
-    (deterministic objective for the line search) → K refined layouts.
-4.  **Align** the K refined layouts so each output group corresponds to the
-    same *physical position*, not the same detector index. Because the FNN /
-    recon are permutation-equivariant, detector index i is not the same unit
-    across runs — so we match each run's detectors to a reference layout by
-    closest position (Hungarian / `linear_sum_assignment`). This makes the
-    grouping network-input invariant.
-5.  Per aligned group: **mean and std** of (x, y) across the K runs.
+A "combined" run pools the Adam-bests from every scheme before refining.
 
-The "combined" run pools the K Adam-bests from every scheme, refines all of
-them with L-BFGS, and aligns the full K * len(INIT_SCHEMES) ensemble.
+Artifacts land in ``<OPT_FOLDER>_lbfgs_ensemble_full_corpus_{scheme}/``:
 
-Artifacts (per scheme + "combined") land in
-``<OPT_FOLDER>_lbfgs_ensemble_{scheme}/``:
+    layout_best.pt      highest-U L-BFGS layout (mountain-projected)
+    layout_mean.pt      per-group mean position + std (aligned ensemble)
+    layouts_all.pt      aligned (K, n_det, 2) + per-run U + source + perm
+    optimize_log.json   Adam + L-BFGS logs + ensemble stats + config
+    optimize_curves.png / utility_components.png / layout_ensemble.png
 
-    layout_best.pt          highest-U L-BFGS layout (mountain-projected)
-    layout_mean.pt          per-group mean position + std (aligned ensemble)
-    layouts_all.pt          aligned (K, n_det, 2) + per-run U + source + perm
-    optimize_log.json       Adam + L-BFGS logs + ensemble stats + config
-    optimize_curves.png     all Adam chains U + all L-BFGS refinements U
-    layout_ensemble.png     mountain top-down: ensemble points + mean + 1σ ellipses
+Usage:
 
-Run from the v6 folder:
-
-    cd TambOpt
-    python 04_optimize_lbfgs_ensemble.py
+    python scripts/04_optimize_lbfgs_ensemble.py
 """
 import importlib.util
 import json
@@ -54,7 +41,7 @@ from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 import numpy as np
 import torch
 
-import modules_v6   # sys.path injection for v3 + v4
+import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.dual_surrogate import DualSpeciesSurrogate
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
