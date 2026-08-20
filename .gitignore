@@ -15,7 +15,11 @@ slurm-*.out
 decay_locations/*.h5
 decay_locations/malata.jld2
 
-# Generated figures — archived to
-# $RUN_ROOT/figures_archive/ (see modules_v6.constants.FIGURES_ARCHIVE)
+# Generated figures live outside the repo (modules_v6.constants.FIGURES_DIR);
+# these two guard against them being written back here by an older --outdir.
 plots/eda_outputs/
 plots/paper_figures/
+
+# Claude Code worktrees — never commit these (one was accidentally
+# recorded as a gitlink; the branch itself is the durable copy)
+.claude/worktrees/

@@ -11,9 +11,9 @@ Recon plot      : raw primary encoding (dir_x, dir_y, dir_z, log_e_norm) over
                   than ground truth, so the scatter reflects the end-to-end
                   FNN -> recon error.
 
-Artifacts:
-    outputs/fnn_target_vs_pred.png
-    outputs/recon_target_vs_pred.png
+Artifacts (single-model path; the --dual set is listed below):
+    FNN_FOLDER/fnn_target_vs_pred.png
+    RECON_FOLDER/recon_target_vs_pred.png
 
 Run from the v6 folder:
 

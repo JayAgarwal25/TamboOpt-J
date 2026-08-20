@@ -48,4 +48,4 @@ something the automated set does not.
 Figures are **not** written into this directory and are not tracked in git.
 `05_paper_figures.py` defaults to `modules_v6.constants.PAPER_FIGURES_DIR`; the
 hand-run tools take an explicit `--out`. Both live under
-`constants.FIGURES_ARCHIVE` on holylfs05.
+`constants.FIGURES_DIR` on holylfs05.
