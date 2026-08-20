@@ -142,6 +142,76 @@ class MountainData:
         return (self.east_entry - east) / self.layer_east_dx
 
 
+# ── Loader stages ─────────────────────────────────────────────────────────────
+
+def _read_detector_region(h5_path: str, group: str, det_key: str):
+    """Read the mesh and select the detector-region faces.
+
+    Returns (verts, faces, det_idx, h5_loc): the ECEF vertices (3, n_v), the
+    0-indexed faces (3, n_faces), the 0-indexed detector-region face indices,
+    and the mesh's own [lon_deg, lat_deg] site location.
+    """
+    with h5py.File(h5_path, "r") as f:
+        g        = f[group]
+        verts    = g["vertices"][...]          # (3, 90000) ECEF float64
+        faces    = g["faces"][...] - 1         # (3, 179996) 0-indexed
+        # `det_key` (e.g. "detector1") is NOT geometry — it is a 1-D array of
+        # 1-based (Julia) FACE INDICES into `faces` that select the observation /
+        # detector region (the deployable footprint) out of the full mesh. This is
+        # what picks the slope the optimiser moves detectors over. For malata it is
+        # 266 faces -> 162 unique vertices, a ~1.4 km patch at Up 2748-3712 m (a
+        # ~32 deg ramp); the rest of `faces` is the wider terrain + the whole-globe
+        # sphere and is deliberately excluded here. Subtract 1 for 0-based indexing.
+        det_idx  = g[det_key][...] - 1         # (266,) obs-region face indices, 0-indexed
+        h5_loc   = g["location"][...]          # [lon_deg, lat_deg]
+    return verts, faces, det_idx, h5_loc
+
+
+def _resolve_enu_origin(site_lon_deg: float, site_lat_deg: float, h5_loc: np.ndarray):
+    """ENU origin: explicit arg > mesh `location` dataset > module default."""
+    if site_lon_deg is None:
+        site_lon_deg = float(h5_loc[0])
+    if site_lat_deg is None:
+        site_lat_deg = float(h5_loc[1])
+    return site_lon_deg, site_lat_deg
+
+
+def _triangle_centroids_ecef(verts: np.ndarray, faces: np.ndarray, det_idx: np.ndarray) -> np.ndarray:
+    """Triangle centroids of the detector-region faces, in ECEF (3, n_tri)."""
+    tri_verts      = verts[:, faces[:, det_idx]]    # (3, 3, 2161)
+    centroids_ecef = tri_verts.mean(axis=1)          # (3, 2161)
+    return centroids_ecef
+
+
+def _centroids_to_enu(centroids_ecef: np.ndarray, site_lon_deg: float, site_lat_deg: float):
+    """Rotate the centroids to local ENU about the site origin.
+
+    Returns (centroids_ENU, East, North, Up): the (n_tri, 3) [East, North, Up]
+    array plus its three rows, which the bounding-box scalars are taken from.
+    """
+    enu = _ecef_to_enu(centroids_ecef, site_lon_deg, site_lat_deg)  # [East, North, Up]
+    East, North, Up = enu[0], enu[1], enu[2]
+
+    centroids_ENU = np.stack([East, North, Up], axis=1)   # (2161, 3) [East, North, Up]
+    return centroids_ENU, East, North, Up
+
+
+def _detector_region_vertices_enu(
+    verts:        np.ndarray,
+    faces:        np.ndarray,
+    det_idx:      np.ndarray,
+    site_lon_deg: float,
+    site_lat_deg: float,
+) -> np.ndarray:
+    """Unique triangle vertices of the detector region — the real surface corner
+    points (denser + truer than face centroids for the differentiable surface
+    map). Rotated to ENU about the same site origin.
+    """
+    uniq_v        = np.unique(faces[:, det_idx].reshape(-1))
+    verts_enu     = _ecef_to_enu(verts[:, uniq_v], site_lon_deg, site_lat_deg)   # (3, n_v)
+    return np.stack([verts_enu[0], verts_enu[1], verts_enu[2]], axis=1)  # (n_v, 3) [E,N,U]
+
+
 # ── Top-level loader ──────────────────────────────────────────────────────────
 
 def load_tr_mountain(
@@ -179,42 +249,15 @@ def load_tr_mountain(
                         callers are unaffected.
         east_min / east_max : legacy parameters, ignored.  Remove from call sites.
     """
-    with h5py.File(h5_path, "r") as f:
-        g        = f[group]
-        verts    = g["vertices"][...]          # (3, 90000) ECEF float64
-        faces    = g["faces"][...] - 1         # (3, 179996) 0-indexed
-        # `det_key` (e.g. "detector1") is NOT geometry — it is a 1-D array of
-        # 1-based (Julia) FACE INDICES into `faces` that select the observation /
-        # detector region (the deployable footprint) out of the full mesh. This is
-        # what picks the slope the optimiser moves detectors over. For malata it is
-        # 266 faces -> 162 unique vertices, a ~1.4 km patch at Up 2748-3712 m (a
-        # ~32 deg ramp); the rest of `faces` is the wider terrain + the whole-globe
-        # sphere and is deliberately excluded here. Subtract 1 for 0-based indexing.
-        det_idx  = g[det_key][...] - 1         # (266,) obs-region face indices, 0-indexed
-        h5_loc   = g["location"][...]          # [lon_deg, lat_deg]
+    verts, faces, det_idx, h5_loc = _read_detector_region(h5_path, group, det_key)
 
-    # ENU origin: explicit arg > mesh `location` dataset > module default.
-    if site_lon_deg is None:
-        site_lon_deg = float(h5_loc[0])
-    if site_lat_deg is None:
-        site_lat_deg = float(h5_loc[1])
+    site_lon_deg, site_lat_deg = _resolve_enu_origin(site_lon_deg, site_lat_deg, h5_loc)
 
-    # Triangle centroids in ECEF
-    tri_verts      = verts[:, faces[:, det_idx]]    # (3, 3, 2161)
-    centroids_ecef = tri_verts.mean(axis=1)          # (3, 2161)
+    centroids_ecef = _triangle_centroids_ecef(verts, faces, det_idx)
 
-    # Rotate to local ENU about the site origin
-    enu = _ecef_to_enu(centroids_ecef, site_lon_deg, site_lat_deg)  # [East, North, Up]
-    East, North, Up = enu[0], enu[1], enu[2]
+    centroids_ENU, East, North, Up = _centroids_to_enu(centroids_ecef, site_lon_deg, site_lat_deg)
 
-    centroids_ENU = np.stack([East, North, Up], axis=1)   # (2161, 3) [East, North, Up]
-
-    # Unique triangle vertices of the detector region — the real surface corner
-    # points (denser + truer than face centroids for the differentiable surface
-    # map). Rotated to ENU about the same site origin.
-    uniq_v        = np.unique(faces[:, det_idx].reshape(-1))
-    verts_enu     = _ecef_to_enu(verts[:, uniq_v], site_lon_deg, site_lat_deg)   # (3, n_v)
-    vertices_ENU  = np.stack([verts_enu[0], verts_enu[1], verts_enu[2]], axis=1)  # (n_v, 3) [E,N,U]
+    vertices_ENU = _detector_region_vertices_enu(verts, faces, det_idx, site_lon_deg, site_lat_deg)
 
     return MountainData(
         centroids_ENU = centroids_ENU,
