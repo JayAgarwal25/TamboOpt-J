@@ -49,11 +49,21 @@ drop them in favour of the three structural checks.
   identical in executable tokens, and each importer differing only by the
   renamed identifier or the dropped `legacy_core` path segment.
 
+- **Full Step-04 optimizer run** (`-p gpu_test`, after every step landed):
+  `04_optimize_lbfgs_ensemble.py --schemes grid --chains 1` with a truncated
+  budget (2 Adam epochs, 3 L-BFGS iters) ran to completion in 17.5 min, exit 0.
+  Surrogate + recon checkpoints loaded, L-BFGS got real gradients (6–27 closure
+  calls per chunk), and U climbed 32.2 → **+33.352** over 167 chunks — the
+  expected neighbourhood for a shortened budget. Output went to a suffixed dir
+  (`..._refactor_smoke_grid`) so nothing real was overwritten.
+
 ### Not run
 
 `sbatch slurm/run_all_script_batch_grid.sh` end to end against a scratch
-`RUN_LOCATION` (`pipeline_status.json` walking 00→04, final `U` near ~35).
-That is a multi-hour full-pipeline job, not a refactor gate.
+`RUN_LOCATION` (`pipeline_status.json` walking 00→04, final `U` near ~35). That
+is a multi-hour full-pipeline job including a full dataset rebuild; the Step-5
+element-wise gate plus the Step-04 run above cover the same ground for a
+refactor.
 
 ### Environment notes
 
