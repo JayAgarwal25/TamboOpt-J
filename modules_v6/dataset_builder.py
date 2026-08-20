@@ -1,15 +1,10 @@
-"""(North, East) label computation + dataset builder.
+"""Step-1 dataset builder: layouts, plane-aware labels, training tensors.
 
-The live label computation + dataset builder. It began as a (North, East) copy
-of the (North, Up) pair in modules_v6/fnn_surrogate.py; those originals have
-since been deleted, so this is now the only implementation. The convention
-differences from the retired (North, Up) version were:
-
-  - `surface` is a `SurfaceUpMap` (North, East)→Up instead of an East map;
-  - the kernel's y-coordinate is the *extrapolated* Up = surface(x_det, y_det),
-    while `z_cont` comes directly from the **defined** East (= y_det);
-  - layouts come from `detector_strategies_ne` (so `xy = (East, North)`, matching
-    the ENU convention of the h5 data files).
+Detectors are placed by horizontal map coordinates (North, East) — the ENU
+convention of the h5 data files — and `surface` is a `SurfaceUpMap` giving
+Up = g(North, East). The kernel itself is unchanged: it still sees North as the
+transverse coordinate and the **defined** East as the depth (`z_cont`), with the
+transverse Up coming from the extrapolated surface height.
 
 `encode_primary` / `compute_normalization` are reused unchanged from
 `fnn_surrogate` (re-exported for convenience).
@@ -25,7 +20,7 @@ import torch
 from modules_v6.legacy_core.tr_plane_kernel import GetCounts_planeaware
 
 from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM, SIGMA_SPATIAL
-from .detector_strategies_ne import (_STRATEGIES, _STRATEGY_FNS)
+from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
 from .fnn_surrogate import (encode_primary, compute_normalization,  # noqa: F401  (re-export)
                             _load_species_sidecar)
 
@@ -430,7 +425,7 @@ def build_training_pairs(mountain, surface,
     `_ResumeState`, which also owns the gpu_requeue resume checkpoint. Point
     clouds are never loaded whole: peak RAM is one chunk, not the corpus.
 
-    Layouts and labels use the (North, East) convention (`detector_strategies_ne`
+    Layouts and labels use the (North, East) convention (`detector_strategies`
     plus `compute_labels_batch` above, with `surface` a SurfaceUpMap).
 
     Returns:

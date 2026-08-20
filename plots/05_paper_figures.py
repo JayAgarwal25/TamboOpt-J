@@ -112,8 +112,8 @@ def load_malata_context():
     """notebooks/malata_tau_geometry.ipynb cells 2+3+7 (mountain, tau corpus,
     layouts, local terrain mesh, detector-region triangles)."""
     from modules_v6.legacy_core.tr_geometry import load_tr_mountain, _ecef_to_enu
-    from modules_v6.tr_surface_map_ne import SurfaceUpMap
-    from modules_v6.detector_strategies_ne import (
+    from modules_v6.surface_map import SurfaceUpMap
+    from modules_v6.detector_strategies import (
         layout_grid, layout_center_gaussian, layout_uniform_random, layout_latin_hypercube)
     from modules_v6.constants import (
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
@@ -185,7 +185,7 @@ def load_malata_context():
 
     # section 9's `rod(i)` -- places shower i via the pipeline's own
     # place_clouds_enu, exactly as 01_build_dataset_northeast.py does.
-    from modules_v6.fnn_surrogate_ne import place_clouds_enu, cloud_to_enu
+    from modules_v6.dataset_builder import place_clouds_enu, cloud_to_enu
     NLAY, PER, SIG = N_PLANES, 30, 20.0
     _lay = np.repeat(np.arange(NLAY), PER).astype(np.float32)
     _rng_rod = np.random.default_rng(0)
@@ -219,9 +219,9 @@ def load_trigger_context(n_showers_nb=300, n_seeds=15, seed_pick=7):
     notebook's own N_SHOWERS_NB=300 / N_SEEDS=15 defaults."""
     import pandas as pd
     import showerdata
-    from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu, cloud_to_enu
-    from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
-    from modules_v6.tr_surface_map_ne import SurfaceUpMap
+    from modules_v6.dataset_builder import compute_labels_batch, place_clouds_enu, cloud_to_enu
+    from modules_v6.detector_strategies import _STRATEGIES, _STRATEGY_FNS
+    from modules_v6.surface_map import SurfaceUpMap
     from modules_v6.legacy_core.tr_geometry import load_tr_mountain
     from modules_v6.opt_core import LAYOUT_THRESHOLD
     from modules_v6.constants import (
@@ -580,7 +580,7 @@ def load_ensemble_run(opt_dir):
 
 def make_density_figures(outdir, frac_by_name, textwidth_pt, run_dirs, vmax=DENSITY_VMAX):
     from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-    from modules_v6.tr_surface_map_ne import SurfaceUpMap
+    from modules_v6.surface_map import SurfaceUpMap
     from modules_v6.constants import (
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES)
 

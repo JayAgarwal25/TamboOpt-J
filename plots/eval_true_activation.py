@@ -48,7 +48,7 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.opt_core import (
     activation_of_xy, load_models, PARTICLE_SCALE, DISTINCT_SCALE,

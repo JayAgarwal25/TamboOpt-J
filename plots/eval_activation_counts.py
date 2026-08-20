@@ -69,8 +69,8 @@ from matplotlib.ticker import MaxNLocator
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 import showerdata
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.fnn_surrogate_ne import place_clouds_enu
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.dataset_builder import place_clouds_enu
+from modules_v6.surface_map import SurfaceUpMap
 from modules_v6.tr_geometry_ne import _ne_max_gap
 from modules_v6.opt_core import (
     LAYOUT_THRESHOLD, TAU_LAYOUT, RECONSTRUCT_THRESHOLD, TAU_RECONSTRUCT,

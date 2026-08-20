@@ -75,7 +75,7 @@ from modules_v6.constants import (
 from modules_v6.legacy_core.layout_optimization import LearnableXY
 from modules_v6.legacy_core.tr_geometry      import load_tr_mountain
 from modules_v6.tr_geometry_ne   import project_to_mountain_ne, sample_initial_layout_ne
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 
 # Shared optimizer core (objective, alignment, model loading, the gradient-turn
 # diagnostic, constants) lives in modules_v6/opt_core.py; the figures live in

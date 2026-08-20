@@ -7,7 +7,7 @@ differentiable in (north, east).
 
 Usage:
     from modules_v6.legacy_core.tr_geometry      import load_tr_mountain
-    from modules_v6.tr_surface_map_ne import SurfaceUpMap
+    from modules_v6.surface_map import SurfaceUpMap
 
     mountain = load_tr_mountain(...)
     surface  = SurfaceUpMap.from_mountain(mountain, grid_h=256, grid_w=256).to(device)

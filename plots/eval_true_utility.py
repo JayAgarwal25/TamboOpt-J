@@ -37,9 +37,9 @@ import torch
 
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 import showerdata
-from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu, encode_primary
+from modules_v6.dataset_builder import compute_labels_batch, place_clouds_enu, encode_primary
 from modules_v6.dual_surrogate import combine_species_outputs
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
 from modules_v6.opt_core import utility_of_xy, load_models

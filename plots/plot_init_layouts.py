@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
 from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
 from modules_v6.constants import (
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,

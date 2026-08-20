@@ -48,7 +48,7 @@ FS_LEGEND = 14
 @torch.no_grad()
 def project_ne_to_up(surface, north, east):
     """Map detector (North, East) → Up via the differentiable mountain surface
-    Up = g(North, East) (modules_v6.tr_surface_map_ne.SurfaceUpMap).
+    Up = g(North, East) (modules_v6.surface_map.SurfaceUpMap).
 
     The optimizers work in the North–East plane, so their layouts carry East, not
     Up. To draw them in the (North, Up) cross section, project each detector's East
@@ -161,10 +161,10 @@ def project_en_to_face(surface, east, north, frame):
 def cloud_to_face(cloud, frame, east_entry=None, layer_east_dx=None):
     """A PLACED shower cloud → cliff-face (strike, updip).
 
-    Thin composition of `fnn_surrogate_ne.cloud_to_enu` (undo the kernel's
+    Thin composition of `dataset_builder.cloud_to_enu` (undo the kernel's
     North/Up/z_cont packing) with `enu_to_face`, so a cloud can be overlaid on the
     same axes as the mountain and the detectors."""
-    from modules_v6.fnn_surrogate_ne import cloud_to_enu
+    from modules_v6.dataset_builder import cloud_to_enu
     from modules_v6.constants import EAST_ENTRY, LAYER_EAST_DX
     pts = cloud_to_enu(cloud,
                        east_entry=EAST_ENTRY if east_entry is None else east_entry,
@@ -178,7 +178,7 @@ def det_counts(E, log1p_space: bool = False):
     Two different things are called "E" in this codebase and they are NOT in the
     same space — mixing them up double-transforms the values:
 
-    * ``fnn_surrogate_ne.compute_labels_batch`` returns **raw counts**. The log1p
+    * ``dataset_builder.compute_labels_batch`` returns **raw counts**. The log1p
       is applied afterwards, by 01_build_dataset_northeast.py, when writing E.pt.
       Pass these through unchanged (``log1p_space=False``, the default).
     * the trained **surrogate** predicts in log1p space, because it was fitted to
@@ -187,7 +187,7 @@ def det_counts(E, log1p_space: bool = False):
       ``log1p_space=True``.
 
     Non-finite entries are zeroed, mirroring the ``torch.nan_to_num`` the builder
-    applies to the kernel output (fnn_surrogate_ne), so a single bad detector
+    applies to the kernel output (dataset_builder), so a single bad detector
     cannot poison a colour scale."""
     c = np.asarray(E, dtype=float)
     if log1p_space:

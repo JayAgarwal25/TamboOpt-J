@@ -26,7 +26,7 @@ from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 import torch
 
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.fnn_surrogate_ne import (
+from modules_v6.dataset_builder import (
     build_training_pairs, compute_normalization,
 )
 from modules_v6.constants import (
@@ -36,7 +36,7 @@ from modules_v6.constants import (
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
 from modules_v6.legacy_core.tr_geometry    import load_tr_mountain
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 
 
 # ── Config ───────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 """FNN surrogate for detector optimization v6.
 
 The FNN learns `(primary_features, layout) -> (E, T) per detector`. The dataset
-it trains on is built by `modules_v6/fnn_surrogate_ne.py`; this module holds the
+it trains on is built by `modules_v6/dataset_builder.py`; this module holds the
 primary encoding, the normalization statistics and the model itself.
 
 `FNNSurrogate` is retained so `plots/02_plot_nn_target_vs_pred.py` can still load

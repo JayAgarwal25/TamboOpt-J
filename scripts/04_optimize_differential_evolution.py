@@ -53,7 +53,7 @@ from modules_v6.reconstruction import Reconstruction
 from modules_v6.tr_geometry_ne import (
     _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
 )
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,

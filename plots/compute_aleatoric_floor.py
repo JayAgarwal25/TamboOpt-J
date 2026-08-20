@@ -12,7 +12,7 @@ primary, and its 7 strategy-rows all share the SAME realization — there is no
 primaries, draw M independent showers for each — PER SPECIES, with the SAME
 per-species AllShowers checkpoints + staging + anti-clip that built the dual corpus
 (00_generate_data_dual_species.py) — run the EXACT (North, East) training kernel
-(`fnn_surrogate_ne.compute_labels_batch`) with a fixed layout, and measure the
+(`dataset_builder.compute_labels_batch`) with a fixed layout, and measure the
 within-primary variance of the (same log/z-transforms the trainer uses) labels.
 Both species' components are pooled, matching the combined dual corpus.
 
@@ -48,8 +48,8 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
-from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
+from modules_v6.dataset_builder import compute_labels_batch, place_clouds_enu
+from modules_v6.detector_strategies import _STRATEGIES, _STRATEGY_FNS
 from modules_v6.tau_showers import load_tau_primaries
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
@@ -58,7 +58,7 @@ from modules_v6.constants import (
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
 )
 from modules_v6.legacy_core.tr_geometry       import load_tr_mountain
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6.surface_map import SurfaceUpMap
 
 # Generation reuses 00_generate_data_dual_species.py VERBATIM — the SAME per-species
 # AllShowers checkpoints + staging (pre_ln injection) + anti-clip re-roll that built
@@ -82,7 +82,7 @@ DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # GEOMETRY_GROUP is "malata", so falling back to colca_valley.h5 would raise a
 # missing-group KeyError rather than degrade gracefully.
 
-# Must match the NE dataset builder: fnn_surrogate_ne.build_training_pairs calls
+# Must match the NE dataset builder: dataset_builder.build_training_pairs calls
 # compute_labels_batch with its DEFAULT sigma (SIGMA_SPATIAL), so use the same
 # constant to reproduce the exact training labels (the kernel's transverse
 # smoothing length).
@@ -224,7 +224,7 @@ def main():
               f"z[{s['z_min']:+.2f}, {s['z_max']:+.2f}] = {s['z_range']:.2f} sigma")
 
     # Mountain + differentiable surface (Up = g(North, East)) — as in
-    # 01_build_dataset_northeast.py / fnn_surrogate_ne.
+    # 01_build_dataset_northeast.py / dataset_builder.
     print(f"[geometry] {GEOMETRY_PATH_RESOLVED}")
     mountain = load_tr_mountain(
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
