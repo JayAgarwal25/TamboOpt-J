@@ -151,6 +151,78 @@ def offmesh_penalty(x_det: torch.Tensor, y_det: torch.Tensor,
     return (quad + lin).mean()
 
 
+def _apply_offmesh_penalty(U: torch.Tensor, parts: dict,
+                           x_det: torch.Tensor, y_det: torch.Tensor,
+                           mesh_en: Optional[torch.Tensor],
+                           penalty_w: float,
+                           penalty_r0: Optional[float]) -> torch.Tensor:
+    """Subtract the off-mesh penalty from `U`, recording both halves in `parts`.
+
+    A no-op returning `U` unchanged unless a mesh AND a positive weight are both
+    supplied, so callers that never pass them keep bit-identical numbers. Adds
+    "u_raw" (utility before the boundary cost) and "u_offmesh" to `parts` in
+    place and returns the PENALISED objective.
+    """
+    if mesh_en is None or penalty_w <= 0.0:
+        return U
+    r0 = penalty_r0 if penalty_r0 else 1.0
+    pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en, r0)
+    parts["u_raw"] = U          # utility before the boundary cost
+    parts["u_offmesh"] = -pen
+    return U - pen
+
+
+def _surrogate_predict(x_det: torch.Tensor,
+                       y_det: torch.Tensor,
+                       primary_batch: torch.Tensor,
+                       fnn):
+    """Broadcast one layout over a primary batch and run the dual surrogate.
+
+    Returns (xy_batch (B, n_det, 2), pred_ET (B, n_det, 2)) — the surrogate's
+    log-compressed (E, T) channels. Like its callers this is deliberately NOT
+    `@torch.no_grad()`-decorated and detaches nothing, so gradients reach
+    (x_det, y_det) through both per-species branches.
+    """
+    B = primary_batch.shape[0]
+    xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
+    xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
+
+    # Deterministic mean prediction. The layout optimizers (Adam warm-start's
+    # argmax-over-epochs best-tracking, L-BFGS's strong_wolfe line search, DE's
+    # fitness comparison) all select on this value, so a fresh stochastic
+    # sample per call would let them cherry-pick lucky noise draws instead of
+    # real improvement — verified: every Adam chain's "best" collapsed by a
+    # uniform ~10 points once refined/re-evaluated when this called
+    # forward_sample(). Sampling stays confined to stage 3 (recon training).
+    pred_ET = fnn(primary_batch, xy_batch)
+    return xy_batch, pred_ET
+
+
+def _predict_primary(x_det: torch.Tensor,
+                     y_det: torch.Tensor,
+                     primary_batch: torch.Tensor,
+                     fnn,
+                     recon):
+    """Layout -> dual surrogate -> recon -> physical primary labels.
+
+    Returns (E_pred_det, E_pred_phys, theta_pred, phi_pred): the surrogate's
+    per-detector E channel (log1p counts, what `reconstructability` expm1s) plus
+    the reconstructed primary decoded by `primary_to_physical_labels`.
+    """
+    xy_batch, pred_ET = _surrogate_predict(x_det, y_det, primary_batch, fnn)
+    E_pred_det = pred_ET[..., 0]
+    T_pred_det = pred_ET[..., 1]
+
+    recon_feats = torch.stack(
+        [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
+        dim=-1,
+    )                                                                      # (B, n_det, 4)
+    pred = recon(recon_feats)                                              # (B, 4); DeepSets recon takes (B, n_det, 4)
+    E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
+    E_pred_phys = E_pred_phys.clamp(min=1.0)
+    return E_pred_det, E_pred_phys, theta_pred, phi_pred
+
+
 def utility_of_xy(x_det: torch.Tensor,
                   y_det: torch.Tensor,
                   primary_batch: torch.Tensor,
@@ -179,28 +251,8 @@ def utility_of_xy(x_det: torch.Tensor,
     PENALISED objective; raw utility and penalty are both in `parts`. With
     r0 = max_gap a converged in-band layout has penalty exactly 0.
     """
-    B = primary_batch.shape[0]
-    xy_per_det = torch.stack([x_det, y_det], dim=-1)                       # (n_det, 2)
-    xy_batch   = xy_per_det.unsqueeze(0).expand(B, -1, -1)                 # (B, n_det, 2)
-
-    # Deterministic mean prediction. The layout optimizers (Adam warm-start's
-    # argmax-over-epochs best-tracking, L-BFGS's strong_wolfe line search, DE's
-    # fitness comparison) all select on this value, so a fresh stochastic
-    # sample per call would let them cherry-pick lucky noise draws instead of
-    # real improvement — verified: every Adam chain's "best" collapsed by a
-    # uniform ~10 points once refined/re-evaluated when this called
-    # forward_sample(). Sampling stays confined to stage 3 (recon training).
-    pred_ET = fnn(primary_batch, xy_batch)
-    E_pred_det = pred_ET[..., 0]
-    T_pred_det = pred_ET[..., 1]
-
-    recon_feats = torch.stack(
-        [xy_batch[..., 0], xy_batch[..., 1], E_pred_det, T_pred_det],
-        dim=-1,
-    )                                                                      # (B, n_det, 4)
-    pred = recon(recon_feats)                                              # (B, 4); DeepSets recon takes (B, n_det, 4)
-    E_pred_phys, theta_pred, phi_pred = primary_to_physical_labels(pred)
-    E_pred_phys = E_pred_phys.clamp(min=1.0)
+    E_pred_det, E_pred_phys, theta_pred, phi_pred = _predict_primary(
+        x_det, y_det, primary_batch, fnn, recon)
 
     E_true, theta_true, phi_true = primary_to_physical_labels(primary_batch)
 
@@ -218,12 +270,8 @@ def utility_of_xy(x_det: torch.Tensor,
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
     parts = dict(u_theta=W_THETA * u_theta / W_DIV, u_phi=W_PHI * u_phi / W_DIV,
                  u_e=W_E * u_e / W_DIV, u_pr=W_PR * u_pr / W_DIV)
-    if mesh_en is not None and penalty_w > 0.0:
-        r0 = penalty_r0 if penalty_r0 else 1.0
-        pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en, r0)
-        parts["u_raw"] = U          # utility before the boundary cost
-        parts["u_offmesh"] = -pen
-        U = U - pen
+    U = _apply_offmesh_penalty(U, parts, x_det, y_det,
+                               mesh_en, penalty_w, penalty_r0)
     return U, r, parts
 
 
@@ -319,13 +367,11 @@ def activation_of_xy(x_det: torch.Tensor,
     if mode not in ("particles", "detectors", "distinct"):
         raise ValueError("mode must be 'particles', 'detectors' or 'distinct', "
                          f"got {mode!r}")
-    B = primary_batch.shape[0]
-    xy_batch = torch.stack([x_det, y_det], dim=-1).unsqueeze(0).expand(B, -1, -1)
-
+    _, pred_ET = _surrogate_predict(x_det, y_det, primary_batch, fnn)
     # clamp_min(0) matches dual_surrogate.combine_species_outputs: a negative
     # predicted count is not physical, and zeroing its gradient stops the optimizer
     # chasing detectors into the surrogate's undershoot.
-    counts = torch.expm1(fnn(primary_batch, xy_batch)[..., 0]).clamp_min(0.0)
+    counts = torch.expm1(pred_ET[..., 0]).clamp_min(0.0)
     p = torch.sigmoid(TAU_LAYOUT * (counts - LAYOUT_THRESHOLD))
     n_soft = p.sum(dim=1)
     particles = counts.sum(dim=1) / PARTICLE_SCALE
@@ -337,12 +383,8 @@ def activation_of_xy(x_det: torch.Tensor,
     U = dict(particles=particles, detectors=n_soft, distinct=distinct)[mode].mean()
     parts = dict(u_particles=particles.mean(), u_detectors=n_soft.mean(),
                  u_distinct=distinct.mean(), u_pr=W_PR * U_PR(r) / W_DIV)
-    if mesh_en is not None and penalty_w > 0.0:
-        pen = penalty_w * offmesh_penalty(x_det, y_det, mesh_en,
-                                          penalty_r0 if penalty_r0 else 1.0)
-        parts["u_raw"] = U
-        parts["u_offmesh"] = -pen
-        U = U - pen
+    U = _apply_offmesh_penalty(U, parts, x_det, y_det,
+                               mesh_en, penalty_w, penalty_r0)
     return U, r, parts
 
 
