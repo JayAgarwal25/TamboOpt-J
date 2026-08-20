@@ -56,6 +56,13 @@ AZIMUTH_MAX  = 360.0 # degrees
 RUN_LOCATION = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/07_750k_primaires_meanvar"
 SHOWER_CACHE   = os.path.join(RUN_LOCATION, "v6_run_00")
 
+# Generated figures (EDA PNGs, paper PDFs) live outside the repo — they are
+# regenerable output, and 18 MB of them in git bloated every clone. Sibling of
+# RUN_LOCATION so it is not tied to one run's corpus.
+FIGURES_ARCHIVE = os.path.join(os.path.dirname(RUN_LOCATION), "figures_archive")
+PAPER_FIGURES_DIR = os.path.join(FIGURES_ARCHIVE, "paper_figures")
+EDA_OUTPUTS_DIR   = os.path.join(FIGURES_ARCHIVE, "eda_outputs")
+
 TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 FNN_FOLDER              = os.path.join(RUN_LOCATION, "test_v6_run_02_recentered")
 RECON_FOLDER            = os.path.join(RUN_LOCATION, "test_v6_run_03_recentered")

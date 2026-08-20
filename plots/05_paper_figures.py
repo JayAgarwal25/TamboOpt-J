@@ -27,7 +27,9 @@ Three sources, three ways of reusing them:
 fraction + a figure's existing (screen-tuned) figsize into the fontsize that
 reads at the right size once LaTeX shrinks the artwork down for print.
 
-Output: <outdir>/<name>.pdf, default `plots/paper_figures/`, plus the
+Output: <outdir>/<name>.pdf, default `constants.PAPER_FIGURES_DIR` (the
+out-of-repo figures archive — these are regenerable artifacts and are no
+longer tracked in git), plus the
 `includegraphics.tex` Results section referencing them. `prune_unused_outputs`
 removes anything else in <outdir> at the end of a run (intermediates, and any
 figure no longer referenced in `RESULTS_SECTION`).
@@ -61,6 +63,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 import modules_v6  # noqa: F401 -- sys.path injection for v3 + v4
+from modules_v6.constants import PAPER_FIGURES_DIR
 import paper_style as ps
 import geometry_plots as gp
 
@@ -795,7 +798,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", choices=["geometry", "deepsets", "density"], default=None,
                     help="render just one group (default: all three)")
-    ap.add_argument("--outdir", default=os.path.join(_HERE, "paper_figures"))
+    ap.add_argument("--outdir", default=PAPER_FIGURES_DIR,
+                    help="where the PDFs land (default: the out-of-repo "
+                         "figures archive, modules_v6.constants.PAPER_FIGURES_DIR)")
     ap.add_argument("--textwidth-pt", type=float, default=ps.TEXTWIDTH_PT,
                     help="\\the\\textwidth from the Elsevier .tex, in pt "
                          f"(default {ps.TEXTWIDTH_PT:g}, elsarticle 5p/3p two-column)")

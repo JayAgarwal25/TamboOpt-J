@@ -67,7 +67,8 @@ def main():
                            east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
                            n_planes=N_PLANES)
     surface = SurfaceUpMap.from_mountain(mtn).to("cpu")          # CPU: no GPU needed
-    mtn_N, mtn_U = mtn.centroids_NUE[:, 0], mtn.centroids_NUE[:, 1]
+    # centroids_ENU is (East, North, Up): North = col 1, Up = col 2.
+    mtn_N, mtn_U = mtn.centroids_ENU[:, 1], mtn.centroids_ENU[:, 2]
 
     inits = {s: _init_up(mtn, surface, s) for s in SCHEMES}
 
