@@ -17,12 +17,12 @@ from typing import NamedTuple, Optional, Tuple
 import numpy as np
 import torch
 
-from modules_v6.tr_plane_kernel import GetCounts_planeaware
+from ..showers import GetCounts_planeaware
 
-from .constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM, SIGMA_SPATIAL
-from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
-from .fnn_surrogate import (encode_primary, compute_normalization,  # noqa: F401  (re-export)
-                            _load_species_sidecar)
+from ..constants import EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM, SIGMA_SPATIAL
+from ..layouts.strategies import (_STRATEGIES, _STRATEGY_FNS)
+from ..surrogates import encode_primary, compute_normalization  # noqa: F401  (re-export)
+from ..surrogates.fnn import _load_species_sidecar
 
 
 def _positions_sidecar_path(shower_cache_path: str) -> str:

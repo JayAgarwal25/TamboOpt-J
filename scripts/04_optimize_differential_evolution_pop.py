@@ -40,27 +40,29 @@ import numpy as np
 import torch
 from scipy.optimize import differential_evolution
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.tr_geometry_ne import (
-    _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.geometry import (
+    project_to_mountain_ne, sample_initial_layout_ne,
 )
-from modules_v6.surface_map import SurfaceUpMap
-from modules_v6.constants import (
+from modules.geometry.placement import _ne_max_gap
+from modules.geometry import SurfaceUpMap
+from modules.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
 )
-from modules_v6.legacy_core.tr_geometry      import load_tr_mountain
+from modules.geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in
-# modules_v6/opt_core.py; the figures live in plots/opt_plotting.py (loaded by path).
-from modules_v6.opt_core import (
+# modules/opt_core.py; the figures live in plots/opt_plotting.py (loaded by path).
+from modules.optimize import (
     primary_to_physical_labels, utility_of_xy, align_to_reference, load_models,
     W_THETA, W_PHI, W_E, W_PR, W_DIV,
-    LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD, GEOMETRY_PATH_RESOLVED,
+    LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD,
 )
+from modules.constants import GEOMETRY_PATH_RESOLVED
 _plt_spec = importlib.util.spec_from_file_location(
     "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
@@ -90,7 +92,7 @@ DE_RECOMBINATION    = 0.7
 DE_BATCH_PRIMARIES  = 50_000
 
 # Composite weights (W_*) + reconstructability thresholds + GEOMETRY_PATH_RESOLVED
-# are imported from modules_v6/opt_core.py (shared across the 04 optimizers).
+# are imported from modules/opt_core.py (shared across the 04 optimizers).
 SEED   = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

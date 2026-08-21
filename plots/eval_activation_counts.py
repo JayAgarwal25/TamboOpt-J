@@ -40,7 +40,7 @@ provenance, not a result.
 An archived run — pass both scheme dirs' layouts; output lands beside them:
 
     R="$(python -c 'import sys; sys.path.insert(0, "."); \
-        from modules_v6.constants import RUN_LOCATION; print(RUN_LOCATION)')"
+        from modules.constants import RUN_LOCATION; print(RUN_LOCATION)')"
     R="$R/run 6 update energy calc common eval"
     python plots/eval_activation_counts.py \\
         --layout "$R/..._center/layout_best.pt" "$R/..._grid/layout_best.pt"
@@ -66,17 +66,17 @@ import matplotlib.tri as mtri
 from matplotlib.colors import Normalize
 from matplotlib.ticker import MaxNLocator
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
+import modules  # noqa: F401 — package import; keeps modules on the path
 import showerdata
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.dataset_builder import place_clouds_enu
-from modules_v6.surface_map import SurfaceUpMap
-from modules_v6.tr_geometry_ne import _ne_max_gap
-from modules_v6.opt_core import (
+from modules.geometry import load_tr_mountain
+from modules.data import place_clouds_enu
+from modules.geometry import SurfaceUpMap
+from modules.geometry.placement import _ne_max_gap
+from modules.optimize import (
     LAYOUT_THRESHOLD, TAU_LAYOUT, RECONSTRUCT_THRESHOLD, TAU_RECONSTRUCT,
     OFFMESH_PENALTY_W, PENALTY_ONSET_FRAC, utility_of_xy, load_models,
 )
-from modules_v6.constants import (
+from modules.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, OPT_FOLDER, TRAINING_DATASET_FOLDER,
     HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,

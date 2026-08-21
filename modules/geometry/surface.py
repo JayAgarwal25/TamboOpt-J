@@ -6,8 +6,8 @@ scatter). `forward(north, east)` is an `F.grid_sample` bilinear lookup, so it is
 differentiable in (north, east).
 
 Usage:
-    from modules_v6.legacy_core.tr_geometry      import load_tr_mountain
-    from modules_v6.surface_map import SurfaceUpMap
+    from modules.geometry      import load_tr_mountain
+    from modules.geometry import SurfaceUpMap
 
     mountain = load_tr_mountain(...)
     surface  = SurfaceUpMap.from_mountain(mountain, grid_h=256, grid_w=256).to(device)

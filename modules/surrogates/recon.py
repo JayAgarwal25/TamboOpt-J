@@ -3,7 +3,7 @@
 Maps flattened per-detector features `(x, y, E_pred, T_pred)` to the v6 primary
 encoding `[dir_x, dir_y, dir_z, log_e_norm]`.
 
-Mirrors `FNNSurrogate` (`modules_v6/fnn_surrogate.py`) one-for-one:
+Mirrors `FNNSurrogate` (`modules/fnn_surrogate.py`) one-for-one:
     - hidden 512 → 512 → 512 (ReLU + dropout),
     - per-feature z-score of the input baked into `forward()` via registered buffers,
     - output denormalization (back to raw primary-encoding units) also baked in,
@@ -11,7 +11,7 @@ Mirrors `FNNSurrogate` (`modules_v6/fnn_surrogate.py`) one-for-one:
 
 Usage:
 
-    from modules_v6.reconstruction import Reconstruction
+    from modules.surrogates import Reconstruction
     recon = Reconstruction(n_det=100, input_features=4, output_dim=4)
     recon.set_normalization(in_mean, in_std, out_mean, out_std)
     pred = recon(inp_flat)   # raw primary-encoding units
@@ -20,8 +20,8 @@ Usage:
 import torch
 import torch.nn as nn
 
-from .constants import N_DETECTORS
-from .nn_blocks import _mlp
+from ..constants import N_DETECTORS
+from .blocks import _mlp
 
 
 class Reconstruction(nn.Module):

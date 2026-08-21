@@ -15,7 +15,7 @@ Run from the v6 folder. The current run (whole trajectory + Adam zoom, mp4):
 An archived run — pass BOTH scheme dirs; output lands beside them:
 
     R="$(python -c 'import sys; sys.path.insert(0, "."); \\
-        from modules_v6.constants import RUN_LOCATION; print(RUN_LOCATION)')"
+        from modules.constants import RUN_LOCATION; print(RUN_LOCATION)')"
     R="$R/run 6 update energy calc common eval"
     python plots/04_plot_trajectory_gif.py \\
         --run-dir "$R/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_center" \\
@@ -58,13 +58,13 @@ import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.geometry import load_tr_mountain
+from modules.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, OPT_FOLDER,
 )
-from modules_v6.tr_geometry_ne import _ne_max_gap   # the snap tolerance itself
+from modules.geometry.placement import _ne_max_gap   # the snap tolerance itself
 
 DET_C = "#e2691f"        # warm: reads on the grey mesh AND the blue valid band
 ADAM_SMOOTH = 11         # frames to average U over before judging improvement

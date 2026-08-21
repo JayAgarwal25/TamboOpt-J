@@ -61,13 +61,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.fnn_surrogate import FNNSurrogate
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.surrogates import FNNSurrogate
+from modules.constants import (
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
     N_DETECTORS, PRIMARY_DIM,
 )
-from modules_v6.reconstruction import build_recon_from_ckpt
+from modules.surrogates import build_recon_from_ckpt
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -664,7 +664,7 @@ def load_species_fnn(species: str):
     """Load one per-species surrogate (fnn_electron.pt / fnn_muon.pt) from
     FNN_FOLDER. Uses build_surrogate_from_ckpt so flat-MLP or DeepSets configs
     both work, with the checkpoint's own per-species norm stats applied."""
-    from modules_v6.deepsets_surrogate import build_surrogate_from_ckpt
+    from modules.surrogates import build_surrogate_from_ckpt
     path = os.path.join(FNN_FOLDER, f"fnn_{species}.pt")
     ckpt = torch.load(path, map_location=DEVICE, weights_only=False)
     fnn = build_surrogate_from_ckpt(ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
@@ -963,7 +963,7 @@ def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER, format
     DualSpeciesSurrogate (fnn_electron.pt + fnn_muon.pt) feeds the recon on the
     FULL corpus — identical to 03_train_recon.py. recon.pt itself is a single
     (non-per-species) net, so load_recon() is reused unchanged."""
-    from modules_v6.dual_surrogate import load_dual_surrogate
+    from modules.surrogates import load_dual_surrogate
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
     plot_recon_only(fnn=dual, output_path=output_path,
                     recon_folder=recon_folder, formats=formats)

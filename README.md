@@ -7,7 +7,7 @@ Earlier generations (`detector_optimization/` through `_v5`, plus a handful of u
 ## Layout
 
 ```
-modules_v6/       # importable library — surrogate, reconstruction, opt_core, legacy_core/ (vendored geometry/response kernel)
+modules/       # importable library — geometry, layouts, showers, surrogates, data, optimize
 scripts/          # 00-04 pipeline stages: generate data → build dataset → train surrogate → train recon → optimize layout
 slurm/            # SLURM sbatch wrappers for the scripts/ pipeline and plots/ evaluation scripts
 plots/            # plotting + evaluation (surrogate-vs-ground-truth checks, paper figures)

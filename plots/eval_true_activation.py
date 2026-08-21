@@ -47,13 +47,13 @@ for _p in (_V6, _HERE):                                     # _HERE: eval_true_u
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.surface_map import SurfaceUpMap
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.geometry import SurfaceUpMap
+from modules.geometry import load_tr_mountain
+from modules.optimize import (
     activation_of_xy, load_models, PARTICLE_SCALE, DISTINCT_SCALE,
 )
-from modules_v6.constants import (
+from modules.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     HELDOUT_SHOWER_CACHE_PATH, OPT_FOLDER,

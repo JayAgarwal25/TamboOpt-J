@@ -32,11 +32,11 @@ The pipeline comprises five sequential stages:
 | **Step 3** | Tensors + frozen dual surrogate | `recon.pt` | Train reconstruction on the **combined** response: $(x, y, E_\text{comb}, T_\text{comb}) \to (\hat n_x, \hat n_y, \hat n_z, \widetilde{\log E})$ |
 | **Step 4** | Frozen surrogate + recon + primaries | Optimized layout $(\mathbf{x}^*, \mathbf{y}^*)$ + uncertainty | Maximize composite utility by backprop (or gradient-free DE) through recon + **both** species surrogates summed (§4.5.4) |
 
-> **Dual-species lineage (2026-06-11, current default).** Steps 0–4 use the per-species May checkpoints: Step 0 = `00_generate_data_dual_species.py` (paired corpus), Step 2 = `02_train_fnn_deepsets.py` (two models), Steps 3–4 evaluate both per event and combine physically via `modules_v6/dual_surrogate.py` (§3.6).
+> **Dual-species lineage (2026-06-11, current default).** Steps 0–4 use the per-species May checkpoints: Step 0 = `00_generate_data_dual_species.py` (paired corpus), Step 2 = `02_train_fnn_deepsets.py` (two models), Steps 3–4 evaluate both per event and combine physically via `modules/dual_surrogate.py` (§3.6).
 
 > **(North, East) lineage.** Steps 1–4 also have a North–East branch (§3.5): `01_build_dataset_northeast.py` → `test_v6_run_01_northeast/`, retrained Steps 2–3, then `04_optimize_differential_evolution.py`. It is a *separate dataset + model lineage* — the `xy` feature means (North, East) and the labels differ — so the (North, Up) tables below describe the default branch only. The NE builder now reads the **dual** corpus (`DUAL_SHOWER_CACHE_PATH`, §4.2). **Caveat:** Stage-4 NE scripts are only physically meaningful once Steps 2–3 are retrained on the NE dataset; do **not** score the shared (North, Up) models — whose second `xy` feature was trained as Up ∈ [2442, 3886] m — on East ∈ [−2019, 1182] m inputs.
 
-> **Run tree.** Production uses the *recentered* corpus (`RECENTER_TO_MOUNTAIN=True`); folders are `test_v6_run_0X_recentered` under `RUN_LOCATION` on holylfs05. Paths live in `modules_v6/constants.py`.
+> **Run tree.** Production uses the *recentered* corpus (`RECENTER_TO_MOUNTAIN=True`); folders are `test_v6_run_0X_recentered` under `RUN_LOCATION` on holylfs05. Paths live in `modules/constants.py`.
 
 
 ## 3. Physical Setup
@@ -89,13 +89,13 @@ i.e. total kernel-weighted energy and kernel-weighted mean arrival time.
 
 A detector lives on a 2-D manifold in ENU, so it needs **two free coordinates plus one surface-extrapolated coordinate**. The kernel (§3.4) always needs all three: the Gaussian runs in the **(North, Up)** transverse plane, and **East → $z_\text{cont}$** is the depth axis.
 
-The production convention is **North–East**: the free coordinates are $(N, E)$, the terrain supplies $U = g(N, E)$ via `SurfaceUpMap` (`modules_v6/surface_map.py`), and $z_\text{cont}$ comes from the *defined* East rather than an extrapolated one. Stored `xy` is $(E, N)$, matching the ENU convention of the h5 data files. This is geographically natural — place detectors at map coordinates and let the terrain set elevation — and it removes an extrapolation from the depth axis.
+The production convention is **North–East**: the free coordinates are $(N, E)$, the terrain supplies $U = g(N, E)$ via `SurfaceUpMap` (`modules/surface_map.py`), and $z_\text{cont}$ comes from the *defined* East rather than an extrapolated one. Stored `xy` is $(E, N)$, matching the ENU convention of the h5 data files. This is geographically natural — place detectors at map coordinates and let the terrain set elevation — and it removes an extrapolation from the depth axis.
 
 The live modules are `surface_map.py`, `tr_geometry_ne.py` (`project_to_mountain_ne`, `sample_initial_layout_ne`), `detector_strategies.py`, and `dataset_builder.py` (`compute_labels_batch`, `build_training_pairs`).
 
 > **Historical note.** An earlier `(N, U)`-free parameterization extrapolated $E = f(N, U)$ through a `SurfaceEastMap`. The `_ne` files were written as per-file mirrors of it so each would diff cleanly against its source during the migration. That lineage is no longer used — its `build_training_pairs` raises `NotImplementedError` (it has no decay-vertex sidecar to encode) — and the `_ne` suffix is now vestigial. Because the change altered both the **labels** and the meaning of `xy`, the two lineages are separate dataset + model families and their checkpoints are not interchangeable.
 
-> **Init-vs-bounds subtlety (fixed 2026-06-11).** `project_to_mountain_ne` is a *tolerance test*, not a box clamp: a point within `max_gap` (≈2× mean centroid spacing, ~170 m) of any centroid is left untouched, so valid layouts can sit up to ~`max_gap` **outside** the tight centroid bbox. SciPy's `differential_evolution` requires `x0` strictly inside `bounds`, so σ=1000 m perturbed starts crashed it. The DE bounds are now widened by `_ne_max_gap(mountain)` on both axes; candidates are still mountain-projected before scoring, so the optimum cannot leave the mountain. (`project_to_mountain_ne` is imported from `modules_v6.tr_geometry_ne` — both the DE and L-BFGS Stage-4 scripts.)
+> **Init-vs-bounds subtlety (fixed 2026-06-11).** `project_to_mountain_ne` is a *tolerance test*, not a box clamp: a point within `max_gap` (≈2× mean centroid spacing, ~170 m) of any centroid is left untouched, so valid layouts can sit up to ~`max_gap` **outside** the tight centroid bbox. SciPy's `differential_evolution` requires `x0` strictly inside `bounds`, so σ=1000 m perturbed starts crashed it. The DE bounds are now widened by `_ne_max_gap(mountain)` on both axes; candidates are still mountain-projected before scoring, so the optimum cannot leave the mountain. (`project_to_mountain_ne` is imported from `modules.geometry` — both the DE and L-BFGS Stage-4 scripts.)
 
 ### 3.6 Dual-Species Event Model (electron + muon components)
 
@@ -105,7 +105,7 @@ Consequences baked into the pipeline:
 
 1. **Paired corpus.** `00_generate_data_dual_species.py` samples $N$ primaries once and generates both components: electron rows $0..N{-}1$ and muon rows $N..2N{-}1$ share the same $(E, \hat{\mathbf n})$ and EM/hadronic class — row $i$ and row $N{+}i$ are one physical event. The corpus `pdg` stores that **EM/hadronic class** (§3.3); the e/µ species (which component a row is) is written to a Step-0 sidecar (`DUAL_SPECIES_IDS_PATH`), not to `pdg`.
 2. **Conditioning label = EM/hadronic class.** `sample_primary_particles` draws it uniformly in {0,1} and both generator stages (PointCountFM + AllShowers) one-hot encode it; **both** per-species checkpoints were trained on **both** classes. (Corrected 2026-06-15 — supersedes the earlier "conditioning label always 0 / label 1 untrained" claim, which was the error; see `diary.md`.)
-3. **Two surrogates, physically combined.** Step 2 trains one DeepSets surrogate per component; Steps 3–4 evaluate both with the same $(\mathbf q, \mathbf{xy})$ and combine in *physical* space (`modules_v6/dual_surrogate.py`), not by adding log-channels:
+3. **Two surrogates, physically combined.** Step 2 trains one DeepSets surrogate per component; Steps 3–4 evaluate both with the same $(\mathbf q, \mathbf{xy})$ and combine in *physical* space (`modules/dual_surrogate.py`), not by adding log-channels:
 
 $$N_\text{tot} = N_e + N_\mu, \qquad t_\text{tot} = \frac{N_e t_e + N_\mu t_\mu}{N_e + N_\mu}$$
 
@@ -134,7 +134,7 @@ Generation is **streamed in chunks**: the HDF5 file is preallocated once and eac
 
 ### 4.2 Step 1 — Dataset Construction (`scripts/01_build_dataset_northeast.py`)
 
-Each shower is paired with **7** detector layouts from diverse **placement strategies** (`modules_v6/detector_strategies.py`, all mountain-projected after construction):
+Each shower is paired with **7** detector layouts from diverse **placement strategies** (`modules/detector_strategies.py`, all mountain-projected after construction):
 
 | id | Name | Description | Purpose |
 |----|----------|-------------|---------|
@@ -209,7 +209,7 @@ It predicts the same 4-D encoding as the first four columns of $\mathbf{q}$ (§3
 
 **Targets**: `primary[:, :4]` in raw units (the 5th feature — the EM/hadronic class — is an input, not a reconstruction target). Target z-score stats and recon-input per-detector stats are computed **directly from the data being trained on** (xy + combined predictions — no single species checkpoint describes the combined distribution) and baked into `recon.pt`, so Step 4 stays consistent.
 
-**Architecture** (`modules_v6/reconstruction.py`, the narrower 3×512 form):
+**Architecture** (`modules/reconstruction.py`, the narrower 3×512 form):
 
 ```
 Input:  [x, y, E_pred, T_pred] × 100 = 400 features (raw units)
@@ -388,7 +388,7 @@ All z-scoring is baked into the forward passes via registered buffers; each stag
 
 ## 7. Data Layout and Storage
 
-All intermediate data is stored as PyTorch tensors under `RUN_LOCATION` (holylfs05); production names are the `test_v6_run_0X_recentered` folders in `modules_v6/constants.py`. Numbers below are for the default 500k-pair (1M-row) / 7-strategy corpus.
+All intermediate data is stored as PyTorch tensors under `RUN_LOCATION` (holylfs05); production names are the `test_v6_run_0X_recentered` folders in `modules/constants.py`. Numbers below are for the default 500k-pair (1M-row) / 7-strategy corpus.
 
 ```
 v6_run_00/                       ← Step 0: cached showers (shared across runs)
@@ -505,7 +505,7 @@ All path-c edits were reverted; the working tree matches §4.3.
 
 Track **conditional-on-fired E/T R² and fire precision/recall**, not total val-MSE — the latter flatters, because ~68% of detector-samples are near-zero.
 
-The architectural follow-up from §10.1 is done: the Step-2 surrogate is a pointwise DeepSets, `φ(q, xᵢ, yᵢ) → (Eᵢ, Tᵢ)` with weights shared across detectors (`modules_v6/deepsets_surrogate.py`, trained by `scripts/02_train_fnn_deepsets.py`, in dual-species form per §3.6/§4.3). Being permutation-equivariant by construction — matching the per-detector-local kernel of §3.4 — it needs no augmentation, uses ~34× fewer parameters, and treats each detector as its own training example. It preserves the `forward(primary, xy) → (B, 100, 2)` contract, so Steps 3–4 were unaffected.
+The architectural follow-up from §10.1 is done: the Step-2 surrogate is a pointwise DeepSets, `φ(q, xᵢ, yᵢ) → (Eᵢ, Tᵢ)` with weights shared across detectors (`modules/deepsets_surrogate.py`, trained by `scripts/02_train_fnn_deepsets.py`, in dual-species form per §3.6/§4.3). Being permutation-equivariant by construction — matching the per-detector-local kernel of §3.4 — it needs no augmentation, uses ~34× fewer parameters, and treats each detector as its own training example. It preserves the `forward(primary, xy) → (B, 100, 2)` contract, so Steps 3–4 were unaffected.
 
 **Still open:** the *recon* (§4.4) has the same mismatch in invariant form — its target is permutation-**invariant** — and measurement says it did not become order-insensitive through augmentation alone. This makes part of the Stage-4 objective a labelling artifact rather than physics, and is the natural next architectural change.
 
@@ -563,7 +563,7 @@ Two distinct axes were merged into one corpus field, and the generator's conditi
 
 The bug: `00_generate_data_dual_species.py` read only `prim["energies"]` / `prim["directions"]` and hard-coded `labels = torch.zeros(...)`, so the whole corpus was generated as a single primary class. It then stored the e/µ *species* id in the corpus `pdg` field, which feeds the primary encoding's 5th feature — constant within each species subset, so no signal — while also being used as a species router in `02`'s split and in `dual_surrogate._with_pdg`.
 
-**Current convention** (what `constants.py` and `02_train_fnn_deepsets.py` rely on): `pdg` carries the randomly-sampled EM/hadronic class; the e/µ component lives in the Step-0 `<corpus>_species.pt` sidecar. See `PRIMARY_DIM` in `modules_v6/constants.py`.
+**Current convention** (what `constants.py` and `02_train_fnn_deepsets.py` rely on): `pdg` carries the randomly-sampled EM/hadronic class; the e/µ component lives in the Step-0 `<corpus>_species.pt` sidecar. See `PRIMARY_DIM` in `modules/constants.py`.
 
 > This supersedes an earlier diary claim that "label is always 0 / label 1 hits an untrained embedding" — that finding was itself the error, and is recorded here so it is not re-derived.
 
@@ -580,7 +580,7 @@ Directional validity is regime-dependent: surrogate gradients are roughly right 
 **Facts that bear on any fix** (measured, and re-checkable today):
 
 1. **The surrogate was never a meaningful speedup.** A full-corpus kernel pass is ≈ 5 TFLOP forward (~15 fwd+bwd) — seconds on an A100, only ~6–10× the surrogate's own cost. It manufactures the +134 artifact at ~1/6 the kernel's price.
-2. **The kernel is already differentiable in principle.** `compute_labels_batch` (`modules_v6/dataset_builder.py`) is pure torch; its `@torch.no_grad()` decorator is the only blocker to exact ∂U/∂(E, N).
+2. **The kernel is already differentiable in principle.** `compute_labels_batch` (`modules/dataset_builder.py`) is pure torch; its `@torch.no_grad()` decorator is the only blocker to exact ∂U/∂(E, N).
 3. **The adapter already exists.** `KernelDualLabels` in `plots/eval_true_utility.py` has the surrogate's exact call signature and feeds the *unmodified* `utility_of_xy` — kernel-in-the-loop is one promotion away.
 4. **Mechanism.** The recon was trained on kernel labels but is fed surrogate outputs at optimization time — smooth mean-fields, out of distribution for it. "Surrogate-U" measures how well the recon decodes the surrogate's mean field, not layout physics, so more optimization pressure digs further into that composite's idiosyncrasies.
 

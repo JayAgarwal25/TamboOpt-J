@@ -18,25 +18,24 @@ import os
 import sys
 import time
 
-# Make `modules_v6` importable regardless of caller CWD
+# Make `modules` importable regardless of caller CWD
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.dataset_builder import (
-    build_training_pairs, compute_normalization,
-)
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.data import build_training_pairs
+from modules.surrogates import compute_normalization
+from modules.constants import (
     SHOWER_CACHE, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     BATCH_SIZE, RUN_LOCATION,
     DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
 )
-from modules_v6.legacy_core.tr_geometry    import load_tr_mountain
-from modules_v6.surface_map import SurfaceUpMap
+from modules.geometry    import load_tr_mountain
+from modules.geometry import SurfaceUpMap
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -46,7 +45,7 @@ TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
 # block, same primaries); 02 splits them per species via the species_ids.pt
 # sidecar (the primary pdg feature now carries the EM/hadronic class).
 # DATASET_FRACTION caps how many rows are loaded (split evenly across species) so
-# the build fits in RAM — see modules_v6/constants.py.
+# the build fits in RAM — see modules/constants.py.
 #
 # At DATASET_FRACTION=1.0 this is 0 ("no cap" — build_training_pairs then uses
 # every row actually in the corpus file). NUM_SHOWERS is only a rough written-

@@ -4,7 +4,7 @@ Chronological record of the six detector-optimization pipelines in this repo. No
 
 All paths are relative to the repo root unless stated otherwise. For the local README of each version, see the corresponding folder.
 
-**Note:** `master` now carries only the v6 pipeline, flattened to the repo root (no more `detector_optimization_v6/` wrapper folder) — v6 is self-contained (the handful of v3/v4 files it depended on are vendored into `modules_v6/legacy_core/`). The `detector_optimization`, `_v2`, `_v3`, `_v4`, and `_v5` folders described below, along with their full history, live on the `legacy-full-repo` git branch.
+**Note:** `master` now carries only the v6 pipeline, flattened to the repo root (no more `detector_optimization_v6/` wrapper folder) — v6 is self-contained (the handful of v3/v4 files it depended on are vendored into `modules/legacy_core/`). The `detector_optimization`, `_v2`, `_v3`, `_v4`, and `_v5` folders described below, along with their full history, live on the `legacy-full-repo` git branch.
 
 ---
 
@@ -181,12 +181,12 @@ All work in `detector_optimization_v6/`. Replaces the "train-NN-online-during-op
 
 **Key ideas**
 
-- **Surrogate FNN** (`modules_v6/fnn_surrogate.py`) learns `(primary_features, layout) → (E_det, T_det)` per detector. Ground-truth labels come from applying v4's `GetCounts_planeaware` to the cached AllShowers point clouds. Once trained, replaces the expensive kernel at optimization time.
-- **Reconstruction NN** (`modules_v6/reconstruction.py`) maps flattened `(x, y, E_pred, T_pred)` per detector to the 4-D primary encoding `(n̂_x, n̂_y, n̂_z, log_e_norm)` in raw units — no final `Tanh`, output z-score de-normalisation baked into `forward()` via registered buffers.
+- **Surrogate FNN** (`modules/fnn_surrogate.py`) learns `(primary_features, layout) → (E_det, T_det)` per detector. Ground-truth labels come from applying v4's `GetCounts_planeaware` to the cached AllShowers point clouds. Once trained, replaces the expensive kernel at optimization time.
+- **Reconstruction NN** (`modules/reconstruction.py`) maps flattened `(x, y, E_pred, T_pred)` per detector to the 4-D primary encoding `(n̂_x, n̂_y, n̂_z, log_e_norm)` in raw units — no final `Tanh`, output z-score de-normalisation baked into `forward()` via registered buffers.
 - **Primary encoding** is 5-D: `(sin θ cos φ, sin θ sin φ, cos θ, (log10 E − 5)/3, pdg)` — unit direction vector + normalized log-energy + particle-type id.
 - **Output change vs v3/v4/v5 (angles → normalised xyz).** All earlier versions predict `(Ê_norm, θ̂_norm, φ̂_norm)` — three min-max-scaled scalars on `[−1, 1]` coming out of a `Tanh`. v6 predicts the shower direction directly as a **unit vector in Cartesian form** `(n̂_x, n̂_y, n̂_z)` plus `log_e_norm`, and decodes `(E, θ, φ)` analytically for the utility terms. This kills two pathologies of the angle parameterisation: the `φ` branch cut at `0/2π` (which made `U_φ` oscillate 1k → 30k → 1k in the v4 Apr 13 sweep) and the near-pole degeneracy at `θ ≈ 0/π` where a tiny shift in `n̂` maps to a huge shift in `φ`. The Cartesian loss is a smooth quadratic in $\mathbb{R}^4$, so gradients behave the same everywhere on the sphere. A dedicated optimisation run with this change lives at `outputs/v6_run_04_optimize_unit_vector/`.
 - **Constants** calibrated to `EAST_ENTRY = 1500 m`, `LAYER_EAST_DX = 150 m` (the post-v4 corrected values).
-- **Detector strategies** (`modules_v6/detector_strategies.py`) covers 5 layout-initialisation schemes used in `01_build_dataset.py` to force the FNN to learn layout-dependence: `grid_jit20` (regular grid + σ = 20 m jitter), `center_gauss200` (centre cluster, σ = 200 m), `rings_R300`, `rings_R800`, `rings_R1800` (concentric rings at three radii). v3's `geometry.Layouts` helper is not used, but ring geometry returns here at the dataset-generation stage.
+- **Detector strategies** (`modules/detector_strategies.py`) covers 5 layout-initialisation schemes used in `01_build_dataset.py` to force the FNN to learn layout-dependence: `grid_jit20` (regular grid + σ = 20 m jitter), `center_gauss200` (centre cluster, σ = 200 m), `rings_R300`, `rings_R800`, `rings_R1800` (concentric rings at three radii). v3's `geometry.Layouts` helper is not used, but ring geometry returns here at the dataset-generation stage.
 - **Detector count** is **100** (v6), up from 90 in v4/v5. 100 detectors × 5 layout strategies × 100k showers = 500k training pairs for both surrogates.
 
 **Theory documented.** `detector_optimization_v6/THEORY.md` is the authoritative design doc — differentiable surrogate architecture, per-detector kernel formula, composite utility definition, and gradient pathways.

@@ -39,10 +39,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
-import modules_v6   # noqa: F401
-from modules_v6.dual_surrogate  import load_dual_surrogate
-from modules_v6.reconstruction  import DeepSetsRecon
-from modules_v6.constants import (
+import modules   # noqa: F401
+from modules.surrogates  import load_dual_surrogate
+from modules.surrogates  import DeepSetsRecon
+from modules.constants import (
     RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
     N_DETECTORS,
 )

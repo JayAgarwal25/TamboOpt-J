@@ -6,12 +6,12 @@ tensors on the mountain surface.
 """
 
 import torch
-from .constants import N_DETECTORS
+from ..constants import N_DETECTORS
 import numpy as np
 from typing import Tuple
 
-from modules_v6.geometry import Layouts as _v3_Layouts
-from .tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
+from ..geometry import Layouts as _v3_Layouts
+from ..geometry import project_to_mountain_ne, sample_initial_layout_ne
 
 # ── Layout generators (all return (North, East) tensors on the mountain) ─────
 

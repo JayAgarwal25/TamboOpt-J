@@ -21,7 +21,7 @@ its name, and nothing will notice if it breaks.
 
 | file | imported by |
 |---|---|
-| `opt_plotting.py` | all three `scripts/04_optimize_*` optimizers, `modules_v6/opt_core.py` |
+| `opt_plotting.py` | all three `scripts/04_optimize_*` optimizers, `modules/opt_core.py` |
 | `paper_style.py` | `05_paper_figures.py` |
 | `geometry_plots.py` | `05_paper_figures.py`, the malata/trigger notebooks |
 
@@ -46,6 +46,6 @@ something the automated set does not.
 ## Output
 
 Figures are **not** written into this directory and are not tracked in git.
-`05_paper_figures.py` defaults to `modules_v6.constants.PAPER_FIGURES_DIR`; the
+`05_paper_figures.py` defaults to `modules.constants.PAPER_FIGURES_DIR`; the
 hand-run tools take an explicit `--out`. Both live under
 `constants.FIGURES_DIR` on holylfs05.

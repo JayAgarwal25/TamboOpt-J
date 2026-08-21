@@ -22,15 +22,15 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-from .constants import (
+from ..constants import (
     N_DETECTORS, FNN_FOLDER, RECON_FOLDER,
     GEOMETRY_PATH, GEOMETRY_PATH_RESOLVED, LOG_E_MIN, LOG_E_MAX,
     SIGMA_SPATIAL,
 )
-from .dual_surrogate import load_dual_surrogate
-from .reconstruction import build_recon_from_ckpt
-# modules_v6/__init__ injected the v3 (`modules`) path on package import.
-from modules_v6.utility_functions import reconstructability, U_E, U_angle, U_PR
+from ..surrogates import load_dual_surrogate
+from ..surrogates import build_recon_from_ckpt
+# modules/__init__ injected the v3 (`modules`) path on package import.
+from .utility import reconstructability, U_E, U_angle, U_PR
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 

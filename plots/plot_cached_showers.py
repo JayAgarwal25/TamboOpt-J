@@ -32,12 +32,12 @@ for _p in (_V6, _HERE):
 import numpy as np
 import showerdata
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.constants import (
     SHOWER_CACHE,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
+from modules.geometry import load_tr_mountain
 
 _DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_1000000.pt")
 

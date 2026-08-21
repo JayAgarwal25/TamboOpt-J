@@ -39,7 +39,7 @@ import time
 
 
 # v6 folder = parent of this file's plots/ dir. File-relative (NOT cwd-relative) so
-# the script imports modules_v6 no matter where it's launched from.
+# the script imports modules no matter where it's launched from.
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
@@ -47,18 +47,18 @@ if _HERE not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.dataset_builder import compute_labels_batch, place_clouds_enu
-from modules_v6.detector_strategies import _STRATEGIES, _STRATEGY_FNS
-from modules_v6.tau_showers import load_tau_primaries
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.data import compute_labels_batch, place_clouds_enu
+from modules.layouts.strategies import _STRATEGIES, _STRATEGY_FNS
+from modules.showers import load_tau_primaries
+from modules.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     TRAINING_DATASET_FOLDER,
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
 )
-from modules_v6.legacy_core.tr_geometry       import load_tr_mountain
-from modules_v6.surface_map import SurfaceUpMap
+from modules.geometry       import load_tr_mountain
+from modules.geometry import SurfaceUpMap
 
 # Generation reuses 00_generate_data_dual_species.py VERBATIM — the SAME per-species
 # AllShowers checkpoints + staging (pre_ln injection) + anti-clip re-roll that built
@@ -66,7 +66,7 @@ from modules_v6.surface_map import SurfaceUpMap
 # generators behind corpus_std: the numerator (generated within-shower variance) and
 # the denominator (corpus variance) finally match. (00's filename starts with a digit
 # → load it by path; importing only runs its module-level imports/config, not main().)
-from modules_v6.legacy_core.generate_showers import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in legacy_core.generate_showers
+from modules.showers.generate import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in modules.showers.generate
 import importlib.util as _ilu
 _spec00 = _ilu.spec_from_file_location(
     "gen00", os.path.join(_HERE, "scripts", "00_generate_data_dual_species.py"))

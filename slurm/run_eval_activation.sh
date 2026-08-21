@@ -27,7 +27,7 @@ conda activate multiproc_env
 # into "<RUN_LOCATION>/run N .../" between experiments, and the previous value
 # (_lbfgs_ensemble_full_corpus) turned into a FileNotFoundError the moment that
 # happened.
-O="$(python -c 'import sys; sys.path.insert(0, "."); from modules_v6.constants import OPT_FOLDER; print(OPT_FOLDER)')"
+O="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import OPT_FOLDER; print(OPT_FOLDER)')"
 O="${O}_lbfgs_activation"
 python -u plots/eval_activation_counts.py \
     --layout "${O}_grid/layout_best.pt" "${O}_center/layout_best.pt"

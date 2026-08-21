@@ -11,7 +11,7 @@ projection bug) is fixed everywhere at once.
 The 04 scripts load this module by path (their filenames start with a digit, so
 they cannot be imported by name) and bind the names they need. The non-plotting
 core (objective, alignment, model loading, the cosine diagnostic) lives in
-`modules_v6/opt_core.py`.
+`modules/opt_core.py`.
 
 `plot_ensemble` / `plot_density_heatmap` default to the DE wording ("run", "K");
 the population script passes `member_word="member"`/`count_word="pop"` and L-BFGS
@@ -30,8 +30,8 @@ if _V6 not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.opt_core import consecutive_cos_distance, LAYOUT_THRESHOLD
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.optimize import consecutive_cos_distance, LAYOUT_THRESHOLD
 
 
 # Type scale for the layout figures. They are drawn on a 14-inch-wide canvas
@@ -48,7 +48,7 @@ FS_LEGEND = 14
 @torch.no_grad()
 def project_ne_to_up(surface, north, east):
     """Map detector (North, East) → Up via the differentiable mountain surface
-    Up = g(North, East) (modules_v6.surface_map.SurfaceUpMap).
+    Up = g(North, East) (modules.geometry.SurfaceUpMap).
 
     The optimizers work in the North–East plane, so their layouts carry East, not
     Up. To draw them in the (North, Up) cross section, project each detector's East
@@ -164,8 +164,8 @@ def cloud_to_face(cloud, frame, east_entry=None, layer_east_dx=None):
     Thin composition of `dataset_builder.cloud_to_enu` (undo the kernel's
     North/Up/z_cont packing) with `enu_to_face`, so a cloud can be overlaid on the
     same axes as the mountain and the detectors."""
-    from modules_v6.dataset_builder import cloud_to_enu
-    from modules_v6.constants import EAST_ENTRY, LAYER_EAST_DX
+    from modules.data import cloud_to_enu
+    from modules.constants import EAST_ENTRY, LAYER_EAST_DX
     pts = cloud_to_enu(cloud,
                        east_entry=EAST_ENTRY if east_entry is None else east_entry,
                        layer_east_dx=LAYER_EAST_DX if layer_east_dx is None else layer_east_dx)

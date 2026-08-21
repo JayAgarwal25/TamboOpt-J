@@ -16,7 +16,7 @@ conda activate multiproc_env
 # CPU only: 04_plot_trajectory_gif.py loads trajectory.pt on cpu and never touches
 # a model, so this does not need (or wait for) a GPU.
 cd /n/home05/zdimitrov/tambo/TambOpt
-R="$(python -c 'import sys; sys.path.insert(0, "."); from modules_v6.constants import RUN_LOCATION; print(RUN_LOCATION)')"
+R="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import RUN_LOCATION; print(RUN_LOCATION)')"
 A="$R/test_v6_run_04_optimize_lbfgs_activation"
 DIRS=("${A}_center" "${A}_grid")
 

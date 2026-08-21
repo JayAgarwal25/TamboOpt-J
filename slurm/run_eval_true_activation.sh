@@ -17,7 +17,7 @@ conda activate multiproc_env
 
 # Each scheme against the baseline it was initialized from, so "baseline vs
 # optimized" is the actual before/after of that run rather than a cross-comparison.
-O="$(python -c 'import sys; sys.path.insert(0, "."); from modules_v6.constants import OPT_FOLDER; print(OPT_FOLDER)')"
+O="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import OPT_FOLDER; print(OPT_FOLDER)')"
 O="${O}_lbfgs_activation"
 
 python -u plots/eval_true_activation.py --layout "${O}_grid/layout_best.pt"

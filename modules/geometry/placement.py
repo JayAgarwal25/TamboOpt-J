@@ -11,7 +11,7 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from .constants import N_DETECTORS
+from ..constants import N_DETECTORS
 
 # `_ne_max_gap` is deterministic for a given mountain (seeded `default_rng(0)`)
 # yet `project_to_mountain_ne(max_gap=None)` recomputes it on every layout draw —

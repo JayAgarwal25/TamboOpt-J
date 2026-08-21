@@ -35,15 +35,16 @@ if _HERE not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
+import modules  # noqa: F401 — package import; keeps modules on the path
 import showerdata
-from modules_v6.dataset_builder import compute_labels_batch, place_clouds_enu, encode_primary
-from modules_v6.dual_surrogate import combine_species_outputs
-from modules_v6.surface_map import SurfaceUpMap
-from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
-from modules_v6.constants import (
+from modules.data import compute_labels_batch, place_clouds_enu
+from modules.surrogates import encode_primary
+from modules.surrogates import combine_species_outputs
+from modules.geometry import SurfaceUpMap
+from modules.geometry import sample_initial_layout_ne, project_to_mountain_ne
+from modules.geometry import load_tr_mountain
+from modules.optimize import utility_of_xy, load_models
+from modules.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, T_LOG_SCALE,
     HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,

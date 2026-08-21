@@ -3,7 +3,7 @@
 `opt_core.utility_of_xy` returns a single batch-averaged U — that's what the
 optimizer selects on, but it hides whether the layout helps uniformly across the
 energy range or is buying its average from one end. This script re-derives the
-SAME composite (identical weights, caps, thresholds — `modules_v6/opt_core.py`'s
+SAME composite (identical weights, caps, thresholds — `modules/opt_core.py`'s
 W_THETA/W_PHI/W_E/W_DIV, CAP_*, LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD,
 TAU_LAYOUT, TAU_RECONSTRUCT) but stops short of the final `torch.mean` inside
 `U_E`/`U_angle`, keeping one U value per event instead. Since mean is linear,
@@ -40,20 +40,21 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.tr_geometry_ne import project_to_mountain_ne
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.geometry import project_to_mountain_ne
+from modules.geometry import load_tr_mountain
+from modules.optimize import (
     primary_to_physical_labels, load_models,
     W_THETA, W_PHI, W_E, W_DIV, CAP_THETA, CAP_PHI, CAP_E,
     LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD, TAU_LAYOUT, TAU_RECONSTRUCT,
 )
-from modules_v6.constants import (
+from modules.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-# modules_v6/__init__ injected the v3 (`modules`) path on package import.
-from modules_v6.utility_functions import reconstructability, _soft_cap
+# modules/__init__ injected the v3 (`modules`) path on package import.
+from modules.optimize import reconstructability
+from modules.optimize.utility import _soft_cap
 from eval_true_utility import load_events, utility_of_xy
 
 

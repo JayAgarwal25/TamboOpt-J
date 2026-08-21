@@ -27,8 +27,8 @@ scalars straight out of them. The logvar head stays in z-scored space.
 import torch
 import torch.nn as nn
 
-from .constants import N_DETECTORS, PRIMARY_DIM
-from .nn_blocks import _mlp
+from ..constants import N_DETECTORS, PRIMARY_DIM
+from .blocks import _mlp
 
 
 class DeepSetsSurrogate(nn.Module):

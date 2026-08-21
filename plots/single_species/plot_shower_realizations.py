@@ -26,16 +26,16 @@ if _HERE not in sys.path:
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.legacy_core.generate_showers import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in legacy_core.generate_showers
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.showers.generate import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in modules.showers.generate
 from allshowers.generate_showers import (
     sample_primary_particles, run_point_count_fm, run_allshowers,
     build_direction_vector, _DEFAULT_POINT_COUNT_MODEL, _DEFAULT_ALLSHOWERS_RUN_DIR,
 )
-from modules_v6.constants import (
+from modules.constants import (
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
+from modules.geometry import load_tr_mountain
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(

@@ -6,7 +6,7 @@ rows (pdg feature 1) sharing the same primaries. This trainer splits the
 dataset rows by that species id and trains one DeepSets surrogate per species:
 each model learns its component's response f_s(primary, layout) -> (E_s, T_s).
 Stages 3-4 evaluate BOTH models per event and combine the outputs physically
-(modules_v6/dual_surrogate.py: counts add, times average count-weighted).
+(modules/dual_surrogate.py: counts add, times average count-weighted).
 
 Per species, everything matches the original single-model trainer: shower-level
 split, log-T target treatment, z-scored MSE loss, two-phase Adam(OneCycle) →
@@ -21,7 +21,7 @@ so no permutation augmentation is used.
 
 Checkpoints land DIRECTLY in FNN_FOLDER as `fnn_electron.pt` / `fnn_muon.pt`
 (species-tagged names cannot clobber a legacy single-model fnn.pt); stages 3-4
-load them via `modules_v6.dual_surrogate.load_dual_surrogate(FNN_FOLDER, ...)`.
+load them via `modules.surrogates.load_dual_surrogate(FNN_FOLDER, ...)`.
 
 Run:
 
@@ -45,10 +45,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, Subset
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.deepsets_surrogate import DeepSetsSurrogate
-from modules_v6.fnn_surrogate import compute_normalization
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.surrogates import DeepSetsSurrogate
+from modules.surrogates import compute_normalization
+from modules.constants import (
     N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, TRAIN_FRACTION,
 )

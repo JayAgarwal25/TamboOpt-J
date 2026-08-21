@@ -37,10 +37,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.geometry import sample_initial_layout_ne, project_to_mountain_ne
+from modules.geometry import load_tr_mountain
+from modules.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, N_DETECTORS, OPT_FOLDER,
 )

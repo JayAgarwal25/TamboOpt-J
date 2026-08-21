@@ -36,8 +36,8 @@ import os
 import torch
 import torch.nn as nn
 
-from .constants import N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE
-from .deepsets_surrogate import build_surrogate_from_ckpt
+from ..constants import N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE
+from .deepsets import build_surrogate_from_ckpt
 
 ELECTRON_CKPT = "fnn_electron.pt"
 MUON_CKPT     = "fnn_muon.pt"

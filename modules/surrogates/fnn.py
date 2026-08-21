@@ -1,7 +1,7 @@
 """FNN surrogate for detector optimization v6.
 
 The FNN learns `(primary_features, layout) -> (E, T) per detector`. The dataset
-it trains on is built by `modules_v6/dataset_builder.py`; this module holds the
+it trains on is built by `modules/dataset_builder.py`; this module holds the
 primary encoding, the normalization statistics and the model itself.
 
 `FNNSurrogate` is retained so `plots/02_plot_nn_target_vs_pred.py` can still load
@@ -9,8 +9,8 @@ pre-DeepSets checkpoints.
 
 Usage (from a driver script living in the v6 folder):
 
-    import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-    from modules_v6.fnn_surrogate import (
+    import modules  # noqa: F401 — package import; keeps modules on the path
+    from modules.surrogates import (
         encode_primary, compute_normalization, FNNSurrogate,
     )
 """
@@ -20,7 +20,7 @@ import os
 import torch
 import torch.nn as nn
 
-from .constants import (N_DETECTORS, PRIMARY_DIM, LOG_E_MIN, LOG_E_MAX)
+from ..constants import (N_DETECTORS, PRIMARY_DIM, LOG_E_MIN, LOG_E_MAX)
 
 # ── Primary encoding ─────────────────────────────────────────────────────────
 

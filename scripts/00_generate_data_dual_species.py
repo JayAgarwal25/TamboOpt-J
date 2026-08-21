@@ -40,18 +40,18 @@ import torch._utils  # noqa: F401 — torch 2.x lazy submodule needed by torch.s
 torch.set_float32_matmul_precision("high")
 
 import showerdata
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.constants import (
     LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
     SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE,
     USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, DUAL_SHOWER_CACHE_PATH,
     HOLDOUT_FRAC, HOLDOUT_SEED, HELDOUT_SHOWER_CACHE_PATH,
 )
-from modules_v6.tau_showers import load_tau_primaries
+from modules.showers import load_tau_primaries
 
 # Low-level generator pieces (importing modules.generate_showers injects TAMBO-opt path).
-from modules_v6.legacy_core.generate_showers import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in legacy_core.generate_showers
+from modules.showers.generate import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in modules.showers.generate
 from allshowers.generate_showers import (
     sample_primary_particles, run_point_count_fm,
 )

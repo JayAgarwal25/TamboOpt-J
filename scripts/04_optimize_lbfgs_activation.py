@@ -63,31 +63,31 @@ from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 import numpy as np
 import torch
 
-import modules_v6  # noqa: F401 — package import; keeps modules_v6 on the path
-from modules_v6.dual_surrogate import DualSpeciesSurrogate
-from modules_v6.constants import (
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.surrogates import DualSpeciesSurrogate
+from modules.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
     LOG_E_MIN, LOG_E_MAX, SIGMA_SPATIAL,
 )
-from modules_v6.legacy_core.layout_optimization import LearnableXY
-from modules_v6.legacy_core.tr_geometry      import load_tr_mountain
-from modules_v6.tr_geometry_ne   import project_to_mountain_ne, sample_initial_layout_ne
-from modules_v6.surface_map import SurfaceUpMap
+from modules.layouts import LearnableXY
+from modules.geometry      import load_tr_mountain
+from modules.geometry   import project_to_mountain_ne, sample_initial_layout_ne
+from modules.geometry import SurfaceUpMap
 
 # Shared optimizer core (objective, alignment, model loading, the gradient-turn
-# diagnostic, constants) lives in modules_v6/opt_core.py; the figures live in
+# diagnostic, constants) lives in modules/opt_core.py; the figures live in
 # plots/opt_plotting.py (loaded by path). activation_of_xy is NOT no_grad-wrapped,
 # so Adam / L-BFGS backprop through it here.
-from modules_v6.opt_core import (
+from modules.optimize import (
     activation_of_xy, align_to_reference, consecutive_cos_distance, load_models,
     PARTICLE_SCALE, DISTINCT_SCALE,
     LAYOUT_THRESHOLD, TAU_LAYOUT, RECONSTRUCT_THRESHOLD, OFFMESH_PENALTY_W,
     PENALTY_ONSET_FRAC,
 )
-from modules_v6.tr_geometry_ne import _ne_max_gap
+from modules.geometry.placement import _ne_max_gap
 _plt_spec = importlib.util.spec_from_file_location(
     "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
@@ -210,7 +210,7 @@ SCORING_BATCH_PRIMARIES = 4_000
 SCORING_ACCEPT_TOL = 0.05
 
 # Composite weights (W_*) + reconstructability thresholds are imported from
-# modules_v6/opt_core.py (shared across the 04 optimizers).
+# modules/opt_core.py (shared across the 04 optimizers).
 SEED   = 4200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -919,7 +919,7 @@ def main():
         OPT_DIR_TEMPLATE = OPT_FOLDER + "_lbfgs_activation" + args.opt_suffix + "_{scheme}"
 
     if args.fnn_folder:
-        import modules_v6.constants as _C
+        import modules.constants as _C
         _C.FNN_FOLDER = args.fnn_folder
         global FNN_FOLDER
         FNN_FOLDER = args.fnn_folder
