@@ -130,5 +130,8 @@ HELDOUT_SPECIES_IDS_PATH  = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_s
 HELDOUT_POSITIONS_PATH    = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_positions.pt"
 
 # 02 log-compresses T targets as log1p(T*T_LOG_SCALE); surrogates/dual.py must
-# invert the same transform, so the scale lives here.
-T_LOG_SCALE = 1.0e8
+# invert the same transform, so the scale lives here. The normalized
+# kernel-weighted mean arrival times are ~1e-6..1e-4 s, so log1p(T*1e6) spans
+# roughly 0.7..4.6. The previous 1e8 was calibrated to the unnormalized T scale,
+# which ran orders of magnitude smaller.
+T_LOG_SCALE = 1.0e6

@@ -24,6 +24,7 @@ def GetCounts_planeaware(
     fluxB_e:  torch.Tensor,
     TimeAverage_vectorized_fn,
     sigma:   float = 200.0,
+    time_normalized: bool = True,
 ) -> tuple:
     """Plane-aware differentiable count extraction.
 
@@ -41,6 +42,8 @@ def GetCounts_planeaware(
         SmearN_fn, fluxB_e, TimeAverage_vectorized_fn :
                    accepted for interface compatibility; never called.
         sigma    : Gaussian spatial kernel width [m].
+        time_normalized : if True (default), arrival_time is the kernel-weighted
+                   mean sum(t*K)/sum(K); if False, the legacy sum(t*K)/P.
 
     Returns:
         (local_intensity, arrival_time) : each (B, n_det), raw (no post-processing),
@@ -65,8 +68,17 @@ def GetCounts_planeaware(
     energy_kernel = point_e.unsqueeze(2) * kernel                 # (B, P, n_det)
 
     local_intensity = energy_kernel.sum(dim=1)                    # (B, n_det)
-    # NOTE: mean over ALL P points, padding rows included. Looks wrong, but it
-    # defines every existing label — changing it invalidates the corpus.
-    arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
+    if time_normalized:
+        # Kernel-weighted MEAN arrival time, sum(t*K)/sum(K): normalised by the
+        # kernel weight that actually lands on each detector.
+        arrival_time = ((point_t.unsqueeze(2) * kernel).sum(dim=1)
+                        / kernel.sum(dim=1).clamp(min=1e-12))
+    else:
+        # Legacy form, sum(t*K)/P with P the PADDED point count. It agrees with
+        # the mean only when every padded row carries zero kernel weight and the
+        # live weight sums to the point count, which is not the general case; in
+        # practice it left T correlated with brightness. Kept so historical
+        # numbers can be reproduced.
+        arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
 
     return local_intensity, arrival_time
