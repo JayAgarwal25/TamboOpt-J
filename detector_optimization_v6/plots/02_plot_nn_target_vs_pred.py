@@ -67,7 +67,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 03_train_recon_deepsets.py writes to RECON_FOLDER + "_deepsets" (its line 50),
 # not RECON_FOLDER — that plain folder only exists for the older flat-MLP
 # 03_train_recon.py run.
-RECON_DEEPSETS_FOLDER = RECON_FOLDER + "_deepsets"
+RECON_DEEPSETS_FOLDER = None
 
 # Seeds match 02_train_fnn.py and 03_train_recon.py
 FNN_VAL_SEED   = 0
@@ -168,7 +168,7 @@ def fnn_predict(fnn: FNNSurrogate,
     return E_pred, T_pred
 
 
-def load_recon(folder: str = RECON_DEEPSETS_FOLDER):
+def load_recon(folder: str = None):
     """Mirror of load_fnn() for the recon checkpoint. Used by the standalone
     CLI path; training scripts pass an already-trained recon in.
 
@@ -177,6 +177,7 @@ def load_recon(folder: str = RECON_DEEPSETS_FOLDER):
     checkpoints both load. Hardcoding Reconstruction here predated
     03_train_recon_deepsets.py and died on a state_dict shape mismatch
     against its checkpoints."""
+    folder = folder or RECON_DEEPSETS_FOLDER
     recon_ckpt = torch.load(os.path.join(folder, "recon.pt"),
                             map_location=DEVICE, weights_only=False)
     recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, DEVICE)
@@ -330,7 +331,7 @@ def plot_recon_only(*, fnn=None, recon=None,
                     primary=None, xy=None,
                     val_idx=None,
                     output_path=None,
-                    recon_folder=RECON_DEEPSETS_FOLDER):
+                    recon_folder=None):
     """Render recon_target_vs_pred.png. Like `plot_fnn_only`, every argument
     is optional. Training-script callers (03_train_recon.py) pass fnn +
     recon (best weights reloaded) + primary + xy + val_idx; no disk I/O for
@@ -339,6 +340,7 @@ def plot_recon_only(*, fnn=None, recon=None,
     `recon_folder` is where a None `recon` is loaded from and where a None
     `output_path` lands — keep the checkpoint and its scatter in the same
     run folder."""
+    recon_folder = recon_folder or RECON_DEEPSETS_FOLDER
     if primary is None or xy is None:
         primary, xy, _E, _T, strat_ids_disk = _load_corpus()
     else:
@@ -396,11 +398,12 @@ def plot_fnn_dual(output_dir=None):
                             **FNN_DUAL_VLIM[tag])
 
 
-def plot_recon_dual(output_path=None, recon_folder=RECON_DEEPSETS_FOLDER):
+def plot_recon_dual(output_path=None, recon_folder=None):
     """Recon scatter for the dual-species surrogate. The combined
     DualSpeciesSurrogate (fnn_electron.pt + fnn_muon.pt) feeds the recon on the
     FULL corpus — identical to 03_train_recon.py. recon.pt itself is a single
     (non-per-species) net, so load_recon() is reused unchanged."""
+    recon_folder = recon_folder or RECON_DEEPSETS_FOLDER
     from modules_v6.dual_surrogate import load_dual_surrogate
     dual = load_dual_surrogate(FNN_FOLDER, DEVICE)
     plot_recon_only(fnn=dual, output_path=output_path,
@@ -417,11 +420,12 @@ def main():
     run_world.add_run_world_args(ap)
     args = ap.parse_args()
 
-    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, RECON_DEEPSETS_FOLDER
     W = run_world.resolve(args, need_write=False)
     TRAINING_DATASET_FOLDER = W.dataset_folder
     FNN_FOLDER              = W.fnn_folder
     RECON_FOLDER            = W.recon_folder
+    RECON_DEEPSETS_FOLDER   = W.recon_dir
 
     print("=" * 72)
     print("v6/plots/02_plot_nn_target_vs_pred.py" + ("  [dual]" if args.dual else ""))

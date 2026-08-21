@@ -16,16 +16,17 @@ import numpy as np
 import torch
 from scipy.spatial import cKDTree
 
+# This file sits in checks/; the stage scripts and modules_v6 are one level up.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+_V6   = os.path.dirname(_HERE)
+sys.path.insert(0, _V6)
 
 _spec = importlib.util.spec_from_file_location(
-    "opt4", os.path.join(_HERE, "04_optimize_lbfgs_ensemble.py"))
+    "opt4", os.path.join(_V6, "04_optimize_lbfgs_ensemble.py"))
 o = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(o)
 
 # 04 is imported as a library here, so its module-level folder globals are still
 # None (they are bound inside its main()). This check resolves its own world.
-sys.path.insert(0, os.path.dirname(_HERE))
 from modules_v6 import run_world  # noqa: E402
 
 _W = run_world.resolve()

@@ -24,8 +24,9 @@ import sys
 import numpy as np
 import torch
 
+# This file sits in checks/; modules_v6 is one level up.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.dirname(_HERE))
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v6 import run_world
