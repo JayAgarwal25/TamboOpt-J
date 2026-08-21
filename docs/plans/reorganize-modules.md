@@ -67,18 +67,18 @@ property of the module, not of a directory name.
 
 ## Steps
 
-- [ ] **1. Move.** `git mv modules_v6 modules`, create the six subpackages,
+- [x] **1. Move.** `git mv modules_v6 modules`, create the six subpackages,
   `git mv` each file to its new name. Use `git mv` throughout so history follows.
-- [ ] **2. `__init__.py` re-exports.** Each subpackage re-exports its public
+- [x] **2. `__init__.py` re-exports.** Each subpackage re-exports its public
   names (the `public:` sets already inventoried). Private helpers stay private.
-- [ ] **3. Intra-package imports.** Rewrite relative imports for the new depth.
-- [ ] **4. External call sites.** 47 files under `scripts/`, `plots/`,
+- [x] **3. Intra-package imports.** Rewrite relative imports for the new depth.
+- [x] **4. External call sites.** 47 files under `scripts/`, `plots/`,
   `notebooks/`, `slurm/`, `docs/`, plus `_pathfix.py` and `README.md`. Rewrite
   by explicit old-path → new-path mapping, not a blind `modules_v6` → `modules`
   substitution, so each import lands on the right subpackage.
-- [ ] **5. Verify the move** before touching any prose — token guard, import
+- [x] **5. Verify the move** before touching any prose — token guard, import
   smoke over all 28 entry points, and a real Step-04 optimizer run.
-- [ ] **6. Prose (Level 2), as a separate commit.** Per module: compress
+- [x] **6. Prose (Level 2), as a separate commit.** Per module: compress
   narrative paragraphs, keep every hazard as a one-line headline plus a
   `docs/THEORY.md` pointer, delete provenance archaeology, and drop `Args:`
   lines that only restate an annotated signature — keeping any that carry
@@ -93,6 +93,39 @@ property of the module, not of a directory name.
   value; Step-2 `shower_level_split` derives `n_showers` from `max()+1`.
 - **RNG draw order** in `build_training_pairs`.
 - **`notebooks/utility.ipynb`** — the user has uncommitted work there.
+
+## Outcome
+
+All six steps landed, in three commits: `97e2cc6` (move), `0d243fb` (prose),
+`0a58b57` (bytecode). Verified end to end.
+
+| Criterion | Result |
+|---|---|
+| Unresolved import names (relative included) | **0** |
+| Entry points importing | **28/28** |
+| Unreachable modules / duplicate names | **0 / 0** |
+| Executable code changed by the move | none outside import statements, all 18 modules |
+| Executable code changed by the prose pass | one line — a genuine bug fix (see below) |
+| Step-04 optimizer, `-p gpu_test`, short budget | exit 0, **U = +33.577** (was +33.352 pre-move) |
+| Stray `__pycache__` dirs after a full GPU run | **0** |
+
+**Prose: less than projected.** modules/ went 3,060 -> 2,975 lines and 45% ->
+41% prose; 149 docstring lines removed, against the ~400 I estimated. The
+estimate was wrong: I counted 485 lines as "narrative" and treated all of it as
+removable, but at Level 2 much of that narrative *is* the hazard content Level 2
+promises to keep. Cutting to the projected figure would have meant Level 3.
+Docstrings longer than the code they document: 17 -> 12.
+
+**One bug found and fixed.** `deepsets.py` had a function-local
+`from .fnn_surrogate import FNNSurrogate` that the move missed, because the
+import checker skipped relative imports. It raised ModuleNotFoundError at
+Step-4 model load — caught by the optimizer run, not by the import smoke test.
+The checker now resolves relative imports too.
+
+**Stale docs corrected while compressing** — `geometry/mountain.py` described
+the retired colca mesh throughout (group, 2161 centroids, east_entry -212,
+dx 307), and `MountainData` advertised a `centroids_NUE` property that is
+commented out, which is what broke `plots/plot_init_layouts.py` earlier.
 
 ## Verification
 
