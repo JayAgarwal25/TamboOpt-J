@@ -8,15 +8,7 @@
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 #SBATCH --chdir=/n/home05/zdimitrov/tambo/TambOpt
 
-module load python
-
-conda deactivate
-conda deactivate
-
-conda activate multiproc_env
-
-# all .pyc under one tree instead of __pycache__/ dirs across the source
-export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+source slurm/env.sh
 
 python -u plots/eval_utility_vs_energy.py --run-dir \
     "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/07_750k_primaires_meanvar/run 7 6 chains on top of run 6/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_center" \

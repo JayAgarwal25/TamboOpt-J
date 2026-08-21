@@ -8,15 +8,7 @@
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 #SBATCH --chdir=/n/home05/zdimitrov/tambo/TambOpt
 
-module load python
-
-conda deactivate
-conda deactivate
-
-conda activate multiproc_env
-
-# all .pyc under one tree instead of __pycache__/ dirs across the source
-export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+source slurm/env.sh
 
 # Each scheme against the baseline it was initialized from, so "baseline vs
 # optimized" is the actual before/after of that run rather than a cross-comparison.

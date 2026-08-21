@@ -12,7 +12,7 @@ modules/          # importable library, six domain subpackages:
                   #   each re-exports its public names, so:
                   #     from modules.geometry import load_tr_mountain, SurfaceUpMap
 scripts/          # 00-04 pipeline stages: generate data → build dataset → train surrogate → train recon → optimize layout
-slurm/            # SLURM sbatch wrappers for the scripts/ pipeline and plots/ evaluation scripts
+slurm/            # SLURM sbatch wrappers; env.sh is the shared preamble they all source
 plots/            # plotting + evaluation (surrogate-vs-ground-truth checks, paper figures)
 decay_locations/  # CORSIKA observation-plane source + Julia tau-injection pipeline
 notebooks/        # EDA / diagnostic notebooks
@@ -21,14 +21,19 @@ data/             # mountain mesh geometry (malata.h5)
 .pycache/         # all bytecode, gitignored (see below)
 ```
 
-Bytecode is kept out of the source tree: every SLURM wrapper exports
-`PYTHONPYCACHEPREFIX=<repo>/.pycache`, and `_pathfix.py` sets the same as a
-fallback for notebooks and interactive sessions, so no `__pycache__/` dirs
-appear beside the sources. For an interactive shell that does not go through
-either, export it yourself:
+Bytecode is kept out of the source tree, so no `__pycache__/` dirs appear beside
+the sources. It is set in exactly two places:
+
+- **`slurm/env.sh`** — the shared preamble every SLURM wrapper sources
+  (`source slurm/env.sh`). It loads the conda env and exports
+  `PYTHONPYCACHEPREFIX="$REPO_ROOT/.pycache"`. Change the location here.
+- **`_pathfix.py`** — sets the same value as a fallback, for notebooks and
+  interactive sessions that never source `env.sh`.
+
+For an interactive shell that goes through neither:
 
 ```bash
-export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+source slurm/env.sh          # from the repo root
 ```
 
 Note the prefix is global to the interpreter, so third-party packages cache

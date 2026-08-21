@@ -9,14 +9,6 @@
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 #SBATCH --chdir=/n/home05/zdimitrov/tambo/TambOpt
 
-module load python
-
-conda deactivate
-conda deactivate
-
-conda activate multiproc_env
-
-# all .pyc under one tree instead of __pycache__/ dirs across the source
-export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+source slurm/env.sh
 
 python -u plots/compute_aleatoric_floor.py

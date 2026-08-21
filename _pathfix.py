@@ -17,9 +17,10 @@ if V6_ROOT not in sys.path:
     sys.path.insert(0, V6_ROOT)
 
 # Keep every .pyc in one tree instead of scattering __pycache__/ dirs through
-# the source. The env var is what actually matters (it is read at interpreter
-# startup, so it also covers modules imported before this file); this assignment
-# is the fallback for interactive sessions and notebooks that never set it.
+# the source. `slurm/env.sh` is the primary place this is set -- exported there,
+# it is read at interpreter startup and so also covers modules imported before
+# this file. What follows is the fallback for notebooks and interactive sessions
+# that never source it; keep the two in step.
 PYCACHE_DIR = os.path.join(V6_ROOT, ".pycache")
 os.environ.setdefault("PYTHONPYCACHEPREFIX", PYCACHE_DIR)
 if not sys.pycache_prefix:
