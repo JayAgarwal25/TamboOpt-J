@@ -38,7 +38,9 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PLOTS = os.path.dirname(os.path.abspath(__file__))
+# eval_true_utility stays in plots/ (it is shared with upstream), so reach it
+# through the repo root rather than through this script's own directory.
+_PLOTS = os.path.join(_HERE, "plots")
 for _p in (_HERE, _PLOTS):
     if _p not in sys.path:
         sys.path.insert(0, _p)
