@@ -17,6 +17,7 @@ score calls in `torch.no_grad()` themselves.
 import math
 import os
 
+from modules_v6 import run_world
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -465,9 +466,11 @@ def load_models(device, fnn_folder=None, recon_dir=None):
     recon_dir  = recon_dir  or (RECON_FOLDER + "_deepsets")
     fnn = load_dual_surrogate(fnn_folder, device)
 
-    recon_ckpt = torch.load(os.path.join(recon_dir, "recon.pt"),
+    recon_ckpt_path = os.path.join(recon_dir, "recon.pt")
+    recon_ckpt = torch.load(recon_ckpt_path,
                             map_location=device, weights_only=False)
     recon = build_recon_from_ckpt(recon_ckpt, N_DETECTORS, device)
     print(f"[load] recon.pt  model={recon_ckpt.get('config', {}).get('model_type', 'mlp')}  "
-          f"epoch={recon_ckpt.get('epoch', '?')}  val={recon_ckpt.get('val_total', '?')}  <- {recon_dir}")
+          f"epoch={recon_ckpt.get('epoch', '?')}  val={recon_ckpt.get('val_total', '?')}\n"
+          f"       {run_world.describe_file(recon_ckpt_path)}", flush=True)
     return fnn, recon

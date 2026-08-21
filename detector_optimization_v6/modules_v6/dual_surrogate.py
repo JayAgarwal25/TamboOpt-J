@@ -36,6 +36,7 @@ import os
 import torch
 import torch.nn as nn
 
+from . import run_world
 from .constants import N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE
 from .deepsets_surrogate import build_surrogate_from_ckpt
 
@@ -139,7 +140,8 @@ def load_dual_surrogate(folder: str,
         models[tag] = build_surrogate_from_ckpt(ckpt, n_det, primary_dim, device)
         cfg = ckpt.get("config", {})
         print(f"[load] {fname}  model={cfg.get('model_type', 'fnn')}  "
-              f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}")
+              f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}\n"
+              f"       {run_world.describe_file(path)}", flush=True)
     dual = DualSpeciesSurrogate(models["electron"], models["muon"]).to(device)
     dual.eval()
     return dual
