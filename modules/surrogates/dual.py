@@ -15,6 +15,7 @@ graph so Step 4 backprops through both. See docs/THEORY.md §3.6 and §5.6.
 """
 
 import os
+import time
 
 import torch
 import torch.nn as nn
@@ -105,6 +106,21 @@ class DualSpeciesSurrogate(nn.Module):
         return mean + eps * var.clamp(min=0.0).sqrt()
 
 
+def _ckpt_provenance(path: str) -> str:
+    """Absolute path + mtime of a checkpoint, for the load line.
+
+    The load line names only the FILE, which is identical in every run world, so
+    nothing in a log distinguishes one run's checkpoint from another's.
+    """
+    ap = os.path.abspath(path)
+    try:
+        st = os.stat(ap)
+    except OSError as e:
+        return f"{ap}  [UNREADABLE: {e.strerror}]"
+    return (f"{ap}  mtime="
+            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(st.st_mtime))}")
+
+
 def load_dual_surrogate(folder: str,
                         device: torch.device,
                         n_det: int = N_DETECTORS,
@@ -122,7 +138,8 @@ def load_dual_surrogate(folder: str,
         models[tag] = build_surrogate_from_ckpt(ckpt, n_det, primary_dim, device)
         cfg = ckpt.get("config", {})
         print(f"[load] {fname}  model={cfg.get('model_type', 'fnn')}  "
-              f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}")
+              f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}\n"
+              f"       {_ckpt_provenance(path)}", flush=True)
     dual = DualSpeciesSurrogate(models["electron"], models["muon"]).to(device)
     dual.eval()
     return dual
