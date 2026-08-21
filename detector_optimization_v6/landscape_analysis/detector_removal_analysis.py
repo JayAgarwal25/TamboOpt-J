@@ -37,6 +37,7 @@ import torch
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
@@ -44,7 +45,7 @@ from modules_v6.opt_core import utility_of_xy, load_models
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
-DEFAULT_LAYOUT_PATH = f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt"
+DEFAULT_LAYOUT_PATH = _layouts.primary()
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--layout_path", type=str, default=DEFAULT_LAYOUT_PATH,

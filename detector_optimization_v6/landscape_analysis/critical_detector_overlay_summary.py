@@ -30,6 +30,7 @@ import torch
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
@@ -49,7 +50,7 @@ mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 
 layout = torch.load(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_center/layout_best.pt",
+    _layouts.secondary(),
     map_location="cpu", weights_only=False)
 N_pos = layout["x"].float().reshape(-1).numpy()   # North
 E_pos = layout["y"].float().reshape(-1).numpy()   # East

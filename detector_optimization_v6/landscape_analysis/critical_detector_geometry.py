@@ -25,6 +25,7 @@ import torch
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
@@ -52,7 +53,7 @@ dips = np.array(removal["leave_one_out"]["dips"], dtype=np.float64)
 assert dips.shape[0] == N_DETECTORS
 
 layout = torch.load(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt",
+    _layouts.primary(),
     map_location="cpu", weights_only=False)
 N_pos = layout["x"].float().reshape(-1)   # North
 E_pos = layout["y"].float().reshape(-1)   # East

@@ -30,6 +30,7 @@ import torch
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
@@ -77,7 +78,7 @@ def load_layout(path):
 
 
 grid_x, grid_y, grid_U_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_grid/layout_best.pt")
+    _layouts.primary())
 full_U = eval_U(grid_x, grid_y)
 print(f"grid-scheme U (saved): {grid_U_saved:.4f}  (re-evaluated, {N_BATCHES} fresh batches): {full_U:.4f}")
 
@@ -147,7 +148,7 @@ print(f"  CENTER-SCHEME (original run): highest_dip_first=13.756  lowest_dip_fir
 
 # ── Cross-layout spatial comparison: Hungarian-align grid-scheme to center-scheme ──
 center_x, center_y, _ = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_center/layout_best.pt")
+    _layouts.secondary())
 with open(os.path.join(HERE, "detector_removal_results.json")) as f:
     center_results = json.load(f)
 center_dips = np.array(center_results["leave_one_out"]["dips"], dtype=np.float64)

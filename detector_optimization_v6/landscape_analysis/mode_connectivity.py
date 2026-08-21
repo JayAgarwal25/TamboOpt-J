@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
@@ -80,9 +81,9 @@ def load_layout(path):
 
 
 x_grid, y_grid, U_grid_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_grid/layout_best.pt")
+    _layouts.primary())
 x_center, y_center, U_center_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_center/layout_best.pt")
+    _layouts.secondary())
 
 U_grid_re = eval_U(x_grid, y_grid)
 U_center_re = eval_U(x_center, y_center)

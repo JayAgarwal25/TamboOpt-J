@@ -22,6 +22,7 @@ import torch
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
@@ -62,7 +63,7 @@ def load_layout(path):
 
 
 lbfgs_x, lbfgs_y, _ = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt")
+    _layouts.primary())
 
 with open(os.path.join(HERE, "detector_removal_results.json")) as f:
     original = json.load(f)

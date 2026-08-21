@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 
 _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
@@ -78,7 +79,7 @@ def load_layout(path):
 
 
 lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(
-    f"{RUN_BASE}/test_v6_run_04_optimize_lbfgs_ensemble_ds_combined/layout_best.pt")
+    _layouts.primary())
 base_U_opt = eval_U(lbfgs_x, lbfgs_y)
 print(f"L-BFGS best U (re-evaluated, {N_BATCHES} fresh batches): {base_U_opt:.4f}")
 
