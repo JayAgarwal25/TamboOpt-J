@@ -14,6 +14,11 @@
 
 set -euo pipefail
 
+# The pipeline stages refuse to guess a run world (modules_v6/run_world.py).
+# Export it before submitting:  TAMBO_RUN_WORLD=/path/to/run sbatch <this>
+: "${TAMBO_RUN_WORLD:?set TAMBO_RUN_WORLD to the run world root before submitting}"
+export TAMBO_RUN_WORLD
+
 export PYTHONUNBUFFERED=1
 
 echo "========================================"

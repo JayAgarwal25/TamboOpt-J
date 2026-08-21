@@ -8,6 +8,11 @@
 #SBATCH -J run_all_script_batch
 #SBATCH -o slurm_logs/slurm-%j-%x.out
 
+# The pipeline stages refuse to guess a run world (modules_v6/run_world.py).
+# Export it before submitting:  TAMBO_RUN_WORLD=/path/to/run sbatch <this>
+: "${TAMBO_RUN_WORLD:?set TAMBO_RUN_WORLD to the run world root before submitting}"
+export TAMBO_RUN_WORLD
+
 module load python
 
 conda deactivate
