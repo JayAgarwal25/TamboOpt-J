@@ -14,8 +14,8 @@ import os
 
 # Default: `v6_runs/` sits beside the repository checkout. Derived rather than
 # written out, so no account name is baked into the file.
-_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .../<repo>/<v6 dir>
-_RUNS = os.path.join(os.path.dirname(os.path.dirname(_REPO)), "v6_runs")
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
+_RUNS = os.path.join(os.path.dirname(_REPO), "v6_runs")
 RUNS = _RUNS   # public: stage-4 run outputs root
 
 BASE = os.environ.get("TAMBO_LAYOUT_BASE",

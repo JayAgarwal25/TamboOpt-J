@@ -7,7 +7,7 @@ dip sweep computed in its own native detector indexing (no new GPU/model
 evaluation needed here). This script:
 
   1. Hungarian-aligns all 12 layouts to one reference (ds_center) via
-     modules_v6.opt_core.align_to_reference, which generalizes to any K.
+     modules.optimize.align_to_reference, which generalizes to any K.
   2. Remaps each layout's dips into the shared reference-slot ordering.
   3. Per reference slot, computes the distribution of dip across the 12
      layouts (mean/std/min/max), how often that slot held one of that
@@ -29,9 +29,11 @@ import torch
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
+
 import layouts as _layouts  # noqa: E402  (input/output locations)
-import modules_v6  # noqa: F401
-from modules_v6.opt_core import align_to_reference
+import modules  # noqa: F401 — package import; keeps modules on the path
+from modules.optimize import align_to_reference
 
 # Results live beside the other run outputs, not next to the code.
 HERE = _layouts.results_dir()

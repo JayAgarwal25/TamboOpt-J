@@ -22,11 +22,13 @@ import torch
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
-import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
-from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
-from modules_v6.opt_core import utility_of_xy, load_models
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
+import modules  # noqa: F401 — package import; keeps modules on the path
+
+from modules.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
+from modules.optimize import utility_of_xy, load_models
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Results live beside the other run outputs, not next to the code.

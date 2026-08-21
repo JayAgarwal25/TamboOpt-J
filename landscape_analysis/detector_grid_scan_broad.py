@@ -17,17 +17,18 @@ import matplotlib.pyplot as plt
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
-import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
-from modules_v6.constants import (
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
+import modules  # noqa: F401 — package import; keeps modules on the path
+
+from modules.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
-from modules_v6.tr_geometry_ne import project_to_mountain_ne
+from modules.geometry import load_tr_mountain, project_to_mountain_ne
+from modules.optimize import utility_of_xy, load_models
 
 DEVICE = torch.device("cpu")
 BATCH_SEED_BASE = 1000     # avoid seed=42, the training/scoring batch (known outlier)

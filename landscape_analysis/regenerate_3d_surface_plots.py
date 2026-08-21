@@ -14,7 +14,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+import layouts as _layouts  # noqa: E402  (input/output locations)
+
+HERE = _layouts.results_dir()
 
 
 def make_grid_scan_plots():

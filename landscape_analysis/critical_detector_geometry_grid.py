@@ -23,8 +23,10 @@ import torch
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
+
 import layouts as _layouts  # noqa: E402  (input/output locations)
-import modules_v6  # noqa: F401
+import modules  # noqa: F401 — package import; keeps modules on the path
 
 # Results live beside the other run outputs, not next to the code.
 HERE = _layouts.results_dir()

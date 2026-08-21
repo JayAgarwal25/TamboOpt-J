@@ -15,18 +15,19 @@ from scipy.optimize import linear_sum_assignment
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
-import layouts as _layouts  # noqa: E402
-import modules_v6  # injects v3/v4 paths
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
-from modules_v6.constants import (
+import layouts as _layouts  # noqa: E402
+import modules  # noqa: F401 — package import; keeps modules on the path
+
+from modules.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.tr_geometry_ne import project_to_mountain_ne
-from modules_v6.opt_core import utility_of_xy, load_models, W_THETA, W_PHI, W_E, W_DIV
-from modules_v6.detector_strategies_ne import layout_uniform_random
+from modules.geometry import load_tr_mountain, project_to_mountain_ne
+from modules.optimize import utility_of_xy, load_models, W_THETA, W_PHI, W_E, W_DIV
+from modules.layouts import layout_uniform_random
 
 DEVICE = torch.device("cpu")
 RUN_BASE = _layouts.RUNS

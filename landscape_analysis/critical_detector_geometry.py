@@ -25,15 +25,16 @@ import torch
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
-import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
 
-from modules_v6.constants import (
+import layouts as _layouts  # noqa: E402  (layout paths live in one place)
+import modules  # noqa: F401 — package import; keeps modules on the path
+
+from modules.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-from modules_v6.legacy_core.tr_geometry import load_tr_mountain
-from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules.geometry import load_tr_mountain, SurfaceUpMap
 
 # Results live beside the other run outputs, not next to the code.
 HERE = _layouts.results_dir()

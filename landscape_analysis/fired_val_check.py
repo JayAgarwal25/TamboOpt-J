@@ -14,8 +14,10 @@ import torch
 
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
-import modules_v6  # noqa: F401
+import modules  # noqa: F401 — package import; keeps modules on the path
 sys.path.insert(0, _V6)  # 02_ scripts are importable by path (filename starts with a digit)
+from _pathfix import V6_ROOT  # noqa: F401 — idempotent, registers v6 root
+
 import importlib.util as _ilu
 
 _spec = _ilu.spec_from_file_location("train_fnn_deepsets", os.path.join(_V6, "02_train_fnn_deepsets.py"))
@@ -24,8 +26,8 @@ train_mod = _ilu.module_from_spec(_spec)
 _orig_name = train_mod.__name__
 _spec.loader.exec_module(train_mod)
 
-from modules_v6.constants import TRAINING_DATASET_FOLDER, FNN_FOLDER
-from modules_v6.deepsets_surrogate import DeepSetsSurrogate
+from modules.constants import TRAINING_DATASET_FOLDER, FNN_FOLDER
+from modules.surrogates import DeepSetsSurrogate
 
 DEVICE = torch.device("cpu")
 VAL_FRAC = 0.10

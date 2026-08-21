@@ -2,8 +2,9 @@ import glob
 import os
 import re
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-OTHER_OPT_DIR = os.path.join(BASE, "other_optimizers")
+import layouts as _layouts  # noqa: E402  (input/output locations)
+
+OTHER_OPT_DIR = os.path.join(_layouts.results_dir(), "other_optimizers")
 
 seed_dirs = sorted(
     d for d in glob.glob(os.path.join(OTHER_OPT_DIR, "seed*"))
