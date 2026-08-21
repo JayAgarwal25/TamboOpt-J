@@ -102,17 +102,51 @@ class RunWorld:
     recon_folder: str
     opt_folder: str
     source: str
+    # 03's real output dir. Normally recon_folder + "_deepsets", but the older
+    # runs and the recon-comparison sweeps use hand-named folders, so it stays
+    # separately overridable via --recon_dir.
+    recon_dir_explicit: str = ""
 
     # The two stage folders whose on-disk names carry a suffix the stage itself
     # appends. Kept as properties so callers stop rebuilding the string.
     @property
     def recon_dir(self) -> str:
         """03_train_recon_deepsets.py's actual output folder."""
-        return self.recon_folder + "_deepsets"
+        return self.recon_dir_explicit or (self.recon_folder + "_deepsets")
 
     def opt_dir(self, suffix: str) -> str:
         """A stage-4 output folder; `suffix` is the optimizer/scheme tag."""
         return self.opt_folder + suffix
+
+    # ── Corpus files ─────────────────────────────────────────────────────
+    # Step 0's outputs and their row-aligned sidecars. All derive from the
+    # shower cache by the `<corpus>_*.pt` rule the Step-1 builders use, so a
+    # world change moves the whole set together instead of leaving a script
+    # reading one run's corpus against another run's positions.
+    @property
+    def corpus(self) -> str:
+        return os.path.join(self.shower_cache,
+                            os.path.basename(_C.DUAL_SHOWER_CACHE_PATH))
+
+    @property
+    def corpus_species(self) -> str:
+        return os.path.splitext(self.corpus)[0] + "_species.pt"
+
+    @property
+    def corpus_positions(self) -> str:
+        return os.path.splitext(self.corpus)[0] + "_positions.pt"
+
+    @property
+    def heldout(self) -> str:
+        return os.path.splitext(self.corpus)[0] + "_heldout.pt"
+
+    @property
+    def heldout_species(self) -> str:
+        return os.path.splitext(self.heldout)[0] + "_species.pt"
+
+    @property
+    def heldout_positions(self) -> str:
+        return os.path.splitext(self.heldout)[0] + "_positions.pt"
 
     def describe(self) -> str:
         lines = [f"run world   : {self.root}",
@@ -120,6 +154,9 @@ class RunWorld:
         for f in _PATH_FIELDS:
             p = getattr(self, f)
             lines.append(f"  {f:<14}: {p}{_exists_mark(p, f in _PREFIX_FIELDS)}")
+        lines.append(f"  {'recon_dir':<14}: {self.recon_dir}"
+                     f"{_exists_mark(self.recon_dir, False)}"
+                     f"{'  (--recon_dir)' if self.recon_dir_explicit else ''}")
         return "\n".join(lines)
 
     def stamp(self, folder: str, **extra) -> None:
@@ -150,6 +187,9 @@ def add_run_world_args(ap: argparse.ArgumentParser) -> argparse.ArgumentParser:
     for f in _PATH_FIELDS:
         g.add_argument(f"--{f}", type=str, default=None,
                        help=f"Override just this folder, after --run_world.")
+    g.add_argument("--recon_dir", type=str, default=None,
+                   help="Override the recon output dir directly (default: "
+                        "recon_folder + '_deepsets').")
     return ap
 
 
@@ -279,7 +319,12 @@ def resolve(args=None, *, need_write: bool = False, argv=None,
     if overridden:
         source += f" + per-folder flags {overridden}"
 
-    world = RunWorld(root=root, source=source, **paths)
+    if getattr(args, "recon_dir", None):
+        source += " + --recon_dir"
+    world = RunWorld(root=root, source=source,
+                     recon_dir_explicit=os.path.abspath(args.recon_dir)
+                                        if getattr(args, "recon_dir", None) else "",
+                     **paths)
 
     if need_write:
         _check_writable(world)

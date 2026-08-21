@@ -35,14 +35,19 @@ import modules_v6  # injects v3/v4 into sys.path
 from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.reconstruction import build_recon_from_ckpt
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM,
-    FNN_FOLDER, RUN_LOCATION,
-    TRAINING_DATASET_FOLDER,
-    LOG_E_MIN, LOG_E_MAX,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
+    N_DETECTORS, PRIMARY_DIM, LOG_E_MIN, LOG_E_MAX, GEOMETRY_PATH, GEOMETRY_GROUP,
+    DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES
 )
+
+# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
+# inherited from constants.py at import. See modules_v6/run_world.py.
+_W = run_world.resolve()
+FNN_FOLDER = _W.fnn_folder
+RUN_LOCATION = _W.root
+TRAINING_DATASET_FOLDER = _W.dataset_folder
+
 from modules_v4.tr_geometry import load_tr_mountain
 from modules.utility_functions import reconstructability, U_E, U_angle
 

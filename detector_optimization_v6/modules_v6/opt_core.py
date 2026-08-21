@@ -23,7 +23,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 from .constants import (
-    N_DETECTORS, FNN_FOLDER, RECON_FOLDER,
+    N_DETECTORS,
     GEOMETRY_PATH, GEOMETRY_PATH_RESOLVED, LOG_E_MIN, LOG_E_MAX,
 )
 from .dual_surrogate import load_dual_surrogate
@@ -452,7 +452,7 @@ def consecutive_cos_distance(grad_hist, window: int = 1) -> np.ndarray:
 
 
 # ── Model loading ─────────────────────────────────────────────────────────────
-def load_models(device, fnn_folder=None, recon_dir=None):
+def load_models(device, fnn_folder, recon_dir):
     """Frozen dual-species surrogate + DeepSets recon from 03_train_recon_deepsets.py.
 
     The dual wrapper combines fnn_electron.pt + fnn_muon.pt per event (frozen,
@@ -462,8 +462,11 @@ def load_models(device, fnn_folder=None, recon_dir=None):
     E/T drawn from the surrogate's predicted distribution), applies its
     normalization, and freezes
     it. Defaults: FNN_FOLDER and RECON_FOLDER + "_deepsets"."""
-    fnn_folder = fnn_folder or FNN_FOLDER
-    recon_dir  = recon_dir  or (RECON_FOLDER + "_deepsets")
+    if not fnn_folder or not recon_dir:
+        raise ValueError(
+            "load_models needs an explicit fnn_folder and recon_dir; got "
+            f"fnn_folder={fnn_folder!r}, recon_dir={recon_dir!r}. Resolve them "
+            "with run_world.resolve(args) and pass W.fnn_folder / W.recon_dir.")
     fnn = load_dual_surrogate(fnn_folder, device)
 
     recon_ckpt_path = os.path.join(recon_dir, "recon.pt")

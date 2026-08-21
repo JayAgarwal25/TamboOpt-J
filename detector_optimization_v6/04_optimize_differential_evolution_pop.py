@@ -45,13 +45,20 @@ from modules_v6.tr_geometry_ne import (
     _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
 )
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
-    LOG_E_MIN, LOG_E_MAX,
+    N_DETECTORS, PRIMARY_DIM, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY,
+    LAYER_EAST_DX, N_PLANES, LOG_E_MIN, LOG_E_MAX
 )
+
+# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
+# inherited from constants.py at import. See modules_v6/run_world.py.
+_W = run_world.resolve()
+TRAINING_DATASET_FOLDER = _W.dataset_folder
+FNN_FOLDER = _W.fnn_folder
+RECON_FOLDER = _W.recon_folder
+OPT_FOLDER = _W.opt_folder
+
 from modules_v4.tr_geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in

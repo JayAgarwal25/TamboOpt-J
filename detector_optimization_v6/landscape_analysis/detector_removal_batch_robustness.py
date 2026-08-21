@@ -24,7 +24,16 @@ _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/det
 sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 
-from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
+from modules_v6 import run_world
+from modules_v6.constants import N_DETECTORS
+
+# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
+# inherited from constants.py at import. See modules_v6/run_world.py.
+_W = run_world.resolve()
+TRAINING_DATASET_FOLDER = _W.dataset_folder
+FNN_FOLDER = _W.fnn_folder
+RECON_FOLDER = _W.recon_folder
+
 from modules_v6.opt_core import utility_of_xy, load_models
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -54,12 +54,10 @@ from modules_v6.tr_geometry_ne import (
     _ne_max_gap, project_to_mountain_ne, sample_initial_layout_ne,
 )
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
-    LOG_E_MIN, LOG_E_MAX,
+    N_DETECTORS, PRIMARY_DIM, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY,
+    LAYER_EAST_DX, N_PLANES, LOG_E_MIN, LOG_E_MAX
 )
 from modules_v4.tr_geometry      import load_tr_mountain
 
@@ -83,10 +81,14 @@ _plot_density_heatmap = _plt.plot_density_heatmap
 INIT_SCHEMES         = ("grid", "center")
 RUN_COMBINED         = True
 COMBINED_SCHEME_NAME = "combined"
-OPT_DIR_TEMPLATE     = OPT_FOLDER + "_de_ensemble_{scheme}"
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+FNN_FOLDER              = None
+RECON_DIR               = None
+OPT_DIR_TEMPLATE        = None
+RUN_WORLD               = None
 # Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
 # with --recon_folder (exact path).
-RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.
 N_CHAINS            = 1
@@ -354,23 +356,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--chains", type=int, default=N_CHAINS,
                     help="Number of perturbed DE starts per init scheme (default from config).")
-    ap.add_argument("--recon_folder", type=str, default=None,
-                    help="Override RECON_FOLDER from constants.py "
-                         "(e.g. to swap between flat MLP and DeepSets recon).")
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to output directory name "
                          "(e.g. '_mlp' to get de_ensemble_mlp_{scheme}/).")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_DIR, OPT_DIR_TEMPLATE, RUN_WORLD
+    RUN_WORLD = W = run_world.resolve(args, need_write=True)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    FNN_FOLDER              = W.fnn_folder
+    RECON_DIR               = W.recon_dir
+    OPT_DIR_TEMPLATE        = W.opt_folder + "_de_ensemble" + args.opt_suffix + "_{scheme}"
     N_CHAINS = int(args.chains)
 
-    if args.recon_folder:
-        global RECON_DIR
-        RECON_DIR = args.recon_folder
-        print(f"[recon_folder] overriding recon dir -> {args.recon_folder}")
-
-    if args.opt_suffix:
-        global OPT_DIR_TEMPLATE
-        OPT_DIR_TEMPLATE = OPT_FOLDER + "_de_ensemble" + args.opt_suffix + "_{scheme}"
 
     print("=" * 72)
     print("v6/04_optimize_differential_evolution.py — perturbed starts + DE ensemble (North, East)")
@@ -384,7 +383,7 @@ def main():
     n_total_primaries = int(primary_all.shape[0])
     print(f"[load] {n_total_primaries} primaries")
 
-    fnn, recon = load_models(DEVICE, recon_dir=RECON_DIR)
+    fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_DIR)
 
     mountain = load_tr_mountain(
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,

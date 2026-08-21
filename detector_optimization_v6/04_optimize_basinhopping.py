@@ -37,11 +37,10 @@ import numpy as np
 import torch
 
 import modules_v6
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
+    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES
 )
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
@@ -54,8 +53,12 @@ _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-OPT_DIR_TEMPLATE = OPT_FOLDER + "_basinhopping{suffix}"
-RECON_DIR        = RECON_FOLDER + "_deepsets"
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+FNN_FOLDER              = None
+RECON_DIR               = None
+OPT_DIR_TEMPLATE        = None
+RUN_WORLD               = None
 
 N_HOPS      = 50       # number of basin-hop attempts
 SIGMA_HOP   = 750.0    # m — perturbation sigma; should be >> plateau breadth (~200m)
@@ -198,20 +201,24 @@ def main():
     ap.add_argument("--lbfgs_batch", type=int,   default=LBFGS_BATCH,
                     help="Fixed primary batch for every L-BFGS polish.")
     ap.add_argument("--lbfgs_iter",  type=int,   default=LBFGS_MAX_ITER)
-    ap.add_argument("--fnn_folder",  type=str,   default=None)
-    ap.add_argument("--recon_folder",type=str,   default=None)
     ap.add_argument("--opt_suffix",  type=str,   default="",
                     help="Suffix for the output directory name.")
     ap.add_argument("--seed",        type=int,   default=SEED)
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_DIR, OPT_DIR_TEMPLATE, RUN_WORLD
+    RUN_WORLD = W = run_world.resolve(args, need_write=True)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    FNN_FOLDER              = W.fnn_folder
+    RECON_DIR               = W.recon_dir
+    OPT_DIR_TEMPLATE        = W.opt_folder + "_basinhopping" + "{suffix}"
 
     N_HOPS         = args.n_hops
     SIGMA_HOP      = args.sigma_hop
     TEMPERATURE    = args.temperature
     LBFGS_BATCH    = args.lbfgs_batch
     LBFGS_MAX_ITER = args.lbfgs_iter
-    if args.recon_folder:
-        RECON_DIR = args.recon_folder
 
     opt_dir = OPT_DIR_TEMPLATE.format(suffix=args.opt_suffix)
     os.makedirs(opt_dir, exist_ok=True)
@@ -227,7 +234,7 @@ def main():
     print(f"output dir   : {opt_dir}")
 
     fnn, recon = load_models(DEVICE,
-                             fnn_folder=args.fnn_folder or FNN_FOLDER,
+                             fnn_folder=FNN_FOLDER,
                              recon_dir=RECON_DIR)
     mountain = load_tr_mountain(
         GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,

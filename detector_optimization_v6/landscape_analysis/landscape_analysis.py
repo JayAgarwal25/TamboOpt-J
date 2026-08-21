@@ -17,11 +17,19 @@ _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/det
 sys.path.insert(0, _V6)
 import modules_v6  # injects v3/v4 paths
 
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
+    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES
 )
+
+# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
+# inherited from constants.py at import. See modules_v6/run_world.py.
+_W = run_world.resolve()
+TRAINING_DATASET_FOLDER = _W.dataset_folder
+FNN_FOLDER = _W.fnn_folder
+RECON_FOLDER = _W.recon_folder
+
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.opt_core import utility_of_xy, load_models, W_THETA, W_PHI, W_E, W_DIV

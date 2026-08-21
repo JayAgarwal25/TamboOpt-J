@@ -50,11 +50,10 @@ import numpy as np
 import torch
 
 import modules_v6
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS,
-    GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
+    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES
 )
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_geometry_ne import project_to_mountain_ne, sample_initial_layout_ne
@@ -72,8 +71,12 @@ _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(
 # ── Config ──────────────────────────────────────────────────────────────────────
 INIT_SCHEMES     = ("grid", "center")
 RUN_COMBINED     = True
-OPT_DIR_TEMPLATE = OPT_FOLDER + "_evograd_{scheme}"
-RECON_DIR        = RECON_FOLDER + "_deepsets"
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+FNN_FOLDER              = None
+RECON_DIR               = None
+OPT_DIR_TEMPLATE        = None
+RUN_WORLD               = None
 
 # Independent EvoGrad chains per init scheme.
 N_CHAINS            = 5
@@ -402,18 +405,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--chains",       type=int, default=N_CHAINS)
     ap.add_argument("--gens",         type=int, default=N_GEN)
-    ap.add_argument("--recon_folder", type=str, default=None)
-    ap.add_argument("--fnn_folder",   type=str, default=None)
     ap.add_argument("--opt_suffix",   type=str, default="")
     ap.add_argument("--init_from",    type=str, default=None,
                     help="Path to a layout_best.pt to warm-start all chains.")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_DIR, OPT_DIR_TEMPLATE, RUN_WORLD
+    RUN_WORLD = W = run_world.resolve(args, need_write=True)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    FNN_FOLDER              = W.fnn_folder
+    RECON_DIR               = W.recon_dir
+    OPT_DIR_TEMPLATE        = W.opt_folder + "_evograd" + args.opt_suffix + "_{scheme}"
     N_CHAINS = int(args.chains)
     N_GEN    = int(args.gens)
-    if args.recon_folder:
-        RECON_DIR = args.recon_folder
     if args.opt_suffix:
-        OPT_DIR_TEMPLATE = OPT_FOLDER + "_evograd" + args.opt_suffix + "_{scheme}"
+        OPT_DIR_TEMPLATE = W.opt_folder + "_evograd" + args.opt_suffix + "_{scheme}"
 
     print("=" * 72)
     print("v6/04_optimize_evograd.py — EvoGrad (fitness-weighted exact gradients)")
@@ -431,7 +438,7 @@ def main():
     n_total = int(primary_all.shape[0])
     print(f"[load] {n_total} primaries")
 
-    fnn_folder = args.fnn_folder or FNN_FOLDER
+    fnn_folder = FNN_FOLDER
     fnn, recon = load_models(DEVICE, fnn_folder=fnn_folder, recon_dir=RECON_DIR)
     mountain = load_tr_mountain(
         GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,

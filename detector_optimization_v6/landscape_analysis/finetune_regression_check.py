@@ -25,7 +25,14 @@ _spec = _ilu.spec_from_file_location("train_fnn_deepsets", os.path.join(_V6, "02
 train_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(train_mod)
 
-from modules_v6.constants import TRAINING_DATASET_FOLDER, FNN_FOLDER
+from modules_v6 import run_world
+
+# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
+# inherited from constants.py at import. See modules_v6/run_world.py.
+_W = run_world.resolve()
+TRAINING_DATASET_FOLDER = _W.dataset_folder
+FNN_FOLDER = _W.fnn_folder
+
 from modules_v6.deepsets_surrogate import DeepSetsSurrogate
 
 DEVICE = torch.device("cpu")
