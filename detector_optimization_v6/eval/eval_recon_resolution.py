@@ -15,8 +15,8 @@ Key methodology (per the pre-run verification):
   - vertex is reported PER-AXIS with a skill score = median|Δaxis| / prior_std_axis
     (skill << 1 = genuinely localized), not just a 3D norm.
 
-    python plots/eval_recon_resolution.py --recon_dir <dir> --layout grid
-    python plots/eval_recon_resolution.py --recon_dir <dir> --layout /path/to/layout_best.pt
+    python eval/eval_recon_resolution.py --recon_dir <dir> --layout grid
+    python eval/eval_recon_resolution.py --recon_dir <dir> --layout /path/to/layout_best.pt
 """
 import argparse, math, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

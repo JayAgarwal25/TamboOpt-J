@@ -9,7 +9,7 @@ stochastic component as the within-bin variance. Reported two ways:
   - signal-binned:   systematic = Var_bin(E[r|bin]);  stochastic = E_bin(Var[r|bin])
   - per-detector:    systematic = Var_det(mean_ev r);  stochastic = E_det(Var_ev r)
 
-    python plots/diag_residual_bias_variance.py --n-bins 25
+    python eval/diag_residual_bias_variance.py --n-bins 25
 """
 import argparse, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

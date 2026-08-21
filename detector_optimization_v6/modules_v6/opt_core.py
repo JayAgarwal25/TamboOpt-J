@@ -96,7 +96,7 @@ def primary_to_physical_labels(primary: torch.Tensor):
     # arccos(dir_z) off an un-normalized vector then biases zenith toward 90 deg:
     # a predicted direction of norm 0.721 reads as 66.4 deg where its actual polar
     # angle is 56.3 deg. Azimuth is scale-invariant so atan2 is unaffected either
-    # way. This matches how `plots/eval_recon_resolution.py` measures the angle.
+    # way. This matches how `eval/eval_recon_resolution.py` measures the angle.
     d = primary[:, 0:3]
     d = d / d.norm(dim=1, keepdim=True).clamp(min=1e-12)
     dir_x = d[:, 0]

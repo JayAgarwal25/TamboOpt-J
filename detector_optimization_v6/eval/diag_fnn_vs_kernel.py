@@ -5,7 +5,7 @@ non-transfer), then ‖FNN(E,T) − kernel(E,T)‖ should be larger on the optim
 layout than on the grid baseline. This compares that residual, per label channel,
 on both layouts, on the fixed event batch. Read-only; no training.
 
-    python plots/diag_fnn_vs_kernel.py --n-events 512
+    python eval/diag_fnn_vs_kernel.py --n-events 512
 """
 import argparse, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

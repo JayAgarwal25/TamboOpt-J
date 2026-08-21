@@ -29,7 +29,7 @@ double count, but it also moves them off the optimum the sweep found. So
 Baselines (grid, center, unrelaxed) are scored in the same run so the sweep is
 read against them rather than in absolute terms.
 
-    python plots/diag_layout_collapse.py --layout <layout_best.pt> \
+    python eval/diag_layout_collapse.py --layout <layout_best.pt> \
         --fnn_folder <dir> --recon_dir <dir> --n-events 2048
 """
 import argparse

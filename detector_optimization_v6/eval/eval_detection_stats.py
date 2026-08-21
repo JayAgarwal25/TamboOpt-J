@@ -65,8 +65,8 @@ matrix, efficiency vs energy, efficiency vs vertex distance) written to that
 directory. Plotting never recomputes anything and a plotting failure never
 drops the printed tables.
 
-    python plots/eval_detection_stats.py --n-events 8000 --layout grid
-    python plots/eval_detection_stats.py --recon_dir <dir> --layout /path/to/layout_best.pt \
+    python eval/eval_detection_stats.py --n-events 8000 --layout grid
+    python eval/eval_detection_stats.py --recon_dir <dir> --layout /path/to/layout_best.pt \
         --plot_dir /path/to/figures
 """
 import argparse

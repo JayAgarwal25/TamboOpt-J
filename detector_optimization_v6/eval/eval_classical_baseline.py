@@ -32,8 +32,8 @@ plane fit and for a constant "predict the population mean" prior, overall and
 broken out by fired-detector-count band, mirroring eval_recon_resolution.py's
 band-reporting style.
 
-    python plots/eval_classical_baseline.py --n-events 4000 --layout grid
-    python plots/eval_classical_baseline.py --n-events 4000 --layout /path/to/layout_best.pt
+    python eval/eval_classical_baseline.py --n-events 4000 --layout grid
+    python eval/eval_classical_baseline.py --n-events 4000 --layout /path/to/layout_best.pt
 """
 import argparse, math, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

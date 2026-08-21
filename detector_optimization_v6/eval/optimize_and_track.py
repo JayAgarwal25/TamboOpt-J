@@ -8,7 +8,7 @@ step, PRIMARIES_PER_STEP random primaries per gradient step (04_optimize_lbfgs).
 It is the single Adam-from-grid climb (not the full ensemble + L-BFGS), which is
 what this diagnostic question needs.
 
-    python plots/optimize_and_track.py --recon_dir <dir> --steps 5000
+    python eval/optimize_and_track.py --recon_dir <dir> --steps 5000
 """
 import argparse, json, os, sys, time
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

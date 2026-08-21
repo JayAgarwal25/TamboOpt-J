@@ -50,7 +50,7 @@ North)". SurfaceUpMap.forward(x, y) takes x=North, y=East despite the parameter
 names. Both are pinned below by measurement, and the script aborts rather than
 guess.
 
-    python plots/diag_surface_probe.py --fnn_folder <dir> --dataset_folder <dir>
+    python interpretability/surface_probe.py --fnn_folder <dir> --dataset_folder <dir>
 """
 import argparse
 import json

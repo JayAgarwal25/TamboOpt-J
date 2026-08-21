@@ -2,7 +2,7 @@
 on the fixed eval batch, for both label sources — to tell a diverged/garbage
 output head apart from a metric quirk. Read-only; no training.
 
-    python plots/diag_recon_outputs.py --recon_dir <dir> --layout grid --n-events 512
+    python eval/diag_recon_outputs.py --recon_dir <dir> --layout grid --n-events 512
 """
 import argparse, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
