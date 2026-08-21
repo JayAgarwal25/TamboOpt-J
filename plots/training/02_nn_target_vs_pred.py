@@ -235,8 +235,10 @@ def _calibration_panel(ax, sigma, err, channel: str, legend: bool = True):
 
     cover = float((abs_err <= two_sig).mean())
     ax.set_xlim(0, hi); ax.set_ylim(0, hi)
-    ax.set_xlabel("2σ  (predicted, z-scored)")
-    ax.set_ylabel("|prediction − target|  (z-scored)")
+    # No "(z-scored)" on the labels: the panel title already says "[z]", and
+    # the long ylabel ran into the lower panel's title in the stacked figure.
+    ax.set_xlabel("2σ  (predicted)")
+    ax.set_ylabel("|prediction − target|")
     # `pad` scaled with the active title fontsize (matplotlib's own default,
     # ~6pt, doesn't scale with fontsize) -- in the stacked 2-panel figure this
     # is what keeps the lower panel's title clear of the upper panel's

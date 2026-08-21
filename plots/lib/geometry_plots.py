@@ -280,7 +280,7 @@ def plot_placement_closure(mE_np, mN_np, mU_np, DET, P_dec, D_dir, L_ROD,
 def plot_detector_patterns(panel, df, df_show, layouts_cache, points,
                            example_strategy, layout_threshold, *,
                            figsize_per_panel=(7.0, 6.2), fs_title=9,
-                           fs_legend=7, cols_per=3, rows=(0, 3, 4)):
+                           fs_legend=7, cols_per=3, rows=(0, 3, 4, 5)):
     """explore_trigger_counts.ipynb: detector patterns for representative
     (shower, layout) pairs.
 
@@ -290,7 +290,15 @@ def plot_detector_patterns(panel, df, df_show, layouts_cache, points,
     same closure, so it must stay a notebook global there.
 
     Every panel shares the same legend (mountain / shower cloud / no signal /
-    signal); it is drawn once, at the bottom of the whole figure."""
+    signal); it is drawn once, at the bottom of the whole figure.
+
+    `rows` indexes `df_show`, which is built as energy-major over
+    (Elow, Emid, Ehigh) x (vert, horiz):
+
+        0 Elow/vert   1 Elow/horiz   2 Emid/vert
+        3 Emid/horiz  4 Ehigh/vert   5 Ehigh/horiz
+
+    The default picks four spanning both energy and zenith, filling a 2x2."""
     df_show_tmp = df_show.copy().iloc[list(rows)]
     # Grid sized for what's actually drawn (len(rows)), not len(df_show) --
     # sizing it for the full candidate set left a whole blank row of hidden

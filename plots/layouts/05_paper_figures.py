@@ -101,7 +101,12 @@ FIGURE_SPECS = {
     "fnn_conditional_muon":           1.0,
     "fnn_calibration_electron":       0.5,
     "fnn_calibration_muon":           0.5,
-    "recon_target_vs_pred":           1.0,
+    # The paper uses the CONDITIONAL density (P(pred|target) with the mean and
+    # +/-1 sigma overlay), not the raw joint hexbin: the joint is dominated by
+    # where the targets happen to sit, so it reads as quality when it is really
+    # showing the prior. plot_recon_dual renders both; prune_unused_outputs
+    # keeps whichever RESULTS_SECTION references.
+    "recon_conditional":              1.0,
     # Intermediates only -- pasted two-up (not re-rendered) into optimized*.png
     # at frac=0.75 total, so each source panel's own final on-page width is
     # ~0.75/2 -- that's the frac their font sizing should target, not 0.5.
@@ -539,7 +544,7 @@ def make_deepsets_figures(outdir, frac_by_name, textwidth_pt):
             print(f"[skip] {tag}: no forward_var (not a mean+variance head)")
 
     recon_w = nnplot.FIGSIZE_RECON[0]          # 18
-    recon_frac = frac_by_name["recon_target_vs_pred"]
+    recon_frac = frac_by_name["recon_conditional"]
     nnplot.FS_LEGEND = pf(ps.TARGET_LEGEND_PT, recon_w, recon_frac)
     nnplot.FS_SUPTITLE_SCATTER = pf(ps.TARGET_TITLE_PT, recon_w, recon_frac)
     with matplotlib.rc_context(rc=ps.paper_rc(recon_w, recon_frac, textwidth_pt)):
@@ -720,7 +725,7 @@ RESULTS_SECTION = r"""\section{Results}
 \subsection{Reconstruction network}
 \begin{figure}
     \centering
-    \includegraphics[width=\linewidth]{figures/results/recon_target_vs_pred.pdf}
+    \includegraphics[width=\linewidth]{figures/results/recon_conditional.pdf}
     \caption{Caption}
     \label{fig:recon-target-vs-output}
 \end{figure}
@@ -753,7 +758,7 @@ def write_includegraphics(outdir, frac_by_name):
         shower_over_mountain_activation -> detector_patterns_representative
         fnn_electron_conditional    -> fnn_conditional_electron
         electrons_std / muons_std   -> fnn_calibration_electron / _muon
-        recon_target_vs_output      -> recon_target_vs_pred
+        recon_target_vs_output      -> recon_conditional
         optimized_simple            -> layout_density_activation_{center,grid} composite
         optimized                   -> layout_density_k6_{center,grid} composite
 
