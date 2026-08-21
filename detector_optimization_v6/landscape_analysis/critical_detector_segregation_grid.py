@@ -23,12 +23,14 @@ import json
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # noqa: F401
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+# Results live beside the other run outputs, not next to the code.
+HERE = _layouts.results_dir()
+RUN_BASE = _layouts.RUNS
 TOLERANCE = 0.99   # "almost the same utility" = within 1% of full U
 
 LAYOUTS = [

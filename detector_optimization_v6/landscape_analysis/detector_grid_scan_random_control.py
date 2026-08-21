@@ -22,8 +22,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
@@ -139,7 +140,7 @@ for idx in sweep_indices:
     ax.set_ylabel("North (m)")
     ax.set_title(f"CONTROL (random layout): U vs. position of detector {idx}")
     ax.legend(loc="upper right", fontsize=8)
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_random_control_{idx}.png")
+    out_png = os.path.join(_layouts.results_dir(), f"detector_grid_random_control_{idx}.png")
     fig.tight_layout()
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
@@ -161,12 +162,12 @@ for idx in sweep_indices:
     ax3d.legend(loc="upper left", fontsize=8)
     ax3d.view_init(elev=25, azim=-60)
     fig3d.tight_layout()
-    out_png_3d = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"detector_grid_random_control_{idx}_3d.png")
+    out_png_3d = os.path.join(_layouts.results_dir(), f"detector_grid_random_control_{idx}_3d.png")
     fig3d.savefig(out_png_3d, dpi=150)
     plt.close(fig3d)
     print(f"[plot] wrote {out_png_3d}")
 
-out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_scan_random_control_results.json")
+out_json = os.path.join(_layouts.results_dir(), "detector_grid_scan_random_control_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")

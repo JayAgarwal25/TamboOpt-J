@@ -12,7 +12,7 @@ VAL_FRAC=0.10, SEED=0) so this is genuine held-out data, not train data.
 import os, sys, json
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 sys.path.insert(0, _V6)  # 02_ scripts are importable by path (filename starts with a digit)

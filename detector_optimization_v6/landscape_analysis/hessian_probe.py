@@ -22,8 +22,9 @@ import sys, os, json, time
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # injects v3/v4 paths
 
 from modules_v6.constants import (
@@ -36,7 +37,7 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
 DEVICE = torch.device("cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+RUN_BASE = _layouts.RUNS
 SEED = 42
 BATCH_SIZE = 512
 D = 2 * N_DETECTORS
@@ -118,7 +119,7 @@ results["random"]     = exact_hessian(rx_rand, ry_rand, primary_fixed, "Random l
 results["ges_best"]   = exact_hessian(ges_x, ges_y, primary_fixed, "GES best")
 results["lbfgs_best"] = exact_hessian(lbfgs_x, lbfgs_y, primary_fixed, "L-BFGS DS best")
 
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hessian_probe_results.json")
+out_path = os.path.join(_layouts.results_dir(), "hessian_probe_results.json")
 with open(out_path, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved full spectra to {out_path}")

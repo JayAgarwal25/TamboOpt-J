@@ -23,7 +23,7 @@ import os, sys, json
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -35,8 +35,8 @@ from modules_v6.constants import (
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+# Results live beside the other run outputs, not next to the code.
+HERE = _layouts.results_dir()
 N_HIGHLIGHT = 5   # how many top critical / redundant detectors to print in detail
 
 print("=" * 70)

@@ -35,7 +35,7 @@ import os, sys, json, time
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -44,7 +44,6 @@ from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDE
 from modules_v6.opt_core import utility_of_xy, load_models
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 DEFAULT_LAYOUT_PATH = _layouts.primary()
 
 ap = argparse.ArgumentParser()
@@ -56,7 +55,8 @@ ap.add_argument("--layout_tag", type=str, default=None,
                      "flat filenames (backward-compatible with L-BFGS-only results).")
 args = ap.parse_args()
 LAYOUT_LABEL = args.layout_tag or "L-BFGS-best"
-HERE = os.path.dirname(os.path.abspath(__file__))
+# Results live beside the other run outputs, not next to the code.
+HERE = _layouts.results_dir()
 OUT_DIR = os.path.join(HERE, "other_optimizers", args.layout_tag) if args.layout_tag else HERE
 os.makedirs(OUT_DIR, exist_ok=True)
 

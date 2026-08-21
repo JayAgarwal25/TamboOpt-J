@@ -49,8 +49,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
@@ -63,14 +64,15 @@ from modules_v6.opt_core import utility_of_xy, load_models, align_to_reference
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-HERE = os.path.dirname(os.path.abspath(__file__))
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+# Results live beside the other run outputs, not next to the code.
+HERE = _layouts.results_dir()
+RUN_BASE = _layouts.RUNS
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 6
 N_STEPS = 41
 
-V5_RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v5_es_runs"
+V5_RUN_BASE = os.path.join(os.path.dirname(_layouts.RUNS), "v5_es_runs")
 
 COMPARISON_LAYOUTS = {
     "evograd": f"{RUN_BASE}/test_v6_run_04_optimize_evograd_combined/layout_best.pt",

@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -36,7 +36,6 @@ from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 4
@@ -154,7 +153,7 @@ for tag, r in results.items():
     ax.set_title(f"Full-space random 2D slice (fine step): {tag}")
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"full_space_2d_slice_fine_{tag}.png")
+    out_png = os.path.join(_layouts.results_dir(), f"full_space_2d_slice_fine_{tag}.png")
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
     print(f"[plot] wrote {out_png}")
@@ -179,7 +178,7 @@ for tag, r in results.items():
     plt.close(fig3d)
     print(f"[plot] wrote {out_png_3d}")
 
-out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "full_space_2d_slice_fine_results.json")
+out_json = os.path.join(_layouts.results_dir(), "full_space_2d_slice_fine_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")

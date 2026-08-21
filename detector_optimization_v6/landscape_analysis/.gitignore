@@ -1,0 +1,6 @@
+# Analysis outputs are written to the run-output directory (see layouts.py),
+# not next to the code. Anything that still lands here is a stray.
+*.json
+*.png
+other_optimizers/
+mcr_consolidation/

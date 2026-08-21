@@ -15,7 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -30,7 +30,6 @@ from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
 DEVICE = torch.device("cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000     # avoid seed=42, the training/scoring batch (known outlier)
 BATCH_SIZE = 512
 N_BATCHES = 5
@@ -122,7 +121,7 @@ for idx in sweep_indices:
         time_s=dt,
     )
 
-out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_scan_broad_results.json")
+out_json = os.path.join(_layouts.results_dir(), "detector_grid_scan_broad_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")
@@ -142,7 +141,7 @@ axes[1].set_xlabel("detector distance from bbox center (m)")
 axes[1].set_ylabel("grid-argmax U - base U (gain)")
 axes[1].set_title("Is the optimized position already\nthe best spot for this detector?")
 fig.tight_layout()
-out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detector_grid_scan_broad_summary.png")
+out_png = os.path.join(_layouts.results_dir(), "detector_grid_scan_broad_summary.png")
 fig.savefig(out_png, dpi=150)
 print(f"[plot] wrote {out_png}")
 

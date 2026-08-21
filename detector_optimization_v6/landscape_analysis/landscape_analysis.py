@@ -13,8 +13,9 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402
 import modules_v6  # injects v3/v4 paths
 
 from modules_v6.constants import (
@@ -28,10 +29,10 @@ from modules_v6.opt_core import utility_of_xy, load_models, W_THETA, W_PHI, W_E,
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
 DEVICE = torch.device("cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+RUN_BASE = _layouts.RUNS
 SEED = 42
 BATCH_SIZE = 512
-PYTHON = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/envs/tambo/bin/python3"
+PYTHON = sys.executable
 
 print("="*70)
 print("TAMBO v6 Landscape Analysis")

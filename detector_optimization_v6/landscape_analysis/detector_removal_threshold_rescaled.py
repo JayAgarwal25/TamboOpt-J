@@ -25,7 +25,7 @@ import os, sys, json, time
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -34,8 +34,8 @@ from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDE
 from modules_v6.opt_core import utility_of_xy, load_models, RECONSTRUCT_THRESHOLD
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-HERE = os.path.dirname(os.path.abspath(__file__))
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
+# Results live beside the other run outputs, not next to the code.
+HERE = _layouts.results_dir()
 BATCH_SEED_BASE = 1000     # match the original run exactly, for apples-to-apples comparison
 BATCH_SIZE = 512
 N_BATCHES = 3

@@ -16,8 +16,9 @@ import os, sys, json
 import torch
 import numpy as np
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # noqa: F401
 import importlib.util as _ilu
 
@@ -186,7 +187,7 @@ for tag, r in overall.items():
     print(f"  {tag:10s}: base z-mse={r['base_zmse_total']:.4f}  r1 z-mse={r['r1_zmse_total']:.4f}  "
           f"({r['pct_change']:+.1f}%)")
 
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finetune_regression_check_results.json")
+out_path = os.path.join(_layouts.results_dir(), "finetune_regression_check_results.json")
 with open(out_path, "w") as f:
     json.dump(overall, f, indent=2)
 print(f"\nSaved to {out_path}")

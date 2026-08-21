@@ -26,7 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
 import modules_v6  # noqa: F401
@@ -41,7 +41,6 @@ from modules_v6.opt_core import utility_of_xy, load_models, align_to_reference
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-RUN_BASE = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/v6_runs"
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 6            # cheap experiment (few points), afford more batches for precision
@@ -145,7 +144,7 @@ results = dict(
     ts=ts.tolist(), U_path=U_path.tolist(), disp_path=disp_path.tolist(),
     min_along_path=min_along_path, min_t=min_t, dip_below_endpoints=dip,
 )
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mode_connectivity_results.json")
+out_path = os.path.join(_layouts.results_dir(), "mode_connectivity_results.json")
 with open(out_path, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_path}")
@@ -164,7 +163,7 @@ axes[1].set_xlabel("t")
 axes[1].set_ylabel("mean mountain-projection correction (m)")
 axes[1].set_title("How far off-surface the straight line wanders")
 fig.tight_layout()
-out_png = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mode_connectivity.png")
+out_png = os.path.join(_layouts.results_dir(), "mode_connectivity.png")
 fig.savefig(out_png, dpi=150)
 print(f"[plot] wrote {out_png}")
 

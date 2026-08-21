@@ -11,8 +11,9 @@ import sys, os, json
 import numpy as np
 import torch
 
-_V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/detector_optimization_v6"
+_V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
+import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # injects v3/v4 paths
 
 from modules_v6.constants import (
@@ -89,7 +90,7 @@ for name, vals in results.items():
     summary[name] = dict(mean=float(vals.mean()), std=float(vals.std()), n=len(vals))
     print(f"  {name:15s}: U = {vals.mean():.3f} +/- {vals.std():.3f}  (n={len(vals)})")
 
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ring_vs_grid_results.json")
+out_path = os.path.join(_layouts.results_dir(), "ring_vs_grid_results.json")
 with open(out_path, "w") as f:
     json.dump(summary, f, indent=2)
 print(f"\nSaved to {out_path}")
