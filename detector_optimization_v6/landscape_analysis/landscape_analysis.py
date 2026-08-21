@@ -18,7 +18,7 @@ sys.path.insert(0, _V6)
 import modules_v6  # injects v3/v4 paths
 
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
@@ -48,7 +48,7 @@ print(f"Models loaded in {time.time()-t0:.1f}s")
 
 # ── Load mountain
 print("Loading mountain geometry...")
-mountain = load_tr_mountain(GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 
 # ── Load primaries

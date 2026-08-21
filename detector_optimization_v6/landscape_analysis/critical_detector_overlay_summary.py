@@ -32,7 +32,7 @@ _V6 = "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/jagarwal/TambOpt-zlt/det
 sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
 from modules_v4.tr_geometry import load_tr_mountain
@@ -45,7 +45,7 @@ print("=" * 70)
 print("Critical detector overlay summary (true mountain footprint)")
 print("=" * 70)
 
-mountain = load_tr_mountain(GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 
 layout = torch.load(

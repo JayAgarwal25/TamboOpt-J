@@ -8,7 +8,7 @@ This is the "Visualizing the Loss Landscape of Neural Nets" (Li et al. 2018)
 technique, simplified: their "filter normalization" step exists to correct
 for a neural-network-weight-specific pathology (ReLU scale invariance across
 filters/layers), which doesn't apply here -- our parameters are just
-detector (North, East) positions, already on one natural, homogeneous scale
+detector (East, North) positions, already on one natural, homogeneous scale
 (meters). So plain random Gaussian directions are used directly, no
 normalization trick needed.
 
@@ -42,7 +42,7 @@ sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
@@ -81,7 +81,7 @@ print(f"Random full-space 2D slice (all 100 detectors perturbed at once) -- layo
 print("=" * 70)
 
 fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-mountain = load_tr_mountain(GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 
 primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),

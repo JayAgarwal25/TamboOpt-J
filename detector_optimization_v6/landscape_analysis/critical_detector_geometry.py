@@ -7,7 +7,7 @@ just the already-saved dip values, the already-saved layout, and the
 mountain surface.
 
 For every one of the 100 detectors, computes:
-  - Up (elevation), via SurfaceUpMap (North, East) -> Up
+  - Up (elevation), via SurfaceUpMap (East, North) -> Up
   - z_cont (continuous shower-layer depth), via mountain.east_to_z_cont(East)
   - distance from the layout's own centroid (mean North, mean East)
   - distance to its nearest OTHER detector in the same layout (local density)
@@ -28,7 +28,7 @@ sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
 from modules_v4.tr_geometry import load_tr_mountain
@@ -42,7 +42,7 @@ print("=" * 70)
 print("Critical-detector geometry follow-up")
 print("=" * 70)
 
-mountain = load_tr_mountain(GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 surface = SurfaceUpMap.from_mountain(mountain)
 

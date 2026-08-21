@@ -8,7 +8,7 @@ snap correction (mean 39-70m, max up to 169m across its four panels) --
 project_to_mountain_ne's snap tolerance (max_gap) on this mesh is ~160m, so a
 400m perturbation was large enough to push boundary-adjacent detectors past
 it. This variant uses STEP_RANGE=100m, comfortably below that threshold (and
-matching the FNN's own spatial kernel scale, sigma=200m), to get a flatness
+matching the FNN's own spatial kernel scale, SIGMA_SPATIAL), to get a flatness
 reading much less contaminated by discrete snapping artifacts. Everything
 else (grid resolution, direction-pair count, seeds) is identical to the
 original run, so the two are directly comparable.
@@ -25,7 +25,7 @@ sys.path.insert(0, _V6)
 import modules_v6  # noqa: F401
 
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
@@ -49,7 +49,7 @@ print("Random full-space 2D slice, fine step range (all 100 detectors perturbed 
 print("=" * 70)
 
 fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-mountain = load_tr_mountain(GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY,
+mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
 
 primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
