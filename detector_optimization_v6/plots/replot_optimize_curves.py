@@ -23,7 +23,10 @@ if os.path.dirname(_HERE) not in sys.path:
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 import plots.opt_plotting as _plt
-from modules_v6.constants import OPT_FOLDER
+from modules_v6 import run_world
+
+# Bound in main() from the resolved run world, never at import.
+OPT_FOLDER = None
 
 # Mirrors GRAD_COS_WINDOW in 04_optimize_lbfgs_ensemble.py; importing that
 # module just for one int would drag in the whole stage-4 setup. Only a label
@@ -36,7 +39,12 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--opt-suffix", default="_full_corpus")
     ap.add_argument("--run-dir", nargs="+", help="scheme dir(s); overrides --opt-suffix")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global OPT_FOLDER
+    W = run_world.resolve(args, need_write=False)
+    OPT_FOLDER              = W.opt_folder
 
     dirs = args.run_dir or sorted(
         d for d in glob.glob(OPT_FOLDER + "_lbfgs_ensemble" + args.opt_suffix + "_*")

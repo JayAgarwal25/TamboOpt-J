@@ -81,6 +81,7 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401 - sys.path injection for v3 + v4
+from modules_v6 import run_world
 from modules_v6.opt_core import load_models
 from modules_v6.fnn_surrogate_ne import compute_labels_batch
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -605,19 +606,14 @@ def main():
     ap.add_argument("--corpus", type=str, default=None,
                     help="Score a separate held-out shower corpus (default: the "
                          "constants held-out corpus, unseen by every upstream stage).")
-    ap.add_argument("--recon_dir", type=str, default=None,
-                    help="passed to opt_core.load_models; only the dual surrogate "
-                         "it returns is used here, the recon is not called.")
-    ap.add_argument("--fnn_folder", type=str, default=None,
-                    help="directory holding fnn_electron.pt and fnn_muon.pt. THIS is "
-                         "the model this script measures, so without it every number "
-                         "below describes whatever surrogate FNN_FOLDER in constants "
-                         "happens to point at, not the one you meant to evaluate.")
     ap.add_argument("--plot_dir", type=str, default=None,
                     help="if given, also write the detection-diagnostic PNG figures "
                          "here (created if missing), in addition to the printed "
                          "tables below; a plotting failure never drops the tables.")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+    W = run_world.resolve(args, need_write=False)
+    _etu.bind_world(W)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     mtn = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
@@ -628,14 +624,14 @@ def main():
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
     prim = _etu.build_primaries(corpus_path, B, mtn).to(dev)
 
-    fnn, _recon = load_models(dev, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
+    fnn, _recon = load_models(dev, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
 
     if args.layout == "grid":
         e_l, n_l = _etu.grid_layout(mtn)
     elif args.layout == "center":
         e_l, n_l = _etu.center_layout(mtn)
     else:
-        _etu.LAYOUT_PATH = args.layout
+        _etu.bind_world(W, layout=args.layout)
         e_l, n_l = _etu.load_layout(mtn)
     e_l, n_l = e_l.to(dev), n_l.to(dev)
     n_det = int(e_l.shape[0])
@@ -644,7 +640,7 @@ def main():
     print("detection stats - kernel vs surrogate, same events + layout")
     print("=" * 72)
     print(f"device      : {dev}")
-    print(f"fnn_folder  : {args.fnn_folder or '(constants default)'}")
+    print(f"fnn_folder  : {W.fnn_folder}")
     print(f"corpus      : {corpus_path}"
           f"{'  (override)' if args.corpus else '  (held-out, unseen by Steps 1-4)'}")
     print(f"layout      : {args.layout}")

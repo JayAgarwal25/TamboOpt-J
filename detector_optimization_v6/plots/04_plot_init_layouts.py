@@ -40,10 +40,14 @@ import matplotlib.tri as mtri
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
 from modules_v4.tr_geometry import load_tr_mountain
+from modules_v6 import run_world
 from modules_v6.constants import (
-    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, N_DETECTORS, OPT_FOLDER,
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES, N_DETECTORS
 )
+
+# Bound in main() from the resolved run world, never at import.
+OPT_FOLDER = None
 
 
 def _optimizer_config():
@@ -71,7 +75,12 @@ def main():
     ap.add_argument("--seed", type=int, default=0, help="perturbation seed")
     ap.add_argument("-o", "--output", type=str, default=None,
                     help="output png (default: <OPT_FOLDER dir>/init_layouts.png)")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global OPT_FOLDER
+    W = run_world.resolve(args, need_write=False)
+    OPT_FOLDER              = W.opt_folder
 
     out = args.output or os.path.join(os.path.dirname(OPT_FOLDER), "init_layouts.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)

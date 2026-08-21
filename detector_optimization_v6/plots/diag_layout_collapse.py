@@ -47,6 +47,7 @@ import numpy as np
 import torch
 
 import modules_v6  # noqa: F401
+from modules_v6 import run_world
 from modules_v6.opt_core import load_models
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -110,11 +111,6 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--layout", type=str, required=True,
                     help="layout_best.pt from the stage-4 run to diagnose")
-    ap.add_argument("--fnn_folder", type=str, default=None,
-                    help="directory with fnn_electron.pt/fnn_muon.pt; without it the "
-                         "surrogate silently comes from constants and may not be the "
-                         "one this layout was optimized against")
-    ap.add_argument("--recon_dir", type=str, default=None)
     ap.add_argument("--corpus", type=str, default=None)
     ap.add_argument("--n-events", type=int, default=2048)
     ap.add_argument("--kernel-chunk", type=int, default=128)
@@ -124,7 +120,10 @@ def main():
     ap.add_argument("--out-json", type=str, default=None)
     ap.add_argument("--csv", type=str, default=None)
     ap.add_argument("--plot_dir", type=str, default=None)
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+    W = run_world.resolve(args, need_write=False)
+    _etu.bind_world(W)
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -134,8 +133,8 @@ def main():
     print("=" * 72)
     print(f"device      : {dev}")
     print(f"layout      : {args.layout}")
-    print(f"fnn_folder  : {args.fnn_folder or '(constants default)'}")
-    print(f"recon_dir   : {args.recon_dir or '(constants default)'}")
+    print(f"fnn_folder  : {W.fnn_folder}")
+    print(f"recon_dir   : {W.recon_dir}")
 
     mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
                                 east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
@@ -146,10 +145,10 @@ def main():
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
     prim = _etu.build_primaries(corpus_path, B, mountain).to(dev)
     kfn = _etu.KernelDualLabels(elec, muon, surf, dev, chunk=args.kernel_chunk)
-    fnn, recon = load_models(dev, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
+    fnn, recon = load_models(dev, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
     print(f"events      : {B} of {n_pairs}")
 
-    _etu.LAYOUT_PATH = args.layout
+    _etu.bind_world(W, layout=args.layout)
     e_opt, n_opt = _etu.load_layout(mountain)
 
     rows = []

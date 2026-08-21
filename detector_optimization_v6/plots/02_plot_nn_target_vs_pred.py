@@ -50,10 +50,15 @@ import matplotlib.pyplot as plt
 
 import modules_v6  # noqa: F401 — triggers sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate import FNNSurrogate
+from modules_v6 import run_world
 from modules_v6.constants import (
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
-    N_DETECTORS, PRIMARY_DIM,
+    N_DETECTORS, PRIMARY_DIM
 )
+
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+FNN_FOLDER = None
+RECON_FOLDER = None
 from modules_v6.reconstruction import build_recon_from_ckpt
 
 
@@ -409,7 +414,14 @@ def main():
     ap.add_argument("--dual", action="store_true",
                     help="dual-species surrogate: per-species FNN scatters + "
                          "combined-surrogate recon scatter")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
+    W = run_world.resolve(args, need_write=False)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    FNN_FOLDER              = W.fnn_folder
+    RECON_FOLDER            = W.recon_folder
 
     print("=" * 72)
     print("v6/plots/02_plot_nn_target_vs_pred.py" + ("  [dual]" if args.dual else ""))

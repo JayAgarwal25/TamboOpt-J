@@ -32,10 +32,14 @@ from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v4.tr_geometry import load_tr_mountain
+from modules_v6 import run_world
 from modules_v6.constants import (
-    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, OPT_FOLDER,
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES
 )
+
+# Bound in main() from the resolved run world, never at import.
+OPT_FOLDER = None
 from modules_v6.tr_geometry_ne import _ne_max_gap   # the snap tolerance itself
 
 DET_C = "#e2691f"        # warm: reads on the grey mesh AND the blue valid band
@@ -436,7 +440,12 @@ def main():
                          "proportional, which starves the short chunks)")
     ap.add_argument("-o", "--output",
                     help="output path; .gif or .mp4 (mp4 for long/high-fps runs)")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global OPT_FOLDER
+    W = run_world.resolve(args, need_write=False)
+    OPT_FOLDER              = W.opt_folder
 
     if args.run_dir:
         dirs = {os.path.basename(d.rstrip("/")).split("_")[-1]: d for d in args.run_dir}

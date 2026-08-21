@@ -69,11 +69,15 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v4.tr_geometry import load_tr_mountain
+from modules_v6 import run_world
 from modules_v6.constants import (
-    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER,
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
+    N_PLANES
 )
+
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+FNN_FOLDER = None
 
 
 # ── Convention pinning ───────────────────────────────────────────────────────
@@ -322,13 +326,6 @@ def make_plots(plot_dir, species, res, preds, U, XY, grad, rows_u, rows_g):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--fnn_folder", type=str, default=None,
-                    help="directory with fnn_electron.pt and fnn_muon.pt. Defaults "
-                         "to FNN_FOLDER from constants, which is probably NOT the "
-                         "run you mean; pass it explicitly.")
-    ap.add_argument("--dataset_folder", type=str, default=None,
-                    help="corpus directory holding primary.pt, xy.pt, E.pt, "
-                         "species_ids.pt. Defaults to TRAINING_DATASET_FOLDER.")
     ap.add_argument("--species", type=str, default="electron", choices=("electron", "muon"))
     ap.add_argument("--n-events", type=int, default=4096,
                     help="corpus rows sampled; each contributes n_det detector states")
@@ -341,7 +338,13 @@ def main():
                     help="write the probe panel and residual profiles here "
                          "(created if missing); plotting failures never drop the "
                          "printed tables")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, FNN_FOLDER
+    W = run_world.resolve(args, need_write=False)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    FNN_FOLDER              = W.fnn_folder
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

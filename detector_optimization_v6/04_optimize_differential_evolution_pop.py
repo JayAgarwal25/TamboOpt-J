@@ -199,7 +199,8 @@ def main():
     n_total_primaries = int(primary_all.shape[0])
     print(f"[load] {n_total_primaries} primaries")
 
-    fnn, recon = load_models(DEVICE)
+    fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER,
+                             recon_dir=_W.recon_dir)
 
     mountain = load_tr_mountain(
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,

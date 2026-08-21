@@ -59,12 +59,14 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 
 import modules_v6  # triggers sys.path injection for v3 + v4
 from modules_v6.detection_classifier import DetectionClassifier
+from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM, TRAINING_DATASET_FOLDER, RUN_LOCATION,
+    N_DETECTORS, PRIMARY_DIM,
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
-OUTPUT_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_02b_detection")
+# Bound in main() from the resolved run world, never at import.
+OUTPUT_FOLDER = None
 
 BATCH_SIZE          = 256
 N_EPOCHS            = 60
@@ -325,10 +327,7 @@ def _plot_curves(log, path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset_folder", type=str, default=TRAINING_DATASET_FOLDER,
-                    help="Folder containing primary.pt, xy.pt, E.pt, strategy_ids.pt "
-                         "(default: TRAINING_DATASET_FOLDER from constants.py).")
-    ap.add_argument("--output_folder", type=str, default=OUTPUT_FOLDER,
+    ap.add_argument("--output_folder", type=str, default=None,
                     help="Where to write the checkpoint/log/plot "
                          "(default: RUN_LOCATION/test_v6_run_02b_detection).")
     ap.add_argument("--epochs", type=int, default=N_EPOCHS,
@@ -346,7 +345,15 @@ def main():
     ap.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     ap.add_argument("--lr", type=float, default=LR_MAX,
                     help=f"OneCycleLR peak learning rate (default {LR_MAX}).")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global OUTPUT_FOLDER
+    W = run_world.resolve(args, need_write=True)
+    args.dataset_folder = W.dataset_folder
+    OUTPUT_FOLDER = args.output_folder or os.path.join(
+        W.root, "test_v6_run_02b_detection")
+    args.output_folder = OUTPUT_FOLDER
 
     os.makedirs(args.output_folder, exist_ok=True)
 

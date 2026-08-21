@@ -57,15 +57,41 @@ from modules_v6.opt_core import (
     utility_of_xy, detection_utility_of_xy, load_models,
     RECONSTRUCT_THRESHOLD, LAYOUT_THRESHOLD,
 )
+from modules_v6 import run_world
 from modules_v6.constants import (
     N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, T_LOG_SCALE,
-    HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,
-    OPT_FOLDER,
 )
 
-LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_grid", "layout_best.pt")
-# LAYOUT_PATH = os.path.join(OPT_FOLDER + "_lbfgs_ensemble_full_corpus_center", "layout_best.pt")
+# Bound by bind_world(), never at import. Three other scripts import this module
+# as a library and read these, so binding them explicitly is what stops a
+# consumer scoring one run's layout against another run's corpus.
+HELDOUT_SHOWER_CACHE_PATH = None
+HELDOUT_POSITIONS_PATH    = None
+LAYOUT_PATH               = None
+LAYOUT_SCHEME             = None
+
+
+def bind_world(W, layout=None, scheme="grid"):
+    """Point this module's corpus and layout at a resolved run world.
+
+    `layout` overrides the layout path outright. Otherwise the path is built
+    from `scheme`, and LAYOUT_SCHEME records which baseline is actually loaded
+    so a caller can LABEL its result by the layout it scored. A hardcoded label
+    here once reported an optimized-vs-center gain as optimized-vs-grid and
+    inflated it tenfold.
+    """
+    global HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH
+    global LAYOUT_PATH, LAYOUT_SCHEME
+    HELDOUT_SHOWER_CACHE_PATH = W.heldout
+    HELDOUT_POSITIONS_PATH    = W.heldout_positions
+    if layout:
+        LAYOUT_PATH, LAYOUT_SCHEME = layout, "explicit"
+    else:
+        LAYOUT_PATH = os.path.join(
+            W.opt_folder + f"_lbfgs_ensemble_full_corpus_{scheme}", "layout_best.pt")
+        LAYOUT_SCHEME = scheme
+    return LAYOUT_PATH
 
 class KernelDualLabels:
     """Drop-in for the dual surrogate: same ``(primary_batch, xy_batch) -> (B, n_det, 2)``
@@ -246,19 +272,15 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--grid-layout", action="store_true",
                     help="use grid layout as baseline")
-    ap.add_argument("--recon_dir", type=str, default=None,
-                    help="Recon checkpoint directory to score (default: "
-                         "constants RECON_FOLDER + '_deepsets'). Point at a "
-                         "C0/T1/T2 experiment recon to compare them on one layout.")
-    ap.add_argument("--fnn_folder", type=str, default=None,
-                    help="directory holding fnn_electron.pt and fnn_muon.pt. Without "
-                         "this the surrogate comes from FNN_FOLDER in constants, which "
-                         "need not be the surrogate --recon_dir's recon was trained "
-                         "against, and the surrogate-side U would then describe a "
-                         "different model than the one under test.")
+    ap.add_argument("--opt_scheme", type=str, default="grid",
+                    choices=("grid", "center"),
+                    help="Which stage-4 init scheme's optimized layout to score. "
+                         "This selects the OPTIMIZED layout directory and is "
+                         "independent of --grid-layout, which selects the "
+                         "BASELINE the optimized layout is compared against.")
     ap.add_argument("--layout", type=str, default=None,
                     help="Path to the OPTIMIZED layout_best.pt to score against the "
-                         "baseline (default: the constants full_corpus_grid layout).")
+                         "baseline (default: the run world's full_corpus_grid layout).")
     ap.add_argument("--corpus", type=str, default=None,
                     help="Score a DIFFERENT shower corpus than the constants one, "
                          "e.g. the held-out set. Its `<corpus>_positions.pt` sidecar "
@@ -279,10 +301,10 @@ def main():
     ap.add_argument("--detect_e", type=float, default=None,
                     help="detection objective: per-detector count threshold (None "
                          "uses the opt_core default).")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-    if args.layout:
-        global LAYOUT_PATH
-        LAYOUT_PATH = args.layout
+    W = run_world.resolve(args)
+    bind_world(W, layout=args.layout, scheme=args.opt_scheme)
 
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -306,7 +328,7 @@ def main():
                                   chunk=args.kernel_chunk)
     print(f"kernel chunk: {kernel_fnn.chunk} events/call")
 
-    fnn, recon = load_models(device, fnn_folder=args.fnn_folder, recon_dir=args.recon_dir)
+    fnn, recon = load_models(device, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
     # Always re-encoded from the corpus being scored: primary.pt only ever lines up
     # with the TRAINING corpus, and the default corpus here is the held-out one.
     prim = build_primaries(corpus_path, B, mountain).to(device)

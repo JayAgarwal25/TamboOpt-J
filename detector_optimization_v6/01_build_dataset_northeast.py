@@ -47,12 +47,13 @@ from modules_v6.fnn_surrogate_ne import (
 )
 from modules_v6.fnn_surrogate import _load_species_sidecar, encode_primary
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
+from modules_v6 import run_world
 from modules_v6.constants import (
-    SHOWER_CACHE, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, NUM_SHOWERS,
     N_DETECTORS, PRIMARY_DIM,
-    BATCH_SIZE, BATCH_SIZE_TRAIN, RUN_LOCATION,
-    DUAL_SHOWER_CACHE_PATH, DATASET_FRACTION,
+    BATCH_SIZE, BATCH_SIZE_TRAIN,
+    DATASET_FRACTION,
 )
 
 # Legacy synthetic-recenter flag for the infill path only. The main build path
@@ -65,7 +66,9 @@ from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
 # ── Config ───────────────────────────────────────────────────────────────────
 # Dedicated output dir (notable name) — never overwrite the (North, Up) corpus.
-TRAINING_DATASET_FOLDER = os.path.join(RUN_LOCATION, "test_v6_run_01_northeast")
+# Bound in main() from the resolved run world, never at import.
+TRAINING_DATASET_FOLDER = None
+DUAL_SHOWER_CACHE_PATH  = None
 # Paired dual-species corpus holds 2*n_pairs rows (electron block then muon
 # block, same primaries); 02 splits them per species via the species_ids.pt
 # sidecar (the primary pdg feature now carries the EM/hadronic class).
@@ -240,7 +243,13 @@ def main():
     ap.add_argument("--max_showers", type=int, default=None,
                     help="Override the module-level MAX_SHOWERS cap. For mini "
                          "validation builds that need a row cap. Normal mode only.")
+    run_world.add_run_world_args(ap)
     args = ap.parse_args()
+
+    global TRAINING_DATASET_FOLDER, DUAL_SHOWER_CACHE_PATH
+    W = run_world.resolve(args, need_write=True)
+    TRAINING_DATASET_FOLDER = W.dataset_folder
+    DUAL_SHOWER_CACHE_PATH  = W.corpus
 
     print("=" * 72)
     print(f"v6/01_build_dataset_northeast.py")
