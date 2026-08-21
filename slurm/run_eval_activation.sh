@@ -16,6 +16,9 @@ conda deactivate
 
 conda activate multiproc_env
 
+# all .pyc under one tree instead of __pycache__/ dirs across the source
+export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+
 # Whole untouched heldout reserve (~25k pairs, ~25 GB of clouds streamed in
 # --load-block chunks). run_eval_performance did 2 kernel passes over 5120 events
 # in 48 s, so 2 h is headroom, not an estimate.

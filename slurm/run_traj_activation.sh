@@ -13,6 +13,9 @@ conda deactivate
 conda deactivate
 conda activate multiproc_env
 
+# all .pyc under one tree instead of __pycache__/ dirs across the source
+export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+
 # CPU only: 04_plot_trajectory_gif.py loads trajectory.pt on cpu and never touches
 # a model, so this does not need (or wait for) a GPU.
 cd /n/home05/zdimitrov/tambo/TambOpt

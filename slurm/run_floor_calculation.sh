@@ -16,4 +16,7 @@ conda deactivate
 
 conda activate multiproc_env
 
+# all .pyc under one tree instead of __pycache__/ dirs across the source
+export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+
 python -u plots/compute_aleatoric_floor.py

@@ -15,6 +15,9 @@ conda deactivate
 
 conda activate multiproc_env
 
+# all .pyc under one tree instead of __pycache__/ dirs across the source
+export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
+
 # Each scheme against the baseline it was initialized from, so "baseline vs
 # optimized" is the actual before/after of that run rather than a cross-comparison.
 O="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import OPT_FOLDER; print(OPT_FOLDER)')"

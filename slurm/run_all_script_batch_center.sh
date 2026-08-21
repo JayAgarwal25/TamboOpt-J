@@ -17,6 +17,8 @@ conda deactivate
 conda activate multiproc_env
 
 export PYTHONUNBUFFERED=1
+# all .pyc under one tree instead of __pycache__/ dirs across the source
+export PYTHONPYCACHEPREFIX=/n/home05/zdimitrov/tambo/TambOpt/.pycache
 
 # --- checkpointing: steps marked done in pipeline_status.json are skipped ---
 # Delete the file (or a step's entry) to force a rerun.
