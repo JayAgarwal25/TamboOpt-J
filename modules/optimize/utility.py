@@ -49,14 +49,24 @@ def U_E(E_preds, E_trues, r, cap=None):
     return u
 
 
-def U_angle(angle_preds, angle_trues, r, cap=None):
+def U_angle(angle_preds, angle_trues, r, cap=None, period=None):
     """Angular term: inverse squared angle error, weighted by `r`.
 
     `cap` soft-caps the per-event reward 1/(err^2 + .001), hard ceiling 1000;
     None leaves it uncapped. **theta and phi need very different caps** — their
     error distributions are not comparable.
+
+    `period` wraps the difference into [-period/2, +period/2] before squaring,
+    for angles that live on a circle: pass 2*pi for azimuth, leave None for
+    zenith, which is confined to [0, pi]. Without it a prediction and a truth
+    either side of the branch cut score as if almost a full turn apart, so with
+    phi in [0, 2*pi) a true 0.023 rad error reads as 6.26 rad and the reward
+    collapses from ~650 to 0.026, which also miscalibrates any cap tuned on it.
     """
-    inv_err = 1.0 / ((angle_preds - angle_trues) ** 2 + .001)
+    d = angle_preds - angle_trues
+    if period is not None:
+        d = torch.remainder(d + 0.5 * period, period) - 0.5 * period
+    inv_err = 1.0 / (d ** 2 + .001)
     if cap is not None:
         inv_err = _soft_cap(inv_err, cap)
     u = torch.mean(r * inv_err)

@@ -73,9 +73,15 @@ CAP_E     = 80.0
 # ── Objective helpers ─────────────────────────────────────────────────────────
 def primary_to_physical_labels(primary: torch.Tensor):
     """(B, >=4) -> (E_GeV, θ_rad, φ_rad). Inverse of `encode_primary`."""
-    dir_x = primary[:, 0]
-    dir_y = primary[:, 1]
-    dir_z = primary[:, 2].clamp(-1.0, 1.0)
+    # Normalise before reading the zenith off component z. arccos(dir_z) is the
+    # zenith angle only for a UNIT vector; the stored components are not
+    # guaranteed normalised, and clamping to [-1, 1] hides that rather than
+    # fixing it.
+    d = primary[:, 0:3]
+    d = d / d.norm(dim=1, keepdim=True).clamp(min=1e-12)
+    dir_x = d[:, 0]
+    dir_y = d[:, 1]
+    dir_z = d[:, 2].clamp(-1.0, 1.0)
     log_e_norm = primary[:, 3]
     log_e = log_e_norm * (LOG_E_MAX - LOG_E_MIN) + LOG_E_MIN
     E_gev = torch.pow(10.0, log_e)
@@ -253,7 +259,8 @@ def utility_of_xy(x_det: torch.Tensor,
         tau_reconstruct=TAU_RECONSTRUCT,
     )
     u_theta = U_angle(theta_pred, theta_true, r, cap=CAP_THETA)
-    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI)
+    u_phi   = U_angle(phi_pred,   phi_true,   r, cap=CAP_PHI,
+                      period=2.0 * math.pi)
     u_e     = U_E    (E_pred_phys, E_true,    r, cap=CAP_E)
     u_pr    = U_PR(r)
     U = (W_THETA * u_theta + W_PHI * u_phi + W_E * u_e) / W_DIV
