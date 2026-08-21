@@ -56,7 +56,7 @@ from modules.constants import (
 from modules.geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in
-# modules/opt_core.py; the figures live in plots/opt_plotting.py (loaded by path).
+# modules/optimize/objective.py; the figures live in plots/opt_plotting.py (loaded by path).
 from modules.optimize import (
     primary_to_physical_labels, utility_of_xy, align_to_reference, load_models,
     W_THETA, W_PHI, W_E, W_PR, W_DIV,
@@ -92,7 +92,7 @@ DE_RECOMBINATION    = 0.7
 DE_BATCH_PRIMARIES  = 50_000
 
 # Composite weights (W_*) + reconstructability thresholds + GEOMETRY_PATH_RESOLVED
-# are imported from modules/opt_core.py (shared across the 04 optimizers).
+# are imported from modules/optimize/objective.py (shared across the 04 optimizers).
 SEED   = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -140,7 +140,7 @@ def _run_de(pop0: np.ndarray, bounds, fnn, recon, primary_fixed, mountain):
     candidate to the mountain, then maximises composite U. Returns the
     OptimizeResult plus a per-generation best-so-far log for the diagnostic
     curves."""
-    @torch.no_grad()   # gradient-free DE; opt_core.utility_of_xy is not no_grad-wrapped
+    @torch.no_grad()   # gradient-free DE; objective.utility_of_xy is not no_grad-wrapped
     def _score(flat):
         x_det = torch.as_tensor(flat[:N_DETECTORS], dtype=torch.float32, device=DEVICE)
         y_det = torch.as_tensor(flat[N_DETECTORS:], dtype=torch.float32, device=DEVICE)

@@ -1,7 +1,7 @@
 """Test #2 — is the ACTIVATION gain real, or only the surrogate's opinion?
 
 Sibling of `eval_true_utility.py`, same trick for a different objective.
-`04_optimize_lbfgs_activation.py` maximizes `opt_core.activation_of_xy` through the
+`04_optimize_lbfgs_activation.py` maximizes `objective.activation_of_xy` through the
 FNN surrogate, so a rising U only proves the layout collects more *to the
 surrogate*. This re-scores it with the objective computed from the plane-aware
 KERNEL (`compute_labels_batch`, the ground truth the surrogate approximates)

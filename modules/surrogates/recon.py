@@ -1,20 +1,10 @@
-"""Reconstruction MLP for v6 — FNN-parity architecture and normalization.
+"""Reconstruction net: per-detector response -> primary labels.
 
-Maps flattened per-detector features `(x, y, E_pred, T_pred)` to the v6 primary
-encoding `[dir_x, dir_y, dir_z, log_e_norm]`.
-
-Mirrors `FNNSurrogate` (`modules/fnn_surrogate.py`) one-for-one:
-    - hidden 512 → 512 → 512 (ReLU + dropout),
-    - per-feature z-score of the input baked into `forward()` via registered buffers,
-    - output denormalization (back to raw primary-encoding units) also baked in,
-    - same `set_normalization()` contract, same buffer names.
-
-Usage:
-
-    from modules.surrogates import Reconstruction
-    recon = Reconstruction(n_det=100, input_features=4, output_dim=4)
-    recon.set_normalization(in_mean, in_std, out_mean, out_std)
-    pred = recon(inp_flat)   # raw primary-encoding units
+Maps flattened `(x, y, E_pred, T_pred)` per detector to the primary encoding
+`[dir_x, dir_y, dir_z, log_e_norm]`. `Reconstruction` mirrors `FNNSurrogate`
+one-for-one — same hidden widths, same baked-in input z-score and output
+denormalization, same `set_normalization()` contract and buffer names.
+`DeepSetsRecon` is the permutation-equivariant version Step 3 trains.
 """
 
 import torch

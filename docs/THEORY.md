@@ -373,6 +373,21 @@ The May checkpoints are per-species because the *training data* is per-component
 The corpus is generated **paired** (same primaries for both blocks) so this superposition is faithful to the simulation, and recon/optimizer always see complete events, not half-showers. Both models receive the **same** primary at inference — including its EM/hadronic class (a real conditioning feature, §3.3) — and are routed by model identity, never by overwriting that feature.
 
 
+### 5.7 Why the overlap correction uses the kernel's own Gaussian
+
+`overlap_multiplicity` divides each detector's count by $m_d=\sum_j \exp(-r_{dj}^2/2\sigma^2)$. The kernel gives every detector its own **unnormalised** Gaussian with no exclusivity, so $\sum_d \text{count}_d = \sum_p e_p M_p$ where $M_p$ is the total weight particle $p$ receives. Counting each particle once means dividing by $M_p$ — but the surrogate exposes only per-detector aggregates, so the correction is evaluated at the detector instead. That is $\ge 1$ automatically (the $j=d$ term is 1), needing no clamp.
+
+The weight must be the kernel's own Gaussian, **not** an overlap integral. $\exp(-r^2/4\sigma^2)$ — the overlap of two normalised Gaussians — looks like the natural choice but over-corrects by exactly $2\times$ when detectors are dense. With the form above both limits are right: spacing $\gg\sigma$ gives $m\to1$, spacing $\ll\sigma$ gives $m\to 2\pi\sigma^2/s^2$, so the corrected sum tends to $\rho\cdot\text{area}$.
+
+Exact distinct counting would need the per-particle $(\text{point},\text{detector})$ tensor, which the surrogate does not expose.
+
+### 5.8 Off-mesh penalty: why the onset sits inside the snap radius
+
+`project_to_mountain_ne` runs under `no_grad` **after** the step, once per L-BFGS chunk, so between snaps the optimizer is free to hill-climb the surrogate's extrapolation. Measured drift without a penalty: median 29 m, p99 187 m, max 1272 m off-mesh — well past the 91.3 m radius at which training layouts were snapped. It reported $U$ rising 36.2 → 37.7 out there; the end-of-chunk snap then collapsed $U$ to 16.18 (one run put 100 detectors on 11 distinct points).
+
+`r0` is therefore the **onset** radius, `PENALTY_ONSET_FRAC * max_gap`, deliberately inside the snap radius. At 0.75 the wall starts at 68.5 m and by the 91.3 m snap radius pushes back with $9.7\times10^{-3}$ per metre — roughly $20\times$ the utility's outward pull of $\sim5\times10^{-4}$. The balance point lands near 70 m, in-band, so layouts in the inner three quarters of the band score exactly as they did before the penalty existed.
+
+
 ## 6. Normalisation Strategy
 
 All z-scoring is baked into the forward passes via registered buffers; each stage computes its stats from the data it trains on:
@@ -589,3 +604,20 @@ Directional validity is regime-dependent: surrogate gradients are roughly right 
 1. Un-`no_grad` `compute_labels_batch` behind a flag and time one fwd+bwd minibatch — decides kernel-in-the-loop feasibility with numbers.
 2. Run a voxel/superpoint compaction fidelity check on ~512 events — the clouds are stored well above kernel resolution (σ_spatial), so compaction at ~σ/4 should make the corpus GPU-resident with a measurable fidelity knob.
 3. Re-run `plots/compute_aleatoric_floor.py` per species against the Stage-2 val loss — decides whether any surrogate-centric path has headroom left at all (§10.4 says it does not).
+
+### 11.4 AllShowers cols 0/1 are horizontal offsets, not transverse coordinates
+
+`place_clouds_enu` reads native cloud columns 0/1 as **horizontal (East, North) offsets from the decay vertex**, and must not add the longitudinal development a second time.
+
+`c8_air_shower.cpp` does build observation planes perpendicular to the shower axis on an $(e_1,e_2)$ basis, which invites reading cols 0/1 as plane-local transverse coordinates. But its writer is flagged `false // do not print z-coordinate` and emits root-CS $x/y$. Confirmed directly on the generator's own training corpus (`combined_electrons.h5`): cols 0/1 drift by `layer_east_dx * (d_East, d_North)` per layer, which a transverse coordinate cannot do.
+
+Reading them as transverse swung every shower kilometres off-axis and dropped the trigger rate to **2%** (it is 91% with the correct reading). Anything built before 2026-07-20 carries the wrong placement and must be regenerated.
+
+**Known limitation.** Because C8 dropped $z$, the vertical lateral component is lost and Up carries only the longitudinal term. Recovering it from $p\cdot d = s$ costs $1/d_{Up}$, unusable at $|d_{Up}|_{p5}=0.027$. The fix belongs upstream — re-run C8 writing $z$.
+
+### 11.5 Why the dataset-build checkpoint is on a wall clock
+
+`_ResumeState` writes on a time interval, not every $N$ chunks, because a checkpoint is the whole `out_*` set — about 11.8 GB at the 750k-event scale. A per-$N$-chunks policy scales write volume with corpus size: every 5 of ~352 chunks would be roughly 830 GB of writes for one build. Time-based bounds the overhead to about one write per interval regardless of scale, at the cost of re-doing up to `resume_every_s` of work after a preemption.
+
+The per-chunk layout `rng` is deliberately **not** checkpointed — only the scalar chunk counter is. A resumed run therefore draws fresh layouts for the remaining chunks: still a valid draw from the same strategies, but not bit-identical to an uninterrupted run. Verified 2026-08-20 by SIGKILLing a build after 2 of 4 chunks; the restored chunks came back bit-identical and the rest were freshly drawn.
+

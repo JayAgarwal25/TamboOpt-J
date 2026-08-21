@@ -65,7 +65,7 @@ from modules.constants import (
 from modules.geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in
-# modules/opt_core.py; the figures live in plots/opt_plotting.py (loaded by
+# modules/optimize/objective.py; the figures live in plots/opt_plotting.py (loaded by
 # path — its package dir isn't importable by name). DE keeps the _plot_ensemble /
 # _plot_density_heatmap names so replot_de_ensemble_up.py still finds them.
 from modules.optimize import (
@@ -100,7 +100,7 @@ DE_RECOMBINATION    = 0.7
 DE_BATCH_PRIMARIES  = 512     # FIXED batch → deterministic objective for the search
 
 # Composite weights (W_*) + reconstructability thresholds + GEOMETRY_PATH_RESOLVED
-# are imported from modules/opt_core.py (shared across the 04 optimizers).
+# are imported from modules/optimize/objective.py (shared across the 04 optimizers).
 SEED   = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -162,7 +162,7 @@ def de_refine(init_x: torch.Tensor,
     generation — the DE analogue of the L-BFGS iter log / gradient history."""
     x0 = torch.cat([init_x, init_y], dim=0).detach().cpu().numpy().astype(np.float64)
 
-    @torch.no_grad()   # gradient-free DE; opt_core.utility_of_xy is not no_grad-wrapped
+    @torch.no_grad()   # gradient-free DE; objective.utility_of_xy is not no_grad-wrapped
     def _score(flat):
         x_det = torch.as_tensor(flat[:N_DETECTORS], dtype=torch.float32, device=DEVICE)
         y_det = torch.as_tensor(flat[N_DETECTORS:], dtype=torch.float32, device=DEVICE)

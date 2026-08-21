@@ -1,13 +1,10 @@
 """Step-1 dataset builder: layouts, plane-aware labels, training tensors.
 
 Detectors are placed by horizontal map coordinates (North, East) — the ENU
-convention of the h5 data files — and `surface` is a `SurfaceUpMap` giving
-Up = g(North, East). The kernel itself is unchanged: it still sees North as the
-transverse coordinate and the **defined** East as the depth (`z_cont`), with the
-transverse Up coming from the extrapolated surface height.
-
-`encode_primary` / `compute_normalization` are reused unchanged from
-`fnn_surrogate` (re-exported for convenience).
+convention of the h5 files — with `surface` giving Up = g(North, East). The
+kernel is unchanged: North is still its transverse axis and the defined East its
+depth. `encode_primary` / `compute_normalization` are re-exported from
+`surrogates.fnn` for convenience.
 """
 
 import os
@@ -57,34 +54,21 @@ def place_clouds_enu(clouds:   torch.Tensor,
                      layer_east_dx: float = LAYER_EAST_DX) -> torch.Tensor:
     """Place native AllShowers clouds into site-local ENU at their real decay vertex.
 
-    THE placement the pipeline uses (Step 1, `build_training_pairs`); shared with the
-    notebooks and the aleatoric-floor script so nobody re-derives the algebra.
+        East = decay_E + x    North = decay_N + y    Up = decay_U + layer*dx*d_Up
 
-        East = decay_E + x        North = decay_N + y
-        Up   = decay_U + layer * layer_east_dx * d_Up
-
-    Native columns are ``[x, y, layer_index, energy, time]``, written back as the
-    kernel's (North, Up, z_cont).
+    Native cols [x, y, layer_index, energy, time] -> the kernel's (North, Up, z_cont).
+    THE placement the pipeline uses; shared with the notebooks and the
+    aleatoric-floor script so nobody re-derives the algebra.
 
     **Cols 0/1 are HORIZONTAL (East, North) offsets, not plane-local transverse
-    coordinates** — the longitudinal development is already in them and must not be
-    added twice. c8_air_shower.cpp does build planes ⟂ the axis on an (e1, e2) basis,
-    but its writer is flagged ``false // do not print z-coordinate`` and emits root-CS
-    x/y. Confirmed on the generator's training corpus (combined_electrons.h5): cols
-    0/1 drift by ``layer_east_dx * (d_East, d_North)`` per layer, which a transverse
-    coordinate cannot do. Reading them as transverse swung every shower kilometres
-    off-axis and dropped the trigger rate to 2% (now 91%).
-
-    Known limitation: C8 dropped z, so the vertical lateral component is lost and Up
-    carries only the longitudinal term. Recovering it from ``p·d = s`` costs 1/d_Up,
-    unusable at |d_Up| p5 = 0.027. Fix belongs upstream — re-run C8 writing z.
+    coordinates** — the longitudinal development is already in them, and adding it
+    twice swings showers kilometres off-axis (trigger rate 2% vs 91%). The evidence,
+    and the lost-z limitation this inherits from C8, are in docs/THEORY.md §11.4.
 
     Args:
         clouds    : (M, P, 5) native clouds — MODIFIED IN PLACE and returned.
         positions : (M, 3) decay vertices [East, North, Up] in metres.
         dirs      : (M, 3) unit tau travel directions [East, North, Up].
-    Returns:
-        The same tensor, with cols 0/1/2 replaced by (North, Up, z_cont).
     """
     pe, pn, pu = (positions[:, i].view(-1, 1) for i in range(3))
     dU = dirs[:, 2].view(-1, 1)
@@ -109,22 +93,17 @@ def place_clouds_enu(clouds:   torch.Tensor,
 def cloud_to_enu(clouds:        torch.Tensor,
                  east_entry:    float = EAST_ENTRY,
                  layer_east_dx: float = LAYER_EAST_DX):
-    """Inverse of `place_clouds_enu`: kernel coords → ENU points.
+    """Inverse of `place_clouds_enu`: kernel coords -> ENU points.
 
-    After placement a cloud carries ``col0 = North``, ``col1 = Up`` and
-    ``col2 = z_cont`` (the East depth expressed in layer-index units). Recover the
-    physical East by inverting the same gauge the kernel uses,
-    ``East = east_entry - z_cont * layer_east_dx``, so placed clouds can be drawn
-    in the same ENU/cliff-face frame as the mountain and the detectors.
-
-    Only energy-carrying points were ever placed (`place_clouds_enu` masks on
-    col3 > 0), so points with zero energy are excluded rather than returned at a
-    meaningless position.
+    Inverts the kernel's own gauge, ``East = east_entry - z_cont * layer_east_dx``,
+    so placed clouds can be drawn in the same frame as the mountain and detectors.
+    Zero-energy points are dropped — they were never placed, so their position is
+    meaningless rather than merely uninteresting.
 
     Args:
         clouds : (..., P, 5) placed cloud(s).
     Returns:
-        (M, 3) float array of [East, North, Up] for the energy-carrying points.
+        (M, 3) [East, North, Up] for the energy-carrying points.
     """
     c = clouds.detach().cpu().numpy() if isinstance(clouds, torch.Tensor) else np.asarray(clouds)
     c = c.reshape(-1, c.shape[-1])
@@ -144,23 +123,18 @@ def compute_labels_batch(clouds:   torch.Tensor,
                          east_entry:    float = EAST_ENTRY,
                          layer_east_dx: float = LAYER_EAST_DX,
                          sigma_spatial: float = SIGMA_SPATIAL) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Run v4's plane-aware kernel on a batch of showers sharing one layout.
+    """Run the plane-aware kernel on a batch of showers sharing one layout.
 
-    Detectors are (East, North) — matching the ENU h5 convention. The KERNEL is
-    unchanged: it still sees North as the transverse coordinate and East as the
-    depth (z_cont). This wrapper just maps the (East, North) pair onto those
-    physical roles: `surface` extrapolates Up = g(North, East), and z_cont comes
-    from the defined East.
+    Detectors are (East, North), matching the ENU h5 convention; the kernel is
+    unchanged and still reads North as its transverse axis and East as the depth.
+    This wrapper only maps the pair onto those roles.
 
     Args:
         clouds : (B, max_points, 5) AllShowers point clouds.
-        e_det  : (n_det,) East coordinates (defined; sets depth / z_cont).
-        n_det  : (n_det,) North coordinates (kernel transverse axis).
-        surface: `SurfaceUpMap` — differentiable Up = g(North, East).
-
+        e_det  : (n_det,) East  — defined; sets depth / z_cont.
+        n_det  : (n_det,) North — the kernel's transverse axis.
     Returns:
-        E : (B, n_det) local intensities (v4 kernel `local_intensity`).
-        T : (B, n_det) weighted-average times (v4 kernel `et`).
+        E, T : (B, n_det) local intensities and weighted-average times.
     """
     up     = surface(n_det, e_det)                       # Up = g(North, East)
     z_cont = (east_entry - e_det) / layer_east_dx        # depth from defined East
@@ -194,8 +168,8 @@ def _load_corpus_metadata(mountain, shower_cache_path: str,
                           max_showers: int = 0) -> _CorpusMeta:
     """Read the corpus metadata (no point clouds) and encode the primaries.
 
-    The corpus is two equal species blocks back to back, so keeping `max_showers`
-    rows means the first `k_sp` of each block, not the first `max_showers` rows.
+    The corpus is two equal species blocks back to back, so `max_showers` keeps
+    the first `k_sp` of EACH block, not the first `max_showers` rows.
     """
     import showerdata
 
@@ -231,14 +205,12 @@ def _load_corpus_metadata(mountain, shower_cache_path: str,
 def _build_chunk_list(k_sp: int, per_sp: int, load_chunk: int, batch_size: int):
     """Flat streaming plan, plus the `load_chunk` actually used.
 
-    Flat and precomputed so resume is just "skip the first N" — no nested-loop
-    index bookkeeping to reconstruct on restart.
+    Flat and precomputed so resume is just "skip the first N".
 
-    The rounding of `load_chunk` down to a whole number of `batch_size`
-    sub-batches happens HERE, before the list is built, and the rounded value is
-    returned so no caller can build the list off the raw one: a chunk that is not
-    a multiple of `batch_size` leaves a short final sub-batch (and so a different
-    number of per-chunk layout rng draws), which changes the dataset.
+    `load_chunk` is rounded down to a whole number of `batch_size` sub-batches
+    HERE, before the list is built, and the rounded value is returned so no caller
+    can build the list off the raw one: a short final sub-batch changes the number
+    of per-chunk layout rng draws, and so changes the dataset.
 
     Returns:
         load_chunk : rounded chunk size.
@@ -255,17 +227,13 @@ def _build_chunk_list(k_sp: int, per_sp: int, load_chunk: int, batch_size: int):
 class _ResumeState:
     """The accumulating out_* tensors plus their resume checkpoint.
 
-    The interval is a WALL-CLOCK one, not every-N-chunks: a checkpoint is the
-    whole out_* set, ~11.8 GB at the 750k-event scale, so a per-N-chunks policy
-    scales the write volume with corpus size (every 5 of ~352 chunks would be
-    ~830 GB of writes). Time-based bounds the overhead to roughly one write per
-    interval regardless of scale, at the cost of re-doing up to `every_s` of work
-    after a preemption.
+    The interval is WALL-CLOCK, not every-N-chunks: a checkpoint is the whole
+    out_* set (~11.8 GB at 750k events), so a per-N policy would scale write
+    volume with corpus size. See docs/THEORY.md §11.5.
 
-    The per-chunk layout `rng` draws are NOT checkpointed (only the scalar chunk
-    counter is), so a resumed run draws fresh layouts for the remaining chunks
-    rather than bit-reproducing an uninterrupted run — harmless (still a valid
-    draw from the same strategies), just not bit-identical.
+    The layout `rng` is NOT checkpointed, so a resumed run draws fresh layouts
+    for the remaining chunks — a valid draw from the same strategies, just not
+    bit-identical to an uninterrupted run.
     """
 
     def __init__(self, n_pairs: int, n_det: int,
@@ -309,8 +277,7 @@ class _ResumeState:
     def maybe_checkpoint(self, chunk_i: int, n_chunks: int) -> None:
         """Write a checkpoint if the interval has elapsed.
 
-        Skips the final chunk: the checkpoint is deleted immediately after the
-        loop anyway, so writing ~11.8 GB there would be pure waste.
+        Skips the final chunk — it is deleted right after the loop anyway.
         """
         if not self.path or (time.time() - self._last_t) < self.every_s:
             return
@@ -345,9 +312,9 @@ def _label_chunk(clouds_chunk, meta: _CorpusMeta, state: _ResumeState,
                  batch_size: int, n_det: int, device) -> None:
     """Label one loaded chunk under every strategy, writing into `state`.
 
-    One layout is drawn per (strategy, sub-batch) and shared by the whole
-    sub-batch. The rng is threaded in from the caller: draw order runs
-    chunk → strategy → sub-batch, and reordering it changes the dataset.
+    One layout per (strategy, sub-batch), shared by that sub-batch. The rng is
+    threaded in from the caller: draw order is chunk -> strategy -> sub-batch,
+    and reordering it changes every label in the dataset.
     """
     n_showers = meta.n_showers
     for s_idx, (s_name, fn_name, kwargs) in enumerate(_STRATEGIES):
@@ -380,7 +347,7 @@ def _label_chunk(clouds_chunk, meta: _CorpusMeta, state: _ResumeState,
 def _load_clouds(shower_cache_path: str, meta: _CorpusMeta, chunk, east_entry, layer_east_dx):
     """Stream one chunk of point clouds and place it at its real decay vertices.
 
-    Returns the placed clouds and how many non-finite points were zeroed
+    Returns the placed clouds and the count of non-finite points zeroed
     (float32 energy overflow in the corpus).
     """
     import showerdata

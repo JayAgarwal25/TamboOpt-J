@@ -1,9 +1,9 @@
 """Per-event composite utility vs. primary tau energy, for a saved optimized layout.
 
-`opt_core.utility_of_xy` returns a single batch-averaged U — that's what the
+`objective.utility_of_xy` returns a single batch-averaged U — that's what the
 optimizer selects on, but it hides whether the layout helps uniformly across the
 energy range or is buying its average from one end. This script re-derives the
-SAME composite (identical weights, caps, thresholds — `modules/opt_core.py`'s
+SAME composite (identical weights, caps, thresholds — `modules/optimize/objective.py`'s
 W_THETA/W_PHI/W_E/W_DIV, CAP_*, LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD,
 TAU_LAYOUT, TAU_RECONSTRUCT) but stops short of the final `torch.mean` inside
 `U_E`/`U_angle`, keeping one U value per event instead. Since mean is linear,
@@ -162,7 +162,7 @@ def score_run(run_dir, prim, fnn, recon, mountain, device, formats=("png",)):
 
     U_i, E_true, r = utility_per_event(x, y, prim, fnn, recon)
     U_i_np = U_i.cpu().numpy()
-    # E_true is in GeV (opt_core.primary_to_physical_labels' own docstring names
+    # E_true is in GeV (objective.primary_to_physical_labels' own docstring names
     # its return E_GeV). +GEV_TO_EV_LOG10 shifts the plotted numbers into eV --
     # log10(E/eV) is the convention this field actually quotes cosmic-ray-scale
     # energies in (this corpus spans ~1e14-1e17 eV) -- so the axis ticks are the

@@ -1,18 +1,8 @@
-"""FNN surrogate for detector optimization v6.
+"""Primary encoding, normalization statistics, and the pre-DeepSets surrogate.
 
-The FNN learns `(primary_features, layout) -> (E, T) per detector`. The dataset
-it trains on is built by `modules/dataset_builder.py`; this module holds the
-primary encoding, the normalization statistics and the model itself.
-
-`FNNSurrogate` is retained so `plots/02_plot_nn_target_vs_pred.py` can still load
-pre-DeepSets checkpoints.
-
-Usage (from a driver script living in the v6 folder):
-
-    import modules  # noqa: F401 — package import; keeps modules on the path
-    from modules.surrogates import (
-        encode_primary, compute_normalization, FNNSurrogate,
-    )
+`encode_primary` and `compute_normalization` are shared by every stage.
+`FNNSurrogate` itself is superseded by `deepsets.DeepSetsSurrogate` and is kept
+only so `plots/02_plot_nn_target_vs_pred.py` can load old checkpoints.
 """
 
 import os
@@ -38,10 +28,9 @@ def encode_primary(directions:   torch.Tensor,
     `compute_normalization` z-scores every primary column).
 
     The vertex is included because tau_wholesky.jl aims every surviving tau at the
-    array, so direction alone barely discriminates; without it two taus with equal
-    direction and energy give different labels from identical input. Measured
-    aleatoric floor: R² >= 0.49 without, >= 0.56 with. Derived summaries (along-axis
-    distance, impact parameter) were tested and did not beat the raw triple.
+    array, so direction alone barely discriminates — without it, two taus with the
+    same direction and energy give different labels from identical input
+    (aleatoric floor R² 0.49 without, 0.56 with).
 
     Cols 0-3 keep their meaning, so Step 3's ``primary[:, :4]`` target is unaffected.
 

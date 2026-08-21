@@ -6,7 +6,7 @@ rows (pdg feature 1) sharing the same primaries. This trainer splits the
 dataset rows by that species id and trains one DeepSets surrogate per species:
 each model learns its component's response f_s(primary, layout) -> (E_s, T_s).
 Stages 3-4 evaluate BOTH models per event and combine the outputs physically
-(modules/dual_surrogate.py: counts add, times average count-weighted).
+(modules/surrogates/dual.py: counts add, times average count-weighted).
 
 Per species, everything matches the original single-model trainer: shower-level
 split, log-T target treatment, z-scored MSE loss, two-phase Adam(OneCycle) →
@@ -56,7 +56,7 @@ from modules.constants import (
 # ── Config ───────────────────────────────────────────────────────────────────
 # Species-tagged checkpoints (fnn_electron.pt / fnn_muon.pt) go straight into
 # FNN_FOLDER — they cannot clobber a legacy single-model fnn.pt, and stages 3-4
-# load the pair from there via dual_surrogate.load_dual_surrogate.
+# load the pair from there via surrogates.load_dual_surrogate.
 OUTPUT_FOLDER = FNN_FOLDER
 SPECIES_TAGS  = (("electron", 0), ("muon", 1))   # (tag, species id: 0=electron, 1=muon)
 

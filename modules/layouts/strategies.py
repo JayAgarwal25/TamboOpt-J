@@ -1,7 +1,7 @@
 """(North, East) layout strategies.
 
 The bbox anchor uses East (centroid col 2) and the East bbox; sampling and
-projection go through `tr_geometry_ne`. All generators return (North, East)
+projection go through `geometry.placement`. All generators return (North, East)
 tensors on the mountain surface.
 """
 

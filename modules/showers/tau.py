@@ -1,30 +1,23 @@
 """Real tau-shower primaries from `tau_wholesky.h5`.
 
-Drop-in replacement for `allshowers.generate_showers.sample_primary_particles`:
-returns the same `energies / directions / labels` tensors the Step-0 generator
-consumes, PLUS a `positions` array (the synthetic sampler has no position — the
-old pipeline invented one by re-centering every cloud onto the mountain; the real
-taus carry a physical ENU decay position instead).
+Drop-in for `allshowers.generate_showers.sample_primary_particles`, returning the
+same `energies / directions / labels` PLUS a `positions` array — the synthetic
+sampler had no position and the old pipeline invented one by re-centering every
+cloud onto the mountain; real taus carry a physical ENU decay vertex.
 
-`tau_wholesky.h5` (site-local ENU, x=East y=North z=Up; origin = the malata site,
-i.e. the SAME frame `load_tr_mountain` builds the mountain in once it reads the
-mesh `location`):
-    position  (3, N) float64 — decay point [m], rows = (east, north, up)
-    direction (3, N) float64 — unit vector,   rows = (east, north, up)
+The file is site-local ENU (x=East, y=North, z=Up) anchored at the malata site,
+the SAME frame `load_tr_mountain` builds the mountain in:
+    position  (3, N) float64 — decay point [m]
+    direction (3, N) float64 — unit vector
     energy    (N,)   float64 — primary energy [GeV]
     pdg       (N,)   int64   — 15 (tau) for every row
 
-Convention mapping:
-  - direction: ENU (east, north, up) → the generator's/encode_primary's
-    (dir_x, dir_y, dir_z). Both are (horizontal, horizontal, vertical) unit
-    triples, so East→x, North→y, Up→z is the natural identity map.
-  - labels: tau_wholesky has no EM/hadronic class (pdg is always the tau). The
-    AllShowers generator was trained on both classes and conditions on a 0/1
-    label, so we sample it randomly per event (seeded), exactly as
-    `sample_primary_particles` did.
-  - energy: filtered to the generator's trained band [e_min, e_max]
-    (= [10**LOG_E_MIN, 10**LOG_E_MAX]); real taus reach far outside it and the
-    flow/FNN would be extrapolating.
+Two conversions worth knowing:
+  - **labels** are sampled randomly (seeded), not read: tau_wholesky has no
+    EM/hadronic class, but the AllShowers generator conditions on a 0/1 label.
+  - **energy** is filtered to the generator's trained band
+    [10**LOG_E_MIN, 10**LOG_E_MAX]; real taus reach well outside it, where the
+    flow would be extrapolating.
 """
 
 import h5py

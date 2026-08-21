@@ -1,18 +1,13 @@
-"""Shared non-plotting core for the v6/04 detector-layout optimizers.
+"""The U(x, y) objective shared by all three Step-4 optimizers.
 
-Single home for everything the three 04 optimizers
-(`04_optimize_lbfgs_ensemble.py`, `04_optimize_differential_evolution.py`,
-`04_optimize_differential_evolution_pop.py`) used to each carry their own copy
-of: the objective helpers (`primary_to_physical_labels`, `utility_of_xy`), the
-ensemble bookkeeping (`assign`, `align_to_reference`), the gradient-turn
-diagnostic (`consecutive_cos_distance`), model loading (`load_models`), and the
-shared composite weights / thresholds / resolved geometry path.
+Holds the objective itself, the ensemble bookkeeping (`assign`,
+`align_to_reference`), the gradient-turn diagnostic, model loading, and the
+composite weights and thresholds. Figure helpers live in
+`plots/opt_plotting.py`.
 
-The matching figure helpers live in `plots/opt_plotting.py` (plotting-only).
-
-Note: `utility_of_xy` is defined WITHOUT `@torch.no_grad()` so the L-BFGS
-optimizer can backprop through it; the gradient-free DE optimizers wrap their
-score calls in `torch.no_grad()` themselves.
+**`utility_of_xy` is deliberately NOT `@torch.no_grad()`-decorated** so L-BFGS
+can backprop through it; the gradient-free DE optimizers wrap their own score
+calls instead.
 """
 import math
 import os
@@ -72,7 +67,7 @@ CAP_E     = 80.0
 
 # GEOMETRY_PATH_RESOLVED is centralized in constants (mesh-agnostic: local copy of
 # the configured mesh, else the absolute path) and re-exported here for callers
-# (04 DE / DE-pop) that import it from opt_core.
+# (04 DE / DE-pop) that import it from optimize.objective.
 
 
 # ── Objective helpers ─────────────────────────────────────────────────────────
@@ -122,24 +117,18 @@ def offmesh_penalty(x_det: torch.Tensor, y_det: torch.Tensor,
                     mesh_en: torch.Tensor, r0: float) -> torch.Tensor:
     """Mean penalised excess distance beyond `r0` of the nearest mesh centroid.
 
-    Huber-shaped in the normalised excess u = (d - r0)/r0: u^2 up to u = a, then
-    the linear continuation 2a*u - a^2 (value and slope continuous at the knee).
-    Quadratic where the optimizer works, linear far away so the far field cannot
-    dominate. Normalised by r0 and averaged over detectors, so the weight means
-    the same thing at any mesh scale or detector count.
+    Huber-shaped in the normalised excess u = (d - r0)/r0 — quadratic where the
+    optimizer works, linear far away so the far field cannot dominate. Normalised
+    by r0 and averaged over detectors, so the weight means the same thing at any
+    mesh scale or detector count.
 
-    Why it exists: U itself knew nothing about the mountain. `project_to_mountain_ne`
-    ran under no_grad AFTER the step (once per L-BFGS chunk), so the optimizer was
-    free to hill-climb the surrogate's extrapolation a median 29 m / p99 187 m /
-    max 1272 m off-mesh — past the 91.3 m radius where training layouts were
-    snapped — reporting U 36.2 -> 37.7 out there. The end-of-chunk snap then
-    collapsed U to 16.18 (one run: 100 detectors on 11 distinct points).
+    Why it exists: U knows nothing about the mountain, and the snap to the mesh
+    runs under no_grad AFTER the step. Without this the optimizer hill-climbed the
+    surrogate's extrapolation up to 1272 m off-mesh, reporting U 36.2 -> 37.7 out
+    there; the end-of-chunk snap then collapsed it to 16.18.
 
-    `r0` is the ONSET radius (callers pass PENALTY_ONSET_FRAC * max_gap), inside
-    the snap radius on purpose. At 0.75 the wall starts at 68.5 m and at the
-    91.3 m snap radius pushes back with 9.7e-3 per metre, ~20x the utility's
-    outward pull of ~5e-4 — balance point ~70 m, in-band. Layouts in the inner
-    three quarters of the band score exactly as before.
+    `r0` is the ONSET radius (callers pass PENALTY_ONSET_FRAC * max_gap),
+    deliberately inside the snap radius. Tuning arithmetic: docs/THEORY.md §5.8.
     """
     d2 = ((x_det[:, None] - mesh_en[None, :, 0]) ** 2
           + (y_det[:, None] - mesh_en[None, :, 1]) ** 2)
@@ -305,25 +294,17 @@ def overlap_multiplicity(x_det: torch.Tensor, y_det: torch.Tensor,
     """Per-detector `m_d = sum_j exp(-r_dj^2 / (2 sigma^2))` (>= 1): how many
     detectors' worth of kernel weight lands on the particles detector d sees.
 
-    The kernel gives each detector its own UNNORMALISED Gaussian with no
-    exclusivity, so `sum_d count_d = sum_p e_p * M_p` with M_p the total weight
-    particle p receives. Counting each particle once means dividing by M_p, but
-    the surrogate only exposes per-detector aggregates — so evaluate it at the
-    detector instead, which is >= 1 automatically (the j = d term is 1, no clamp).
+    Divides out the kernel's double-counting, so two coincident detectors give
+    m = 2 and half a count each and stacking gains nothing — the collapse
+    degeneracy is removed inside the objective, not fenced off by a penalty.
 
-    The weight must be the kernel's OWN Gaussian, not an overlap integral:
-    `exp(-r^2/(4 sigma^2))` (two normalised Gaussians) looks natural but
-    over-corrects by exactly 2x when detectors are dense. With the form above both
-    limits are right — spacing >> sigma gives m -> 1, spacing << sigma gives
-    m -> 2 pi sigma^2 / s^2, so the corrected sum tends to rho * area.
+    **Must be the kernel's OWN Gaussian, not an overlap integral.**
+    `exp(-r^2/(4 sigma^2))` looks natural but over-corrects by exactly 2x when
+    detectors are dense. Both limits of the form above are right; the derivation
+    is in docs/THEORY.md §5.7.
 
-    Two coincident detectors give m = 2 and half a count each, so stacking gains
-    nothing — the collapse degeneracy is removed inside the objective rather than
-    fenced off by a spacing penalty.
-
-    Assumes particle density is smooth over `sigma`; a shower core much narrower
-    than 50 m is over-corrected. Exact distinct counting needs the per-particle
-    (point, detector) tensor, which the surrogate does not expose.
+    Assumes particle density is smooth over `sigma` — a shower core much narrower
+    than 50 m is over-corrected.
     """
     d2 = ((x_det[:, None] - x_det[None, :]) ** 2
           + (y_det[:, None] - y_det[None, :]) ** 2)
@@ -340,12 +321,6 @@ def activation_of_xy(x_det: torch.Tensor,
                      penalty_r0: Optional[float] = None):
     """How much a layout COLLECTS, differentiably — the activation objective.
 
-    Training-time twin of `plots/eval_activation_counts.py::activation`, but fed by
-    the SURROGATE, because the kernel's `compute_labels_batch` is `@torch.no_grad()`
-    and cannot be optimized through. The two disagree ~19x on total particles (see
-    PARTICLE_SCALE), so these numbers are NOT comparable to the evaluator's — that
-    script's kernel scoring on held-out events is the honest check.
-
         counts    = expm1(fnn(primary, xy)[..., 0])       particles/detector
         p         = sigmoid(TAU_LAYOUT * (counts - LAYOUT_THRESHOLD))
         particles = counts.sum(1) / PARTICLE_SCALE
@@ -353,22 +328,24 @@ def activation_of_xy(x_det: torch.Tensor,
         distinct  = (counts / m).sum(1) / DISTINCT_SCALE  m = overlap_multiplicity
 
     `mode` picks which is maximized; all three land in `parts` either way.
-        particles  total flux — maximized EXACTLY by stacking on the densest point,
-                   since the kernel double-counts. Use only knowing that.
-        detectors  coverage; saturates at 1 each, so it pays to spread. The
-                   composite U's reconstructability gate is a function of this.
+        particles  total flux — maximized EXACTLY by stacking on the densest
+                   point, since the kernel double-counts. Use only knowing that.
+        detectors  coverage; saturates at 1 each, so it pays to spread.
         distinct   overlap-corrected flux: collection area, no stacking degeneracy.
 
-    Contains NO reconstruction term by design — it rewards sitting where the flux
-    is, not resolving direction or energy, so it is expected to disagree with
-    `utility_of_xy`. Returns (U, r, parts) in the same shape so the ensemble
-    machinery is a drop-in; `r` is reported, not optimized.
+    **Surrogate-fed, so these numbers are NOT comparable to the kernel
+    evaluator's** — the two disagree ~19x on total particles (see PARTICLE_SCALE).
+    `plots/eval_activation_counts.py` scoring held-out events is the honest check.
+
+    Contains no reconstruction term by design, so it is expected to disagree with
+    `utility_of_xy`. Returns (U, r, parts) so the ensemble machinery is a drop-in;
+    `r` is reported, not optimized.
     """
     if mode not in ("particles", "detectors", "distinct"):
         raise ValueError("mode must be 'particles', 'detectors' or 'distinct', "
                          f"got {mode!r}")
     _, pred_ET = _surrogate_predict(x_det, y_det, primary_batch, fnn)
-    # clamp_min(0) matches dual_surrogate.combine_species_outputs: a negative
+    # clamp_min(0) matches dual.combine_species_outputs: a negative
     # predicted count is not physical, and zeroing its gradient stops the optimizer
     # chasing detectors into the surrogate's undershoot.
     counts = torch.expm1(pred_ET[..., 0]).clamp_min(0.0)

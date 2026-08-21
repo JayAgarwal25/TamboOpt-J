@@ -1,34 +1,17 @@
-"""Dual-species surrogate: two per-species models combined per physical event.
+"""Dual-species surrogate: the e and mu models combined into one physical event.
 
-The electron and muon AllShowers models generate two COMPONENTS of the same
-physical shower (the per-species training files are the same simulated events
-split by secondary species — see 00_generate_data_dual_species.py). Stage 2
-therefore trains two parallel DeepSets surrogates, and everything downstream
-(recon training in 03, layout optimization in 04) needs the response of the
-COMPLETE event: both models evaluated with the same primary and layout, their
-outputs combined.
+The per-species files are the same simulated events split by secondary species,
+so a physical event needs both models run on the same primary and layout.
 
-"Combined" is physical, not elementwise, because the surrogate channels are
-log-compressed:
+Combination happens in PHYSICAL space, not elementwise, because both channels
+are log-compressed (E = log1p(counts), T = log1p(T_phys * T_LOG_SCALE)):
 
-  * E channel = log1p(counts)            (01_build_dataset applies log1p)
-  * T channel = log1p(T_phys * T_LOG_SCALE)  (02's log-T target transform)
+    N_tot = N_e + N_mu                        counts add
+    t_tot = (N_e*t_e + N_mu*t_mu) / N_tot     count-weighted, as the kernel defines T
 
-so the correct combination is in physical space:
-
-  N_tot = N_e + N_mu                       (counts add)
-  t_tot = (N_e*t_e + N_mu*t_mu) / N_tot    (count-weighted mean arrival time,
-                                            matching the kernel's weighted-avg
-                                            T definition)
-
-re-encoded back to the same log channels. Downstream code is unchanged: 04's
-`reconstructability(torch.expm1(E_pred))` recovers exactly N_tot, and the
-recon input units match what 03 trained on.
-
-The wrapper keeps the single-surrogate call contract `fnn(primary, xy) ->
-(B, n_det, 2)`, so stages 3-4 swap it in without touching their inner loops.
-Both branches stay in the autograd graph — stage 4's backprop through detector
-positions flows through BOTH models.
+then re-encoded to the same log channels. Keeps the single-surrogate contract
+`fnn(primary, xy) -> (B, n_det, 2)`, and both branches stay in the autograd
+graph so Step 4 backprops through both. See docs/THEORY.md §3.6 and §5.6.
 """
 
 import os

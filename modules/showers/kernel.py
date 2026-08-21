@@ -4,15 +4,11 @@ Ground truth for the Step-1 labels: (E, T) per detector from a shower point
 cloud, differentiable in the detector positions AND in the plane index, so
 gradients reach z_cont -> East -> (North, Up).
 
-The plane weight is triangular,
+The plane weight is triangular — 1 on an exact layer match, falling linearly to
+0 one layer away, differentiable in z_cont except at the measure-zero kinks:
 
-    plane_w[b, p, i] = relu(1 - |layer_p[b, p] - z_cont[i]|)
-
-i.e. 1 on an exact layer match, falling linearly to 0 one layer away. It is
-differentiable in z_cont except at the kinks z_cont = layer_p +- 1 (measure
-zero). Combined with the spatial Gaussian:
-
-    kernel = spatial_gaussian * plane_w      (B, max_points, n_det)
+    plane_w = relu(1 - |layer_p - z_cont|)
+    kernel  = spatial_gaussian * plane_w      (B, max_points, n_det)
 """
 
 import torch

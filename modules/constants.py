@@ -129,6 +129,6 @@ HELDOUT_SHOWER_CACHE_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_held
 HELDOUT_SPECIES_IDS_PATH  = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_species.pt"
 HELDOUT_POSITIONS_PATH    = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_positions.pt"
 
-# 02 log-compresses T targets as log1p(T*T_LOG_SCALE); dual_surrogate.py must
+# 02 log-compresses T targets as log1p(T*T_LOG_SCALE); surrogates/dual.py must
 # invert the same transform, so the scale lives here.
 T_LOG_SCALE = 1.0e8

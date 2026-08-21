@@ -1,33 +1,23 @@
-"""TR geometry loader for detector_optimization_v4.
+"""Mountain mesh loader: h5 -> ECEF -> site-local ENU.
 
-Reads TAMBOSim/resources/basic_geometry.h5, projects the 2161 detector-region
-triangle centroids from ECEF to local ENU, and returns a MountainData dataclass
-used by the surface map and the main notebook.
+Reads the detector region out of the mesh, rotates its triangle centroids from
+ECEF into ENU anchored at the mesh's own `location`, and returns a
+`MountainData`. The current mesh (`data/malata.h5`, group `malata`, key
+`detector1`) gives 266 centroids over 162 unique vertices, spanning
+North [-956, 716], East [-498, 777], Up [2748, 3712] m.
 
-Key facts about the HDF5 file (group colca_valley_30000):
-  vertices  (3, 90000)  float64 — ECEF metres
-  faces     (3, 179996) int64   — JULIA 1-INDEXED vertex indices
-  detector1 (2161,)     int64   — JULIA 1-INDEXED face indices into faces
-  location  (2,)        [lon_deg, lat_deg] of the site
-
-AllShowers layer-East mapping (empirically derived from fixture data):
-  East at AllShowers layer k:  East_k = EAST_ENTRY + k * (-LAYER_EAST_DX)
-                              = -212 - 307 * k   [metres]
-  Inverse (z_cont from East):  z_cont = (EAST_ENTRY - East) / LAYER_EAST_DX
-                                       = (-212 - East) / 307
-  Layer 0 (padding, energy=0): East ≈ -212 m
-  Layer 1:                      East ≈  -519 m
-  Layer 6:                      East ≈ -2054 m
-  Layer 23:                     East ≈ -7267 m
-
-Mountain surface East spans ≈ [-2019, +1182] m.  Only centroids with
-East < EAST_ENTRY (= -212 m) have z_cont > 0 and can see shower particles.
-The deepest accessible mountain layer is z_cont ≈ 5.9 (East ≈ -2019 m).
+HDF5 layout:
+    vertices  (3, V) float64 — ECEF metres
+    faces     (3, F) int64   — JULIA 1-INDEXED vertex indices
+    detector1 (D,)   int64   — JULIA 1-INDEXED face indices into `faces`
+    location  (2,)           — [lon_deg, lat_deg] of the site
 
 Gotchas:
-  - faces and detector1 are 1-indexed (Julia) — subtract 1 before using as Python indices.
-  - vertices are ECEF, not ENU; rotate to local ENU at the site.
-  - z_cont = (EAST_ENTRY - East) / LAYER_EAST_DX   (NOT East/125 as originally planned).
+  - `faces` and `detector1` are Julia 1-indexed — subtract 1 for Python.
+  - `vertices` are ECEF, not ENU; they must be rotated at the site.
+  - depth is z_cont = (EAST_ENTRY - East) / LAYER_EAST_DX, so with the current
+    calibration the mesh spans z_cont 1.45 (east_hi) to 4.00 (east_lo) of the
+    24 AllShowers planes.
 """
 
 import math
@@ -44,10 +34,12 @@ DEFAULT_N_PLANES      = 24
 SITE_LON_DEG          = -72.279397
 SITE_LAT_DEG          = -15.622267
 
-# AllShowers layer-East calibration (derived from shower fixture point-cloud data)
-# East at AllShowers layer k:  East_k ≈ EAST_ENTRY - k * LAYER_EAST_DX
-ALLSHOWERS_EAST_ENTRY = -212.0    # m — East at layer 0 (shower entry, padding)
-ALLSHOWERS_LAYER_DX   =  307.0    # m — East depth per layer (positive; East decreases per layer)
+# Retired colca calibration, kept only as this module's signature defaults.
+# THE PIPELINE DOES NOT USE THESE — every caller passes EAST_ENTRY (1500) and
+# LAYER_EAST_DX (500) from modules/constants.py, where the live values and the
+# reason they must match c8_air_shower.cpp's real plane spacing are documented.
+ALLSHOWERS_EAST_ENTRY = -212.0    # m — East at layer 0
+ALLSHOWERS_LAYER_DX   =  307.0    # m — East depth per layer (positive)
 
 
 # ── ECEF → local ENU rotation ────────────────────────────────────────────────
@@ -83,28 +75,17 @@ def _ecef_to_enu(centroids_ecef: np.ndarray, lon_deg: float, lat_deg: float) -> 
 
 @dataclass
 class MountainData:
-    """All geometry info needed by v4.
+    """The detector-region geometry every stage reads.
 
-    centroids_ENU : (n_tri, 3) float64 numpy array, columns = [East, North, Up] in
-                    metres — the site-local ENU convention that matches the h5 data
-                    files. `centroids_NUE` is a backward-compat property returning
-                    the old [North, Up, East] column order for legacy callers.
-    n_min / n_max : North bounding box of detector centroids.
-    u_min / u_max : Up (elevation) bounding box.
-    east_lo / east_hi : actual East span of the centroids (≈ [-2019, +1182]).
+    `centroids_ENU` is (n_tri, 3) with columns [East, North, Up] in metres,
+    the site-local ENU convention matching the h5 data files. The `n_/u_/east_`
+    scalars are its bounding box.
 
-    z_cont formula:
-        z_cont = (east_entry - East_det) / layer_east_dx
-    where:
-        east_entry    : East value at AllShowers layer 0 (default -212 m).
-        layer_east_dx : East depth per layer (default 307 m, positive;
-                        East decreases by this amount per layer going deeper).
-
-    Only centroids with East < east_entry have z_cont > 0 (see shower particles).
-    The maximum z_cont reachable on the mountain surface is
-        z_cont_max = (east_entry - east_lo) / layer_east_dx  ≈ 5.9
-    corresponding to AllShowers layers 0–6.
+    Depth into the shower is z_cont = (east_entry - East_det) / layer_east_dx,
+    so only centroids with East < east_entry can see shower particles. With the
+    current calibration the mesh spans z_cont 1.45 to 4.00 of the 24 planes.
     """
+
     centroids_ENU: np.ndarray    # (n_tri, 3) columns [East, North, Up]
 
     n_min:   float
@@ -114,8 +95,8 @@ class MountainData:
     east_lo: float               # actual centroid East min (most negative)
     east_hi: float               # actual centroid East max (most positive)
 
-    east_entry:    float         # East at AllShowers layer 0 (default -212 m)
-    layer_east_dx: float         # East depth per layer (default 307 m, positive)
+    east_entry:    float         # East at AllShowers layer 0
+    layer_east_dx: float         # East depth per layer [m], positive
     n_planes:      int           # number of AllShowers planes (24)
 
     # (n_v, 3) [East, North, Up] — the unique triangle vertices of the detector
@@ -124,13 +105,6 @@ class MountainData:
     # legacy MountainData built without it.
     vertices_ENU:  np.ndarray = None
 
-    # @property
-    # def centroids_NUE(self) -> np.ndarray:
-    #     """Backward-compat view: the old [North, Up, East] column order, derived
-    #     from the canonical ENU field. Legacy callers (v4 scripts, the base
-    #     North-Up module family) keep working unchanged; new code should use
-    #     `centroids_ENU` ([East, North, Up])."""
-    #     return self.centroids_ENU[:, [1, 2, 0]]
 
     @property
     def plane_dx(self) -> float:
@@ -227,27 +201,24 @@ def load_tr_mountain(
     east_min:       float = None,
     east_max:       float = None,
 ) -> MountainData:
-    """Read basic_geometry.h5, compute detector-region centroids in ENU, return MountainData.
+    """Read the mesh, compute detector-region centroids in ENU, return MountainData.
+
+    Callers pass the live calibration from `modules.constants`; this module's
+    own defaults are the retired colca ones and are NOT what the pipeline uses.
 
     Args:
-        h5_path       : path to basic_geometry.h5.
-        group         : HDF5 group name (default 'colca_valley_30000').
-        det_key       : dataset key for the detector-region triangle indices (default 'detector1').
-                        This is a (2161,) array of 1-indexed face indices — subtract 1 in Python.
-        east_entry    : East at AllShowers layer 0 (default -212 m, empirically calibrated).
-        layer_east_dx : East depth per layer in metres (default 307 m, positive).
-        n_planes      : number of AllShowers planes (default 24).
-        site_lon_deg / site_lat_deg : ENU origin (site) longitude/latitude in
-                        degrees. If None, taken from the mesh's own `location`
-                        dataset ([lon, lat]) so the centroids land in the
-                        site-local ENU frame anchored at THAT mesh (e.g. the
-                        `malata` mesh sits ~33 km east of the colca site — using
-                        the wrong origin offsets it by that much). Falls back to
-                        the module SITE_LON_DEG/SITE_LAT_DEG constants only when
-                        the mesh has no `location`. For the colca mesh the
-                        `location` dataset equals those constants, so existing
-                        callers are unaffected.
-        east_min / east_max : legacy parameters, ignored.  Remove from call sites.
+        h5_path, group, det_key : mesh file, HDF5 group, and the dataset of
+                        1-indexed face indices for the detector region.
+        east_entry    : East at AllShowers layer 0.
+        layer_east_dx : East depth per layer [m], positive.
+        n_planes      : number of AllShowers planes.
+        site_lon_deg / site_lat_deg : ENU origin. **If None, taken from the mesh's
+                        own `location`** so centroids land in the frame anchored
+                        at THAT mesh — the malata mesh sits ~33 km east of colca,
+                        so a wrong origin offsets everything by that much. Falls
+                        back to SITE_LON_DEG/SITE_LAT_DEG only if the mesh has no
+                        `location`.
+        east_min / east_max : legacy, ignored. Remove from call sites.
     """
     verts, faces, det_idx, h5_loc = _read_detector_region(h5_path, group, det_key)
 

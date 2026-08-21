@@ -1,18 +1,11 @@
 """Differentiable mountain surface function Up = g(North, East).
 
-`SurfaceUpMap` builds a regular 256x256 grid of Up over the (North, East) bbox of
-the detector centroids (scipy `LinearNDInterpolator` on the 2161-centroid
-scatter). `forward(north, east)` is an `F.grid_sample` bilinear lookup, so it is
-differentiable in (north, east).
+`SurfaceUpMap` rasterises the 266 detector centroids onto a regular 256x256 grid
+over their (North, East) bbox (scipy `LinearNDInterpolator`), so `forward` is an
+`F.grid_sample` bilinear lookup and stays differentiable in (north, east):
 
-Usage:
-    from modules.geometry      import load_tr_mountain
-    from modules.geometry import SurfaceUpMap
-
-    mountain = load_tr_mountain(...)
-    surface  = SurfaceUpMap.from_mountain(mountain, grid_h=256, grid_w=256).to(device)
-
-    up_det = surface(north_det, east_det)   # (n_det,)  differentiable in north, east
+    surface = SurfaceUpMap.from_mountain(mountain).to(device)
+    up_det  = surface(north_det, east_det)      # (n_det,)
 """
 
 import numpy as np
@@ -55,19 +48,16 @@ class SurfaceUpMap(nn.Module):
     def from_mountain(cls, mountain, grid_h: int = 256, grid_w: int = 256, pad: float = 0.0):
         """Build the surface map from a MountainData object.
 
-        Fits LinearNDInterpolator on the (North, East) → Up scatter of the real
-        mountain surface — the detector-region triangle *vertices* together with
-        the face centroids — evaluates it on a regular (grid_h × grid_w) grid,
-        and fills any NaN cells (outside the convex hull) with nearest-neighbour
-        values. The grid domain spans all those points (the vertices reach past
-        the centroid min/max), so the surface follows the full terrain footprint
-        rather than only the rectangle between the detector centroids.
+        Fits LinearNDInterpolator on the (North, East) -> Up scatter of triangle
+        *vertices* plus face centroids, evaluates it on a grid_h x grid_w grid,
+        and fills cells outside the convex hull by nearest neighbour. The domain
+        spans all those points — the vertices reach past the centroid bbox, so
+        the surface follows the full terrain footprint, not just the rectangle
+        between detectors.
 
         Args:
-            mountain : MountainData from load_tr_mountain().
-            grid_h   : number of rows (East axis).
-            grid_w   : number of columns (North axis).
-            pad      : extra margin (m) added to each bbox edge (default 0).
+            grid_h : rows (East axis).   grid_w : columns (North axis).
+            pad    : extra margin [m] on each bbox edge.
         """
         East  = mountain.centroids_ENU[:, 0]
         North = mountain.centroids_ENU[:, 1]

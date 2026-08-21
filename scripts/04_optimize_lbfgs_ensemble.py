@@ -56,7 +56,7 @@ from modules.geometry   import project_to_mountain_ne, sample_initial_layout_ne
 from modules.geometry import SurfaceUpMap
 
 # Shared optimizer core (objective, alignment, model loading, the gradient-turn
-# diagnostic, constants) lives in modules/opt_core.py; the figures live in
+# diagnostic, constants) lives in modules/optimize/objective.py; the figures live in
 # plots/opt_plotting.py (loaded by path). utility_of_xy is NOT no_grad-wrapped,
 # so Adam / L-BFGS backprop through it here.
 from modules.optimize import (
@@ -116,7 +116,7 @@ POS_LOG_EVERY = 1
 
 # Off-mesh penalty weight, in units of U (0 = off, restoring the old behaviour
 # where nothing in the objective knew the mountain existed). See
-# opt_core.offmesh_penalty for why: L-BFGS is projected only ONCE per sweep
+# objective.offmesh_penalty for why: L-BFGS is projected only ONCE per sweep
 # chunk, so it spent 66% of its closures with detectors outside the 91.3 m snap
 # radius, optimising a surrogate that has no training data out there — and one
 # center run returned U=+16.18 with 28 detectors stacked on a single centroid
@@ -132,7 +132,7 @@ def _penalty_args(mountain):
 
     r0 is PENALTY_ONSET_FRAC of the max_gap the projection uses — the wall
     starts INSIDE the snap radius, so the equilibrium it creates sits in-band
-    rather than just outside it (see opt_core.PENALTY_ONSET_FRAC)."""
+    rather than just outside it (see objective.PENALTY_ONSET_FRAC)."""
     key = id(mountain)
     if key not in _MESH_CACHE:
         cen = torch.as_tensor(mountain.centroids_ENU[:, :2], dtype=torch.float32)
@@ -178,7 +178,7 @@ SCORING_BATCH_PRIMARIES = 4_000
 SCORING_ACCEPT_TOL = 0.05
 
 # Composite weights (W_*) + reconstructability thresholds are imported from
-# modules/opt_core.py (shared across the 04 optimizers).
+# modules/optimize/objective.py (shared across the 04 optimizers).
 SEED   = 4200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

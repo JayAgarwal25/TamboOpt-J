@@ -11,7 +11,7 @@ projection bug) is fixed everywhere at once.
 The 04 scripts load this module by path (their filenames start with a digit, so
 they cannot be imported by name) and bind the names they need. The non-plotting
 core (objective, alignment, model loading, the cosine diagnostic) lives in
-`modules/opt_core.py`.
+`modules/optimize/objective.py`.
 
 `plot_ensemble` / `plot_density_heatmap` default to the DE wording ("run", "K");
 the population script passes `member_word="member"`/`count_word="pop"` and L-BFGS
@@ -182,7 +182,7 @@ def det_counts(E, log1p_space: bool = False):
       is applied afterwards, by 01_build_dataset_northeast.py, when writing E.pt.
       Pass these through unchanged (``log1p_space=False``, the default).
     * the trained **surrogate** predicts in log1p space, because it was fitted to
-      E.pt. That is why ``opt_core.utility_of_xy`` calls
+      E.pt. That is why ``objective.utility_of_xy`` calls
       ``reconstructability(torch.expm1(E_pred_det), ...)``. Pass those with
       ``log1p_space=True``.
 

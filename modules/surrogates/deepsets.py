@@ -13,15 +13,13 @@ permutation invariance by augmentation; DeepSets is equivariant by construction
 
 Heteroscedastic: the decoder emits mu AND logvar per channel. `forward()` returns
 the mean only in raw units, preserving FNNSurrogate's contract so Steps 3-4 and
-dual_surrogate.py are unchanged; `forward_dist()` adds the logvar for the Gaussian
-NLL trainer, letting the model express the aleatoric floor explicitly instead of
-collapsing to a conditional mean.
+`dual.py` are unchanged; `forward_dist()` adds the logvar for the Gaussian NLL
+trainer, so the model can express the aleatoric floor instead of collapsing to a
+conditional mean.
 
-Normalization uses the SAME buffers as FNNSurrogate — in/out mean+std of width
-`primary_dim + 2*n_det` (208) and `2*n_det` (200) — so `set_normalization` is
-identical and the trainer's in-place log-T stat mutation flows through. Every
-xy/E/T slot holds the same stat by construction, so forward reads per-detector
-scalars straight out of them. The logvar head stays in z-scored space.
+Normalization reuses FNNSurrogate's buffers verbatim (widths 208 and 200), so
+`set_normalization` is identical and the trainer's in-place log-T stat mutation
+flows through. The logvar head stays in z-scored space.
 """
 
 import torch
@@ -131,7 +129,7 @@ class DeepSetsSurrogate(nn.Module):
             xy      : (B, n_det, 2)
         Returns:
             (B, n_det, 2) — col0 = E, col1 = T, unnormalized units (mean only;
-            drop-in contract for Steps 3-4 and dual_surrogate.py).
+            drop-in contract for Steps 3-4 and surrogates/dual.py).
         """
         mu_z, _ = self._forward_z(primary, xy)
         return self._unnorm_mean(mu_z)
@@ -174,7 +172,7 @@ def build_surrogate_from_ckpt(ckpt: dict, n_det: int, primary_dim: int, device=N
         ckpt = torch.load(os.path.join(FNN_FOLDER, "fnn.pt"), map_location=DEVICE)
         fnn  = build_surrogate_from_ckpt(ckpt, N_DETECTORS, PRIMARY_DIM, DEVICE)
     """
-    from .fnn_surrogate import FNNSurrogate
+    from .fnn import FNNSurrogate
     cfg = ckpt.get("config", {})
     mtype = cfg.get("model_type", "fnn")
     if mtype == "deepsets":

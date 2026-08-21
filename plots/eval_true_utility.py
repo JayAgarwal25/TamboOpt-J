@@ -16,7 +16,7 @@ only the label source differs — and prints:
     B > A and D > C    -> genuine improvement (survives ground truth).
 
 Only the label source is swapped: a kernel-backed stand-in with the FNN's exact
-call signature is passed into the UNMODIFIED `opt_core.utility_of_xy`, guaranteeing
+call signature is passed into the UNMODIFIED `objective.utility_of_xy`, guaranteeing
 identical recon path, transforms and composite weights.
 
 All paths come from constants.py, so this scores whatever run those point at.
@@ -64,7 +64,7 @@ class KernelDualLabels:
     The two per-species clouds are the ground truth for the B events; every row of
     a call shares one layout (read from ``xy_batch[0]``). The raw per-species counts
     are combined into the surrogate's own output space with
-    `dual_surrogate.combine_species_outputs` (log1p(N_tot), log1p(t_tot*T_LOG_SCALE)),
+    `dual.combine_species_outputs` (log1p(N_tot), log1p(t_tot*T_LOG_SCALE)),
     so the frozen recon sees inputs in the space it was trained on. `primary_batch`
     is ignored: the clouds already fix which events this is.
 
