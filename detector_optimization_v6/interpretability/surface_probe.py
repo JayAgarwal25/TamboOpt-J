@@ -66,6 +66,8 @@ import torch
 import torch.nn as nn
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
+from interpretability.probes import (r2, linear_probe, mlp_probe,
+                                    subsample, train_test_split)
 from modules_v6.dual_surrogate import load_dual_surrogate
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v4.tr_geometry import load_tr_mountain
@@ -145,57 +147,10 @@ def verify_xy_column_order(xy_sample, mountain):
 
 
 # ── Probes ───────────────────────────────────────────────────────────────────
-def r2(pred, true):
-    ss_res = torch.sum((true - pred) ** 2)
-    ss_tot = torch.sum((true - true.mean()) ** 2)
-    return float(1.0 - ss_res / ss_tot)
 
 
-def linear_probe(feat_tr, y_tr, feat_te, y_te, feat_all, ridge=1e-3):
-    """Ridge regression in closed form, fitted on train, scored on test.
-
-    Returns (held-out R^2, predictions for every row of feat_all). The full
-    predictions are for plotting only; the reported number is the test score.
-    """
-    mu, sd = feat_tr.mean(0, keepdim=True), feat_tr.std(0, keepdim=True).clamp_min(1e-6)
-    a = torch.cat([(feat_tr - mu) / sd, torch.ones_like(feat_tr[:, :1])], dim=1).double()
-    b = torch.cat([(feat_te - mu) / sd, torch.ones_like(feat_te[:, :1])], dim=1).double()
-    ym, ys = y_tr.mean(), y_tr.std().clamp_min(1e-6)
-    gram = a.T @ a + ridge * a.shape[0] * torch.eye(a.shape[1], dtype=torch.float64, device=a.device)
-    w = torch.linalg.solve(gram, a.T @ ((y_tr - ym) / ys).double())
-    score = r2((b @ w).float() * ys + ym, y_te)
-    with torch.no_grad():
-        allf = torch.cat([(feat_all - mu) / sd, torch.ones_like(feat_all[:, :1])], dim=1).double()
-        pred_all = (allf @ w).float() * ys + ym
-    return score, pred_all
 
 
-def mlp_probe(feat_tr, y_tr, feat_te, y_te, feat_all, hidden=256, epochs=60,
-              lr=1e-3, seed=0):
-    """Small MLP readout. Same train/test split as the linear probe."""
-    torch.manual_seed(seed)
-    dev = feat_tr.device
-    mu, sd = feat_tr.mean(0, keepdim=True), feat_tr.std(0, keepdim=True).clamp_min(1e-6)
-    ym, ys = y_tr.mean(), y_tr.std().clamp_min(1e-6)
-    net = nn.Sequential(nn.Linear(feat_tr.shape[1], hidden), nn.ReLU(),
-                        nn.Linear(hidden, hidden), nn.ReLU(),
-                        nn.Linear(hidden, 1)).to(dev)
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
-    xtr, ytr = (feat_tr - mu) / sd, ((y_tr - ym) / ys).unsqueeze(1)
-    n, bs = xtr.shape[0], 8192
-    for _ in range(epochs):
-        perm = torch.randperm(n, device=dev)
-        for lo in range(0, n, bs):
-            idx = perm[lo:lo + bs]
-            opt.zero_grad()
-            nn.functional.mse_loss(net(xtr[idx]), ytr[idx]).backward()
-            opt.step()
-    net.eval()
-    with torch.no_grad():
-        score = r2(net((feat_te - mu) / sd).squeeze(1) * ys + ym, y_te)
-        pred_all = torch.cat([net(((feat_all[lo:lo + 65536] - mu) / sd)).squeeze(1)
-                              for lo in range(0, feat_all.shape[0], 65536)]) * ys + ym
-    return score, pred_all
 
 
 def surface_gradient(up_fn, north, east, step=10.0):
@@ -241,11 +196,6 @@ def binned_table(values, by, n_bins, label):
     return rows
 
 
-def _subsample(n, k, dev, seed=0):
-    if n <= k:
-        return torch.arange(n, device=dev)
-    g = torch.Generator(device="cpu").manual_seed(seed)
-    return torch.randperm(n, generator=g)[:k].to(dev)
 
 
 def make_plots(plot_dir, species, res, preds, U, XY, grad, rows_u, rows_g):
@@ -256,7 +206,7 @@ def make_plots(plot_dir, species, res, preds, U, XY, grad, rows_u, rows_g):
 
     os.makedirs(plot_dir, exist_ok=True)
     dev = U.device
-    sub = _subsample(U.shape[0], 40000, dev)
+    sub = subsample(U.shape[0], 40000, dev)
     u_s = U[sub].cpu().numpy()
 
     # ── figure 1: the probe contrast ────────────────────────────────────────
@@ -438,10 +388,7 @@ def main():
     print(f"[data] u_d range [{float(U.min()):.1f}, {float(U.max()):.1f}] m, "
           f"std {float(U.std()):.1f} m")
 
-    n = H.shape[0]
-    cut = int(0.8 * n)
-    sh = torch.randperm(n, device=dev)
-    tr, te = sh[:cut], sh[cut:]
+    tr, te = train_test_split(H.shape[0], dev, test_frac=0.2, seed=args.seed)
 
     print("\n" + "=" * 72)
     print("probes: predict u_d, held-out R^2 (20% test split)")
