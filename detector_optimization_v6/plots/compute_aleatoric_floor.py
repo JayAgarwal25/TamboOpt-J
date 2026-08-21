@@ -51,15 +51,13 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-op
 from modules_v6.fnn_surrogate_ne import compute_labels_batch, place_clouds_enu
 from modules_v6.detector_strategies_ne import _STRATEGIES, _STRATEGY_FNS
 from modules_v6.tau_showers import load_tau_primaries
-from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY,
-    LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL, USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH,
-    LOG_E_MIN, LOG_E_MAX, T_LOG_SCALE
+    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
+    TRAINING_DATASET_FOLDER,
+    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, LOG_E_MIN, LOG_E_MAX,
+    T_LOG_SCALE,
 )
-
-# Bound in main() from the resolved run world, never at import.
-TRAINING_DATASET_FOLDER = None
 from modules_v4.tr_geometry       import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 
@@ -200,12 +198,7 @@ def main():
     ap.add_argument("--gen-batch", type=int, default=32, help="AllShowers gen batch")
     ap.add_argument("--out", type=str,
                     default=os.path.join(_HERE, f"aleatoric_floor_{time.strftime('%Y%m%d_%H%M%S')}.json"))
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER
-    W = run_world.resolve(args, need_write=False)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
 
     print("=" * 72)
     print("aleatoric floor — within-primary label variance / corpus variance")

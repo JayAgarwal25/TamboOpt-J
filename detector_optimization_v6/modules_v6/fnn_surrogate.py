@@ -24,7 +24,7 @@ import torch.nn as nn
 # Require the v3+v4 sys.path injection (triggered by `import modules_v6`).
 from modules_v4.tr_plane_kernel import GetCounts_planeaware
 
-from .constants import (EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, PRIMARY_DIM,
+from .constants import (EAST_ENTRY, LAYER_EAST_DX, N_DETECTORS, SHOWER_CACHE, PRIMARY_DIM,
                         LOG_E_MIN, LOG_E_MAX, SIGMA_SPATIAL)
 from .detector_strategies import (_STRATEGIES, _STRATEGY_FNS)
 
@@ -130,7 +130,7 @@ def compute_labels_batch(clouds:   torch.Tensor,
 
 
 def build_training_pairs(mountain, surface,
-                         shower_cache_path: str,
+                         shower_cache_path: str = SHOWER_CACHE,
                          batch_size:        int = 20,
                          max_showers:       int = 0,
                          seed:              int = 0,

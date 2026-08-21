@@ -29,15 +29,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
-from modules_v6 import run_world
 from modules_v6.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
-    N_PLANES, N_DETECTORS, LOG_E_MIN, LOG_E_MAX
+    N_PLANES, N_DETECTORS, TRAINING_DATASET_FOLDER, OPT_FOLDER,
+    LOG_E_MIN, LOG_E_MAX,
+    FNN_FOLDER, RECON_FOLDER,
 )
-
-# Bound in main() from the resolved run world, never at import.
-TRAINING_DATASET_FOLDER = None
-OPT_FOLDER = None
 from modules_v6.opt_core import (
     load_models, reconstructability, LAYOUT_THRESHOLD, RECONSTRUCT_THRESHOLD,
     TAU_LAYOUT, TAU_RECONSTRUCT, CAP_THETA, CAP_PHI, CAP_E,
@@ -93,19 +90,14 @@ def main():
                     help="metres of gaussian jitter for the probe layouts")
     ap.add_argument("--run-dir", nargs="+", help="dirs holding layouts_all.pt")
     ap.add_argument("--seed", type=int, default=0)
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER, OPT_FOLDER
-    W = run_world.resolve(args, need_write=False)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
-    OPT_FOLDER              = W.opt_folder
     torch.manual_seed(args.seed); np.random.seed(args.seed)
 
     mt = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
                           east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX,
                           n_planes=N_PLANES)
-    fnn, recon = load_models(DEVICE, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
+    fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER,
+                             recon_dir=RECON_FOLDER + "_deepsets")
     prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
                       map_location="cpu", weights_only=False).float()
     idx = torch.randperm(prim.shape[0])[:args.n_events]

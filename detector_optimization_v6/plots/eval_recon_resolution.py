@@ -29,16 +29,13 @@ from modules_v6.opt_core import load_models
 from modules_v6.fnn_surrogate_ne import place_clouds_enu
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6 import run_world
 from modules_v6.constants import (
-    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
-    N_PLANES, LOG_E_MIN, LOG_E_MAX
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, LOG_E_MIN, LOG_E_MAX,
+    TRAINING_DATASET_FOLDER, DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH,
+    RECON_FOLDER,
+    FNN_FOLDER,
 )
-
-# Bound in main() from the resolved run world, never at import.
-TRAINING_DATASET_FOLDER = None
-DUAL_SHOWER_CACHE_PATH = None
-DUAL_POSITIONS_PATH = None
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
 _etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
@@ -157,6 +154,13 @@ def _fmt(res, has_vertex):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--recon_dir", type=str, default=None)
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="directory holding fnn_electron.pt and fnn_muon.pt. Without "
+                         "this the surrogate comes from FNN_FOLDER in constants, which "
+                         "is NOT necessarily the surrogate --recon_dir's recon was "
+                         "trained against; pairing a recon with a different surrogate "
+                         "silently invalidates the 'surrogate (FNN)' row.")
     ap.add_argument("--n-events", type=int, default=512)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--layout", type=str, default="grid",
@@ -171,15 +175,7 @@ def main():
     ap.add_argument("--chunk", type=int, default=256,
                     help="events per forward chunk; bounds peak memory so --n-events "
                          "can be large. Results are identical to a single shot.")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER, DUAL_SHOWER_CACHE_PATH, DUAL_POSITIONS_PATH
-    W = run_world.resolve(args, need_write=False)
-    _etu.bind_world(W)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
-    DUAL_SHOWER_CACHE_PATH  = W.corpus
-    DUAL_POSITIONS_PATH     = W.corpus_positions
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -206,7 +202,9 @@ def main():
         ev_desc = f"{B} events held out from the RECON only (stage-2 split differs)"
 
     kfn = _etu.KernelDualLabels(elec, muon, surf, dev, chunk=args.chunk)
-    fnn, recon = load_models(dev, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
+    fnn, recon = load_models(dev,
+                             fnn_folder=args.fnn_folder or FNN_FOLDER,
+                             recon_dir=args.recon_dir or RECON_FOLDER + "_deepsets")
     has_vertex = int(getattr(recon, "output_dim", 4)) == 7
 
     if args.layout == "grid":
@@ -214,14 +212,14 @@ def main():
     elif args.layout == "center":
         e_l, n_l = _etu.center_layout(mtn)
     else:
-        _etu.bind_world(W, layout=args.layout); e_l, n_l = _etu.load_layout(mtn)
+        _etu.LAYOUT_PATH = args.layout; e_l, n_l = _etu.load_layout(mtn)
 
     print("=" * 72)
     print("recon resolution — kernel vs surrogate labels, same recon + layout")
     print("=" * 72)
     print(f"device      : {dev}")
-    print(f"recon_dir   : {W.recon_dir}")
-    print(f"fnn_folder  : {W.fnn_folder}")
+    print(f"recon_dir   : {args.recon_dir or '(constants default)'}")
+    print(f"fnn_folder  : {args.fnn_folder or '(constants default)'}")
     print(f"output_dim  : {getattr(recon, 'output_dim', 4)}  (vertex={'yes' if has_vertex else 'no'})")
     print(f"layout      : {args.layout}")
     print(f"events      : {ev_desc}")

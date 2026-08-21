@@ -18,11 +18,7 @@ if _HERE not in sys.path:
 import torch
 import modules_v6  # noqa: F401
 from modules_v6.dual_surrogate import load_dual_surrogate
-from modules_v6 import run_world
-
-# Bound in main() from the resolved run world, never at import.
-FNN_FOLDER = None
-TRAINING_DATASET_FOLDER = None
+from modules_v6.constants import FNN_FOLDER, TRAINING_DATASET_FOLDER
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("_m03", os.path.join(_HERE, "03_train_recon_deepsets.py"))
 _m03 = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_m03)
@@ -55,13 +51,7 @@ def _decompose(m, r, n_bins):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-bins", type=int, default=25)
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global FNN_FOLDER, TRAINING_DATASET_FOLDER
-    W = run_world.resolve(args, need_write=False)
-    FNN_FOLDER              = W.fnn_folder
-    TRAINING_DATASET_FOLDER = W.dataset_folder
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     primary = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()

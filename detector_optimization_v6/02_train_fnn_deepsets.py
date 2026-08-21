@@ -48,20 +48,16 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 import modules_v6  # triggers sys.path injection for v3 + v4
 from modules_v6.deepsets_surrogate import DeepSetsSurrogate
 from modules_v6.fnn_surrogate import compute_normalization
-from modules_v6 import run_world
 from modules_v6.constants import (
-    N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE, TRAIN_FRACTION,
+    N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE,
+    TRAINING_DATASET_FOLDER, FNN_FOLDER, TRAIN_FRACTION,
 )
 
 # ── Config ───────────────────────────────────────────────────────────────────
 # Species-tagged checkpoints (fnn_electron.pt / fnn_muon.pt) go straight into
 # FNN_FOLDER — they cannot clobber a legacy single-model fnn.pt, and stages 3-4
 # load the pair from there via dual_surrogate.load_dual_surrogate.
-# Bound in main() from the resolved run world, never at import: binding a path
-# before argv is read is what let earlier runs write into the wrong world.
-TRAINING_DATASET_FOLDER = None
-FNN_FOLDER              = None
-OUTPUT_FOLDER           = None
+OUTPUT_FOLDER = FNN_FOLDER
 SPECIES_TAGS  = (("electron", 0), ("muon", 1))   # (tag, species id: 0=electron, 1=muon)
 
 BATCH_SIZE          = 256
@@ -994,9 +990,14 @@ def main():
     ap.add_argument("--species", type=str, default="electron,muon",
                     help="comma-separated subset of {electron,muon} to (re)train")
     ap.add_argument("--output_folder", type=str, default=None,
-                    help="Write checkpoints and logs here instead of the run "
-                         "world's fnn_folder. Use to avoid overwriting existing "
-                         "checkpoints.")
+                    help="Override output directory for checkpoints and logs "
+                         "(default: FNN_FOLDER from constants.py). Use to avoid "
+                         "overwriting existing checkpoints.")
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER: directory holding "
+                         "primary.pt / xy.pt / E.pt / T.pt / strategy_ids.pt / "
+                         "species_ids.pt. Use to train against a rebuilt dataset "
+                         "without touching the run world the constants point at.")
     # Fine-tune mode: load an existing checkpoint and run a short Adam+L-BFGS
     # pass on the combined base + infill dataset at a low learning rate.
     ap.add_argument("--finetune_from", type=str, default=None,
@@ -1012,19 +1013,18 @@ def main():
     ap.add_argument("--round", type=int, default=1,
                     help="Adaptive-loop round number (used in output folder name "
                          "when --finetune_from is set).")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER, FNN_FOLDER, OUTPUT_FOLDER
-    W = run_world.resolve(args, need_write=True)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
-    FNN_FOLDER              = W.fnn_folder
-    OUTPUT_FOLDER           = args.output_folder or W.fnn_folder
-
+    if args.dataset_folder:
+        global TRAINING_DATASET_FOLDER
+        TRAINING_DATASET_FOLDER = args.dataset_folder
     wanted = {s.strip() for s in args.species.split(",") if s.strip()}
     unknown = wanted - {tag for tag, _ in SPECIES_TAGS}
     if unknown:
         raise SystemExit(f"unknown species {sorted(unknown)}; valid: electron, muon")
+
+    if args.output_folder:
+        global OUTPUT_FOLDER
+        OUTPUT_FOLDER = args.output_folder
 
     print("=" * 72)
     print("v6/02_train_fnn_deepsets.py — two parallel per-species DeepSets surrogates")
@@ -1102,8 +1102,6 @@ def main():
 
     # ── Normal training mode ───────────────────────────────────────────────
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    W.stamp(OUTPUT_FOLDER, stage="02_train_fnn_deepsets",
-            dataset_folder=TRAINING_DATASET_FOLDER)
     print(f"data input dir  : {TRAINING_DATASET_FOLDER}")
     print(f"output dir      : {OUTPUT_FOLDER}")
     print(f"batch           : {BATCH_SIZE}   epochs: {args.epochs}   "

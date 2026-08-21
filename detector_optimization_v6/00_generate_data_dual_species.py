@@ -41,13 +41,12 @@ torch.set_float32_matmul_precision("high")
 
 import showerdata
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4 (and TAMBO-opt)
-from modules_v6 import run_world
 from modules_v6.constants import (
     LOG_E_MIN, LOG_E_MAX,
     ZENITH_MIN, ZENITH_MAX, AZIMUTH_MIN, AZIMUTH_MAX,
-    NUM_SHOWERS, BATCH_SIZE,
-    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH,
-    HOLDOUT_FRAC, HOLDOUT_SEED,
+    SHOWER_CACHE, RUN_LOCATION, NUM_SHOWERS, BATCH_SIZE,
+    USE_TAU_PRIMARIES, TAU_WHOLESKY_PATH, DUAL_SHOWER_CACHE_PATH,
+    HOLDOUT_FRAC, HOLDOUT_SEED, HELDOUT_SHOWER_CACHE_PATH,
 )
 from modules_v6.tau_showers import load_tau_primaries
 
@@ -81,11 +80,7 @@ SPECIES = {
 NUM_TIMESTEPS = 16
 SOLVER        = "midpoint"
 CHUNK_SIZE    = 2000               # showers per streamed write-batch (bounds peak RAM)
-# Bound in main() from the resolved run world, never at import.
-STAGE_ROOT    = None
-SHOWER_CACHE  = None
-DUAL_SHOWER_CACHE_PATH    = None
-HELDOUT_SHOWER_CACHE_PATH = None
+STAGE_ROOT    = os.path.join(RUN_LOCATION, "allshowers_staged")
 DEVICE        = torch.device("cuda")
 
 # Anti-clip resampling (mainly muons). PointCountFM predicts a per-shower total
@@ -407,16 +402,7 @@ def main():
                          "corpus always goes to HELDOUT_SHOWER_CACHE_PATH — it "
                          "isn't overridable, so eval_true_utility.py can always "
                          "find it.")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global STAGE_ROOT, SHOWER_CACHE
-    global DUAL_SHOWER_CACHE_PATH, HELDOUT_SHOWER_CACHE_PATH
-    W = run_world.resolve(args, need_write=True)
-    STAGE_ROOT = os.path.join(W.root, "allshowers_staged")
-    SHOWER_CACHE = W.shower_cache
-    DUAL_SHOWER_CACHE_PATH    = W.corpus
-    HELDOUT_SHOWER_CACHE_PATH = W.heldout
 
     os.makedirs(SHOWER_CACHE, exist_ok=True)
     os.makedirs(STAGE_ROOT, exist_ok=True)

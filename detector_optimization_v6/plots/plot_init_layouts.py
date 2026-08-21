@@ -27,17 +27,10 @@ import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
 from modules_v4.tr_geometry import load_tr_mountain
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v6.tr_geometry_ne import sample_initial_layout_ne, project_to_mountain_ne
-from modules_v6 import run_world
 from modules_v6.constants import (
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    N_DETECTORS
+    N_DETECTORS, OPT_FOLDER,
 )
-
-# Run world resolved from argv/$TAMBO_RUN_WORLD at startup rather than
-# inherited from constants.py at import. See modules_v6/run_world.py.
-_W = run_world.resolve()
-OPT_FOLDER = _W.opt_folder
-
 
 SCHEMES = ("grid", "center")          # the 04 optimizers' INIT_SCHEMES
 OUT_DIR = OPT_FOLDER + "_init"

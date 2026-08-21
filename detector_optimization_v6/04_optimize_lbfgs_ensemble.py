@@ -56,11 +56,11 @@ import torch
 
 import modules_v6   # sys.path injection for v3 + v4
 from modules_v6.dual_surrogate import DualSpeciesSurrogate
-from modules_v6 import run_world
 from modules_v6.constants import (
     N_DETECTORS, PRIMARY_DIM,
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
+    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER, OPT_FOLDER,
     LOG_E_MIN, LOG_E_MAX,
 )
 from modules.layout_optimization import LearnableXY
@@ -89,14 +89,10 @@ _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(
 INIT_SCHEMES         = ("grid", "center")
 RUN_COMBINED         = False # True
 COMBINED_SCHEME_NAME = "combined"
-# All four bound in main() from the resolved run world, never at import: this
-# script once bound OPT_FOLDER to another user's world at import time and only
-# discovered it as a PermissionError after the job had started.
-TRAINING_DATASET_FOLDER = None
-FNN_FOLDER              = None
-RECON_DIR               = None
-OPT_DIR_TEMPLATE        = None
-RUN_WORLD               = None
+OPT_DIR_TEMPLATE     = OPT_FOLDER + "_lbfgs_ensemble_full_corpus_{scheme}"
+# Recon dir to load (DeepSets recon from 03_train_recon_deepsets.py). Overridable
+# with --recon_folder (exact path). utility_of_xy feeds recon (B, n_det, 4).
+RECON_DIR            = RECON_FOLDER + "_deepsets"
 
 # K perturbed restarts per scheme.
 N_CHAINS            = 8
@@ -644,7 +640,6 @@ def _run_one_scheme(scheme: str,
     A single entry = per-scheme run; multiple entries = the combined run."""
     opt_dir = OPT_DIR_TEMPLATE.format(scheme=scheme)
     os.makedirs(opt_dir, exist_ok=True)
-    RUN_WORLD.stamp(opt_dir, stage="04_optimize_lbfgs_ensemble", scheme=scheme)
     is_combined = len(per_source) > 1
     print("-" * 72)
     print(f"[run] scheme={scheme}"
@@ -989,9 +984,27 @@ def main():
                     help="Path to a (N_DETECTORS, 2) layout tensor (or dict with "
                          "'x'/'y' keys). Warm-starts all chains from this layout "
                          "with small N(0, 10m) diversity perturbations.")
+    ap.add_argument("--fnn_folder", type=str, default=None,
+                    help="Override FNN_FOLDER from constants.py (use a fine-tuned "
+                         "checkpoint directory from the adaptive retraining loop).")
+    ap.add_argument("--recon_folder", type=str, default=None,
+                    help="Exact path to the recon dir to load (default: "
+                         "RECON_FOLDER + '_deepsets', the 03_train_recon_deepsets.py output).")
     ap.add_argument("--opt_suffix", type=str, default="",
                     help="Suffix appended to the output directory name for each "
                          "scheme (e.g. '_r1' to get lbfgs_ensemble_r1_{scheme}/).")
+    ap.add_argument("--opt_folder", type=str, default=None,
+                    help="Override OPT_FOLDER, the PREFIX of the per-scheme output "
+                         "directories. --opt_suffix only renames within whatever "
+                         "OPT_FOLDER constants.py resolves to, which may be a run "
+                         "world this job cannot write to; this redirects the output "
+                         "itself. Use together with --dataset_folder/--fnn_folder/"
+                         "--recon_folder to keep a run entirely inside one world.")
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER, the source of the "
+                         "primaries the sweep optimizes against. Use to run "
+                         "against a rebuilt dataset without touching the run "
+                         "world the constants point at.")
     ap.add_argument("--objective", type=str, default="composite",
                     choices=("composite", "detection"),
                     help="Which objective drives the optimizer. 'composite' "
@@ -1008,21 +1021,14 @@ def main():
                     help="Detection objective only: per-detector count threshold "
                          "E a detector must exceed to count as firing. Default "
                          "None -> LAYOUT_THRESHOLD.")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_DIR, OPT_DIR_TEMPLATE
-    global RUN_WORLD
-    W = RUN_WORLD = run_world.resolve(args, need_write=True)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
-    FNN_FOLDER              = W.fnn_folder
-    RECON_DIR               = W.recon_dir
-    OPT_DIR_TEMPLATE        = W.opt_folder + "_lbfgs_ensemble_full_corpus_{scheme}"
-
     N_CHAINS, N_ADAM_EPOCHS, LBFGS_MAX_ITER = \
         int(args.chains), int(args.adam_epochs), int(args.lbfgs_iters)
     DENSITY_VMAX = float(args.density_vmax)
     SEED = int(args.seed)
+    if args.dataset_folder:
+        global TRAINING_DATASET_FOLDER
+        TRAINING_DATASET_FOLDER = args.dataset_folder
     OFFMESH_PENALTY = float(args.offmesh_penalty)
     OBJECTIVE = args.objective
     DETECT_N = args.detect_n
@@ -1057,9 +1063,10 @@ def main():
     n_total_primaries = int(primary_all.shape[0])
     print(f"[load] {n_total_primaries} primaries")
 
-    if args.opt_suffix:
-        OPT_DIR_TEMPLATE = (W.opt_folder + "_lbfgs_ensemble"
-                            + args.opt_suffix + "_{scheme}")
+    if args.opt_suffix or args.opt_folder:
+        global OPT_DIR_TEMPLATE
+        opt_base = args.opt_folder or OPT_FOLDER
+        OPT_DIR_TEMPLATE = opt_base + "_lbfgs_ensemble" + args.opt_suffix + "_{scheme}"
 
     if OBJECTIVE == "detection":
         # Insert a "_detection" marker right before the per-scheme "_{scheme}"
@@ -1067,6 +1074,18 @@ def main():
         # same directory as a composite run's, whether or not --opt_suffix was
         # also given.
         OPT_DIR_TEMPLATE = OPT_DIR_TEMPLATE[:-len("_{scheme}")] + "_detection_{scheme}"
+
+    if args.fnn_folder:
+        import modules_v6.constants as _C
+        _C.FNN_FOLDER = args.fnn_folder
+        global FNN_FOLDER
+        FNN_FOLDER = args.fnn_folder
+        print(f"[fnn_folder] overriding FNN_FOLDER -> {args.fnn_folder}")
+
+    if args.recon_folder:
+        global RECON_DIR
+        RECON_DIR = args.recon_folder
+        print(f"[recon_folder] overriding recon dir -> {args.recon_folder}")
 
     fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_DIR)
 
@@ -1098,7 +1117,6 @@ def main():
         print("=" * 72)
         opt_dir = OPT_DIR_TEMPLATE.format(scheme=scheme)
         os.makedirs(opt_dir, exist_ok=True)
-        RUN_WORLD.stamp(opt_dir, stage="04_optimize_lbfgs_ensemble", scheme=scheme)
         adam_resume_path = os.path.join(opt_dir, "adam_resume.pt")
         layout_best_path = os.path.join(opt_dir, "layout_best.pt")
 

@@ -32,11 +32,11 @@ positions flows through BOTH models.
 """
 
 import os
+import time
 
 import torch
 import torch.nn as nn
 
-from . import run_world
 from .constants import N_DETECTORS, PRIMARY_DIM, T_LOG_SCALE
 from .deepsets_surrogate import build_surrogate_from_ckpt
 
@@ -123,6 +123,23 @@ class DualSpeciesSurrogate(nn.Module):
         return mean + eps * var.clamp(min=0.0).sqrt()
 
 
+def _ckpt_provenance(path: str) -> str:
+    """Absolute path + mtime of a checkpoint, for the load line.
+
+    The load line used to name only the FILE ("fnn_electron.pt"), which is
+    identical in every run world. Three evaluations scored a stale surrogate and
+    shipped the numbers because nothing in the log distinguished one run's
+    checkpoint from another's. The folder and the mtime do.
+    """
+    ap = os.path.abspath(path)
+    try:
+        st = os.stat(ap)
+    except OSError as e:
+        return f"{ap}  [UNREADABLE: {e.strerror}]"
+    return (f"{ap}  mtime="
+            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(st.st_mtime))}")
+
+
 def load_dual_surrogate(folder: str,
                         device: torch.device,
                         n_det: int = N_DETECTORS,
@@ -141,7 +158,7 @@ def load_dual_surrogate(folder: str,
         cfg = ckpt.get("config", {})
         print(f"[load] {fname}  model={cfg.get('model_type', 'fnn')}  "
               f"epoch={ckpt.get('epoch', '?')}  val={ckpt.get('val_total', '?')}\n"
-              f"       {run_world.describe_file(path)}", flush=True)
+              f"       {_ckpt_provenance(path)}", flush=True)
     dual = DualSpeciesSurrogate(models["electron"], models["muon"]).to(device)
     dual.eval()
     return dual

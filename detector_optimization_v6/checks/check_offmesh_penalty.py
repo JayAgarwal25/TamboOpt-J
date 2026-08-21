@@ -16,20 +16,12 @@ import numpy as np
 import torch
 from scipy.spatial import cKDTree
 
-# This file sits in checks/; the stage scripts and modules_v6 are one level up.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V6   = os.path.dirname(_HERE)
-sys.path.insert(0, _V6)
+sys.path.insert(0, _HERE)
 
 _spec = importlib.util.spec_from_file_location(
-    "opt4", os.path.join(_V6, "04_optimize_lbfgs_ensemble.py"))
+    "opt4", os.path.join(_HERE, "04_optimize_lbfgs_ensemble.py"))
 o = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(o)
-
-# 04 is imported as a library here, so its module-level folder globals are still
-# None (they are bound inside its main()). This check resolves its own world.
-from modules_v6 import run_world  # noqa: E402
-
-_W = run_world.resolve()
 
 
 def main():
@@ -44,9 +36,9 @@ def main():
     # (deliberately inside it). Report against `snap` — that is the failure.
     snap = float(o._ne_max_gap(mt))
     onset = o._penalty_args(mt)[1]
-    fnn, recon = o.load_models(o.DEVICE, fnn_folder=_W.fnn_folder,
-                               recon_dir=_W.recon_dir)
-    prim = torch.load(os.path.join(_W.dataset_folder, "primary.pt"),
+    fnn, recon = o.load_models(o.DEVICE, fnn_folder=o.FNN_FOLDER,
+                               recon_dir=o.RECON_DIR)
+    prim = torch.load(os.path.join(o.TRAINING_DATASET_FOLDER, "primary.pt"),
                       map_location="cpu", weights_only=False)
     prim = prim[:o.LBFGS_BATCH_PRIMARIES].to(o.DEVICE)
     E, N = o.sample_initial_layout_ne(mt, n_units=o.N_DETECTORS, scheme="grid")

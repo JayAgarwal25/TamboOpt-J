@@ -49,11 +49,6 @@ FINETUNE_EPOCHS=15
 
 set -euo pipefail
 
-# The pipeline stages refuse to guess a run world (modules_v6/run_world.py).
-# Export it before submitting:  TAMBO_RUN_WORLD=/path/to/run sbatch <this>
-: "${TAMBO_RUN_WORLD:?set TAMBO_RUN_WORLD to the run world root before submitting}"
-export TAMBO_RUN_WORLD
-
 ROUND=${1:?"Usage: bash slurm/05_adaptive_loop.sbatch <ROUND> [<PREV_JOB_C_ID>]"}
 PREV_JOB_C=${2:-}   # optional job ID of previous round's step-4, for cross-round chaining
 
@@ -193,7 +188,7 @@ JOB_C=$(sbatch --parsable \
     --wrap="${PREAMBLE}
 python 04_optimize_lbfgs_ensemble.py \\
     --fnn_folder ${FNN_DIR} \\
-    --recon_dir ${RECON_DIR} \\
+    --recon_folder ${RECON_DIR} \\
     --init_from ${CENTER_PT} \\
     --opt_suffix ${OPT_SUFFIX} \\
     --save_best_layout ${OUTPUT_PT}

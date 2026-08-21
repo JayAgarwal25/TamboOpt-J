@@ -13,14 +13,11 @@ import modules_v6  # noqa: F401
 from modules_v6.opt_core import load_models
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
 from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6 import run_world
 from modules_v6.constants import (
-    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX,
-    N_PLANES
+    GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, TRAINING_DATASET_FOLDER,
+    FNN_FOLDER, RECON_FOLDER,
 )
-
-# Bound in main() from the resolved run world, never at import.
-TRAINING_DATASET_FOLDER = None
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
 _etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
@@ -37,15 +34,11 @@ def _stats(t):
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--recon_dir", type=str, default=None)
     ap.add_argument("--n-events", type=int, default=512)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--layout", type=str, default="grid")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global TRAINING_DATASET_FOLDER
-    W = run_world.resolve(args, need_write=False)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
     torch.manual_seed(args.seed); np.random.seed(args.seed)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,7 +47,8 @@ def main():
     surf = SurfaceUpMap.from_mountain(mtn).to(dev)
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev)
     kfn = _etu.KernelDualLabels(elec, muon, surf, dev)
-    fnn, recon = load_models(dev, fnn_folder=W.fnn_folder, recon_dir=W.recon_dir)
+    fnn, recon = load_models(dev, fnn_folder=FNN_FOLDER,
+                             recon_dir=args.recon_dir or RECON_FOLDER + "_deepsets")
     D = int(getattr(recon, "output_dim", 4)); cols = _COLS7 if D == 7 else _COLS4
     prim = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt")).float()[:B].to(dev)
     tgt_cols = [0, 1, 2, 3, 5, 6, 7] if D == 7 else [0, 1, 2, 3]

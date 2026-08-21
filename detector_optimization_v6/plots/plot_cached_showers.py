@@ -33,15 +33,13 @@ import numpy as np
 import showerdata
 
 import modules_v6  # noqa: F401 — sys.path injection for v3 + v4
-from modules_v6 import run_world
 from modules_v6.constants import (
+    SHOWER_CACHE,
     GEOMETRY_PATH, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
 from modules_v4.tr_geometry import load_tr_mountain
 
-# Filled in from the resolved run world in main(); an argparse default
-# evaluated at import is exactly the binding this refactor removes.
-_DEFAULT_CKPT = None
+_DEFAULT_CKPT = os.path.join(SHOWER_CACHE, f"cashed_showers_dual_1000000.pt")
 
 # constants.GEOMETRY_PATH may be stale; prefer a local copy, then the new TAMBOSim path.
 GEOMETRY_PATH_RESOLVED = next(
@@ -64,7 +62,7 @@ def _load_mountain():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", type=str, default=None, help="cached shower file")
+    ap.add_argument("--ckpt", type=str, default=_DEFAULT_CKPT, help="cached shower file")
     ap.add_argument("--n", type=int, default=5, help="number of leading showers per species to plot")
     ap.add_argument("--bins", type=int, default=200, help="heatmap bins per axis")
     ap.add_argument("--muon-start", type=int, default=None,
@@ -74,17 +72,14 @@ def main():
                     help="overlay the mountain footprint")
     ap.add_argument("--out", type=str, default=os.path.join(_HERE, "cached_showers.png"),
                     help="output path; the species name is inserted before the extension")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-    W = run_world.resolve(args)
-    default_ckpt = os.path.join(W.shower_cache, "cashed_showers_dual_1000000.pt")
 
     # Only the file length is needed to locate the species blocks — never read
     # the whole corpus (the dual caches are 1M showers × 25088 points and OOM
     # the process). Each species' leading N showers are read with a row-range
     # slice via showerdata.load(start, stop) below.
-    print(f"[load] {(args.ckpt or default_ckpt)}")
-    total = showerdata.get_file_length((args.ckpt or default_ckpt))
+    print(f"[load] {args.ckpt}")
+    total = showerdata.get_file_length(args.ckpt)
 
     muon_start = args.muon_start if args.muon_start is not None else total // 2
     muon_start = max(0, min(muon_start, total))
@@ -109,7 +104,7 @@ def main():
             continue
 
         # Read ONLY this slice from disk (hi-lo ≤ args.n showers), not the corpus.
-        sub = showerdata.load((args.ckpt or default_ckpt), start=lo, stop=hi)
+        sub = showerdata.load(args.ckpt, start=lo, stop=hi)
         points = np.asarray(sub.points)                      # (hi-lo, P, 5): x,y,layer,e,t
         pdg = np.asarray(sub.pdg).reshape(-1)        # EM/hadronic primary class (0/1)
 
@@ -121,7 +116,7 @@ def main():
             print(f"  {name} shower {lo + j}: pdg(EM/had)={int(pdg[j])}  "
                   f"n_points={int(m.sum())}  E_tot={pts[m, 3].sum():.3g}")
 
-        plabel = f"first {len(points)} {name} showers — {os.path.basename((args.ckpt or default_ckpt))}"
+        plabel = f"first {len(points)} {name} showers — {os.path.basename(args.ckpt)}"
         out = f"{base}_{name}{ext}"
         _plot(reals, pdg, plabel, out, mountain=mountain, bins=args.bins)
         print(f"[done] wrote {out}")

@@ -46,15 +46,12 @@ from torch.utils.data import TensorDataset, DataLoader, Subset
 import modules_v6   # noqa: F401
 from modules_v6.dual_surrogate  import load_dual_surrogate, combine_species_outputs
 from modules_v6.reconstruction  import DeepSetsRecon
-from modules_v6 import run_world
 from modules_v6.constants import (
+    RECON_FOLDER, TRAINING_DATASET_FOLDER, FNN_FOLDER,
     N_DETECTORS, T_LOG_SCALE,
 )
 
-# Bound in main() from the resolved run world, never at import.
-TRAINING_DATASET_FOLDER = None
-FNN_FOLDER              = None
-OUTPUT_FOLDER           = None
+OUTPUT_FOLDER = RECON_FOLDER + "_deepsets"
 
 # ── Architecture ─────────────────────────────────────────────────────────────
 # 3 -> 6 layers each (2026-07-30). Cost is asymmetric: the encoder runs
@@ -346,10 +343,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs",        type=int,  default=N_EPOCHS)
     ap.add_argument("--lbfgs-iters",   type=int,  default=LBFGS_MAX_ITER)
+    ap.add_argument("--dataset_folder", type=str, default=None,
+                    help="Override TRAINING_DATASET_FOLDER: directory holding "
+                         "primary.pt / xy.pt / E.pt / T.pt / strategy_ids.pt. Use "
+                         "to train against a rebuilt dataset without touching the "
+                         "run world the constants point at.")
+    ap.add_argument("--fnn_folder",    type=str,  default=None,
+                    help="Override FNN_FOLDER: directory containing fnn_electron.pt "
+                         "and fnn_muon.pt.  Use this after adaptive-loop FNN fine-tune "
+                         "so the recon is retrained with the updated surrogate's predictions.")
     ap.add_argument("--output_folder", type=str,  default=None,
-                    help="Write the trained recon here instead of the run world's "
-                         "recon_dir.  Use a round-suffixed path (e.g. "
-                         "..._deepsets_r1) to keep the base recon intact.")
+                    help="Override the recon output directory (default: "
+                         "RECON_FOLDER + '_deepsets').  Use a round-suffixed path "
+                         "(e.g. …_deepsets_r1) to keep the base recon intact.")
     ap.add_argument("--label_source", type=str, default="fnn", choices=("fnn", "kernel"),
                     help="Recon input (E,T) source: 'fnn' = dual-surrogate predictions "
                          "(default, current behaviour); 'kernel' = the stored ground-truth "
@@ -385,15 +391,7 @@ def main():
                          "7-output recon, where the metre-scale vertex target otherwise "
                          "dominates the raw-space loss and starves direction/energy. "
                          "Default off keeps the 4-output runs byte-identical.")
-    run_world.add_run_world_args(ap)
     args = ap.parse_args()
-
-    global FNN_FOLDER, OUTPUT_FOLDER
-    W = run_world.resolve(args, need_write=True)
-    TRAINING_DATASET_FOLDER = W.dataset_folder
-    FNN_FOLDER              = W.fnn_folder
-    OUTPUT_FOLDER           = args.output_folder or W.recon_dir
-
     label_source   = args.label_source
     output_dim     = int(args.output_dim)
     noise_scale    = float(args.noise_scale)
@@ -401,14 +399,21 @@ def main():
     normalize_loss = bool(args.normalize_loss)
     sparsify       = float(args.sparsify)
     N_EPOCHS, LBFGS_MAX_ITER = int(args.epochs), int(args.lbfgs_iters)
+    if args.dataset_folder:
+        TRAINING_DATASET_FOLDER = args.dataset_folder
+    if args.fnn_folder:
+        global FNN_FOLDER
+        FNN_FOLDER = args.fnn_folder
+        import modules_v6.constants as _C
+        _C.FNN_FOLDER = args.fnn_folder
+    if args.output_folder:
+        global OUTPUT_FOLDER
+        OUTPUT_FOLDER = args.output_folder
+
     print("=" * 72)
     print("v6/03_train_recon_deepsets.py — DeepSets recon on dual-species preds")
     print("=" * 72)
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    W.stamp(OUTPUT_FOLDER, stage="03_train_recon_deepsets",
-            dataset_folder=TRAINING_DATASET_FOLDER, fnn_folder=FNN_FOLDER,
-            label_source=label_source, output_dim=output_dim,
-            noise_scale=noise_scale, sparsify=sparsify)
     print(f"training data : {TRAINING_DATASET_FOLDER}")
     print(f"fnn ckpts     : {FNN_FOLDER}  (fnn_electron.pt + fnn_muon.pt)")
     print(f"output        : {OUTPUT_FOLDER}")
