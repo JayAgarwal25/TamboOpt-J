@@ -56,7 +56,7 @@ from modules.constants import (
 from modules.geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in
-# modules/optimize/objective.py; the figures live in plots/opt_plotting.py (loaded by path).
+# modules/optimize/objective.py; the figures live in plots/lib/opt_plotting.py (loaded by path).
 from modules.optimize import (
     primary_to_physical_labels, utility_of_xy, align_to_reference, load_models,
     W_THETA, W_PHI, W_E, W_PR, W_DIV,
@@ -64,7 +64,7 @@ from modules.optimize import (
 )
 from modules.constants import GEOMETRY_PATH_RESOLVED
 _plt_spec = importlib.util.spec_from_file_location(
-    "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
+    "opt_plotting", os.path.join(V6_ROOT, "plots", "lib", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
 
 

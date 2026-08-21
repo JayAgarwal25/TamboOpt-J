@@ -11,25 +11,31 @@ TAU_LAYOUT, TAU_RECONSTRUCT) but stops short of the final `torch.mean` inside
 runtime against the unmodified function as a correctness guard, not just an
 assertion in a comment.
 
-Reuses `plots/eval_true_utility.py`'s event loader (held-out corpus, unseen by
+Reuses `plots/layouts/true_utility.py`'s event loader (held-out corpus, unseen by
 Steps 1-4) and model loader, so the numbers here are on the same footing as
 that script's baseline/optimized comparison — just broken out per event and
 plotted against each event's true tau energy instead of collapsed to one number.
 
 Output: `utility_vs_energy.png` next to each `layout_best.pt` passed via
-`--run-dir` (mirrors `plots/replot_optimize_curves.py`'s convention of writing
+`--run-dir` (mirrors `plots/layouts/replot_optimize_curves.py`'s convention of writing
 back into the run's own directory).
 
     cd TambOpt
-    python plots/eval_utility_vs_energy.py --run-dir "RUN_DIR_A" "RUN_DIR_B"
-    python plots/eval_utility_vs_energy.py --run-dir "RUN_DIR" --n-events 20000
+    python plots/layouts/utility_vs_energy.py --run-dir "RUN_DIR_A" "RUN_DIR_B"
+    python plots/layouts/utility_vs_energy.py --run-dir "RUN_DIR" --n-events 20000
 """
 import argparse
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))          # plots/
-_V6 = os.path.dirname(_HERE)
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
 for _p in (_V6, _HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -55,7 +61,7 @@ from modules.constants import (
 # modules/__init__ injected the v3 (`modules`) path on package import.
 from modules.optimize import reconstructability
 from modules.optimize.utility import _soft_cap
-from eval_true_utility import load_events, utility_of_xy
+from true_utility import load_events, utility_of_xy
 
 
 # log10(1e9): GeV -> eV shift applied to the plotted x-values (not a label
@@ -115,7 +121,7 @@ def utility_per_event(x_det, y_det, primary_batch, fnn, recon):
 
 def _plot(ax, log_e, U, title, n_bins=40, min_count=20):
     """Hexbin density of per-event U over log10(E_tau), linear colour clipped
-    at p95 (the convention `plots/02_plot_nn_target_vs_pred.py::_scatter` uses
+    at p95 (the convention `plots/training/02_nn_target_vs_pred.py::_scatter` uses
     for the same reason: counts span orders of magnitude, so a plain linear
     scale lets the single densest cell own the whole ramp). A binned mean +/-
     std curve on top answers the actual question -- does per-event utility

@@ -11,4 +11,4 @@
 
 source slurm/env.sh
 
-python -u plots/05_paper_figures.py
+python -u plots/layouts/05_paper_figures.py

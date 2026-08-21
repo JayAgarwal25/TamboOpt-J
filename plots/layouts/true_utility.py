@@ -22,15 +22,23 @@ identical recon path, transforms and composite weights.
 All paths come from constants.py, so this scores whatever run those point at.
 
     cd TambOpt
-    python plots/eval_true_utility.py --n-events 512
+    python plots/layouts/true_utility.py --n-events 512
 """
 import argparse
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 import torch

@@ -11,9 +11,9 @@ For each species the leading N showers are plotted to a separate, species-suffix
 Run:
 
     cd TambOpt
-    python plots/plot_cached_showers.py --ckpt <path> --n 5
-    python plots/plot_cached_showers.py --ckpt <path> --n 5 --mountain
-    python plots/plot_cached_showers.py --ckpt <path> --n 5 --muon-start 5000
+    python plots/showers/cached_showers.py --ckpt <path> --n 5
+    python plots/showers/cached_showers.py --ckpt <path> --n 5 --mountain
+    python plots/showers/cached_showers.py --ckpt <path> --n 5 --muon-start 5000
 
 Only the leading N showers of each species block are read from disk (via a
 showerdata.load(start, stop) row-range slice), so this is safe to point at the
@@ -23,8 +23,14 @@ import argparse
 import os
 import sys
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V6 = os.path.dirname(_HERE)
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
 for _p in (_V6, _HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)

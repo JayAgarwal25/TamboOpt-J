@@ -35,11 +35,11 @@ removes anything else in <outdir> at the end of a run (intermediates, and any
 figure no longer referenced in `RESULTS_SECTION`).
 
 Run from the v6 folder:
-    python plots/05_paper_figures.py                    # everything
-    python plots/05_paper_figures.py --only geometry     # the 5 malata/tau figures
-    python plots/05_paper_figures.py --only deepsets     # conditional/calibration/recon
-    python plots/05_paper_figures.py --only density      # the 4 layout-density heatmaps
-    python plots/05_paper_figures.py --textwidth-pt 384.1  # elsarticle 1p (single column)
+    python plots/layouts/05_paper_figures.py                    # everything
+    python plots/layouts/05_paper_figures.py --only geometry     # the 5 malata/tau figures
+    python plots/layouts/05_paper_figures.py --only deepsets     # conditional/calibration/recon
+    python plots/layouts/05_paper_figures.py --only density      # the 4 layout-density heatmaps
+    python plots/layouts/05_paper_figures.py --textwidth-pt 384.1  # elsarticle 1p (single column)
 """
 import argparse
 import importlib.util as _ilu
@@ -47,12 +47,17 @@ import math
 import os
 import sys
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V6_DIR = os.path.dirname(_HERE)
-if _V6_DIR not in sys.path:
-    sys.path.insert(0, _V6_DIR)
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 import torch
@@ -64,12 +69,17 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 import modules  # noqa: F401 — package import; keeps modules on the path
 from modules.constants import PAPER_FIGURES_DIR
-import paper_style as ps
-import geometry_plots as gp
+from plots.lib import paper_style as ps
+from plots.lib import geometry_plots as gp
 
 
-def _load_by_path(name, filename):
-    spec = _ilu.spec_from_file_location(name, os.path.join(_HERE, filename))
+def _load_by_path(name, relpath):
+    """Load another plots/ script by path, relative to plots/.
+
+    Not an import: `02_nn_target_vs_pred` starts with a digit, so it is not a
+    legal module name. opt_plotting goes the same way for symmetry.
+    """
+    spec = _ilu.spec_from_file_location(name, os.path.join(_V6, "plots", relpath))
     mod = _ilu.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -346,7 +356,7 @@ def make_detector_panel(ctx, view_r=1500.0):
     """explore_trigger_counts.ipynb cell 12's `panel(ax, ...)` closure, using
     opt_plotting's mountain_enu / draw_detectors_enu_3d exactly as the
     notebook does (loaded by path there for the same reason it is here)."""
-    optplt = _load_by_path("opt_plotting", "opt_plotting.py")
+    optplt = _load_by_path("opt_plotting", "lib/opt_plotting.py")
     mtn_enu = optplt.mountain_enu(ctx["mountain"])
     surf_cpu = ctx["surface"].to("cpu")
     ctr = mtn_enu.mean(axis=0)
@@ -484,7 +494,7 @@ def make_geometry_figures(outdir, frac_by_name, textwidth_pt):
 # Group A -- Deepsets surrogate figures, via 02_plot_nn_target_vs_pred.py.
 # --------------------------------------------------------------------------- #
 def make_deepsets_figures(outdir, frac_by_name, textwidth_pt):
-    nnplot = _load_by_path("plot_nn_target_vs_pred", "02_plot_nn_target_vs_pred.py")
+    nnplot = _load_by_path("nn_target_vs_pred", "training/02_nn_target_vs_pred.py")
 
     def pf(target_pt, drawn_w, frac):
         return ps.paper_fontsize(target_pt, drawn_w, frac, textwidth_pt)
@@ -584,7 +594,7 @@ def make_density_figures(outdir, frac_by_name, textwidth_pt, run_dirs, vmax=DENS
     from modules.constants import (
         GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY, EAST_ENTRY, LAYER_EAST_DX, N_PLANES)
 
-    optplt = _load_by_path("opt_plotting", "opt_plotting.py")
+    optplt = _load_by_path("opt_plotting", "lib/opt_plotting.py")
     mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
                                 east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
     surface = SurfaceUpMap.from_mountain(mountain).to("cpu")
@@ -817,7 +827,7 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
     print("=" * 72)
-    print(f"v6/plots/05_paper_figures.py  textwidth={args.textwidth_pt:g}pt  -> {args.outdir}")
+    print(f"v6/plots/layouts/05_paper_figures.py  textwidth={args.textwidth_pt:g}pt  -> {args.outdir}")
     print("=" * 72)
 
     if args.only in (None, "geometry"):

@@ -11,12 +11,12 @@
 
 source slurm/env.sh
 
-# python -u plots/02_plot_nn_target_vs_pred.py --dual
+# python -u plots/training/02_nn_target_vs_pred.py --dual
 
-python -u plots/05_paper_figures.py
+python -u plots/layouts/05_paper_figures.py
 
 # mp4 by default: GIF caps at 50 fps. Needs imageio-ffmpeg.
-# python -u plots/04_plot_trajectory_gif.py
+# python -u plots/layouts/04_trajectory_gif.py
 
-# python -u plots/04_plot_trajectory_gif.py --monotonic --seconds 20 \
+# python -u plots/layouts/04_trajectory_gif.py --monotonic --seconds 20 \
 #     -o layout_trajectory_monotonic.gif

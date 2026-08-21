@@ -27,7 +27,7 @@ render () {
         echo ">>> Skipping $(basename "$out") (already written)"
         return 0
     fi
-    python -u plots/04_plot_trajectory_gif.py --run-dir "${DIRS[@]}" "$@" -o "$out"
+    python -u plots/layouts/04_trajectory_gif.py --run-dir "${DIRS[@]}" "$@" -o "$out"
 }
 
 # 1) Adam warm-start, first 500 epochs. --only zoom skips the full-trajectory
@@ -36,7 +36,7 @@ render () {
 if [ -s "$R/activation_distinct_trajectory_first500ep.mp4" ]; then
     echo ">>> Skipping activation_distinct_trajectory_first500ep.mp4 (already written)"
 else
-    python -u plots/04_plot_trajectory_gif.py --run-dir "${DIRS[@]}" \
+    python -u plots/layouts/04_trajectory_gif.py --run-dir "${DIRS[@]}" \
         --only zoom --zoom-epochs 500 \
         -o "$R/activation_distinct_trajectory.mp4"
 fi

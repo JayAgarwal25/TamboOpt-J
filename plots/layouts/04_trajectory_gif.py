@@ -10,14 +10,14 @@ chunk, which is why detectors are seen outside the valid region there.
 
 Run from the v6 folder. The current run (whole trajectory + Adam zoom, mp4):
 
-    python plots/04_plot_trajectory_gif.py
+    python plots/layouts/04_trajectory_gif.py
 
 An archived run — pass BOTH scheme dirs; output lands beside them:
 
     R="$(python -c 'import sys; sys.path.insert(0, "."); \\
         from modules.constants import RUN_LOCATION; print(RUN_LOCATION)')"
     R="$R/run 6 update energy calc common eval"
-    python plots/04_plot_trajectory_gif.py \\
+    python plots/layouts/04_trajectory_gif.py \\
         --run-dir "$R/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_center" \\
                   "$R/test_v6_run_04_optimize_lbfgs_ensemble_full_corpus_grid"
 
@@ -25,7 +25,7 @@ One sweep chunk, or a range, zoomed onto the layout. --min-per-chunk 0 because
 the floor is pointless once the range is small; --fit-view drops the off-map
 probes so the axes can fit the detectors:
 
-    python plots/04_plot_trajectory_gif.py --phase lbfgs --lbfgs-chunk 0-9 \\
+    python plots/layouts/04_trajectory_gif.py --phase lbfgs --lbfgs-chunk 0-9 \\
         --fit-view --min-per-chunk 0 --zoom-epochs 0 --seconds 20 --fps 60 \\
         --run-dir "$R/..._center" "$R/..._grid" -o "$R/lbfgs_chunk0-9.mp4"
 
@@ -33,12 +33,12 @@ probes so the axes can fit the detectors:
 often returns its input unchanged). Keep --seconds near frames/fps or the
 resampler starts dropping frames rather than holding them:
 
-    python plots/04_plot_trajectory_gif.py --phase lbfgs --lbfgs-chunk first-gain \\
+    python plots/layouts/04_trajectory_gif.py --phase lbfgs --lbfgs-chunk first-gain \\
         --fit-view --min-per-chunk 0 --zoom-epochs 0 --seconds 8 --fps 60
 
 Increasing-U frames only, short enough to stay a GIF:
 
-    python plots/04_plot_trajectory_gif.py --monotonic --seconds 20 -o out.gif
+    python plots/layouts/04_trajectory_gif.py --monotonic --seconds 20 -o out.gif
 """
 import argparse
 import glob
@@ -46,9 +46,17 @@ import json
 import os
 import sys
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(_HERE) not in sys.path:
-    sys.path.insert(0, os.path.dirname(_HERE))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 import torch

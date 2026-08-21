@@ -8,8 +8,8 @@ series — EXCEPT the raw per-step gradients, which are only ever held in memory
 panel 2 is redrawn from the stored smoothed series and loses its faint raw
 underlay; panel 1 is exact.
 
-    python plots/replot_optimize_curves.py                     # every scheme dir
-    python plots/replot_optimize_curves.py --run-dir DIR_A DIR_B
+    python plots/layouts/replot_optimize_curves.py                     # every scheme dir
+    python plots/layouts/replot_optimize_curves.py --run-dir DIR_A DIR_B
 """
 import argparse
 import glob
@@ -17,12 +17,20 @@ import json
 import os
 import sys
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-if os.path.dirname(_HERE) not in sys.path:
-    sys.path.insert(0, os.path.dirname(_HERE))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import modules  # noqa: F401 — package import; keeps modules on the path
-import plots.opt_plotting as _plt
+from plots.lib import opt_plotting as _plt
 from modules.constants import OPT_FOLDER
 
 # Mirrors GRAD_COS_WINDOW in 04_optimize_lbfgs_ensemble.py; importing that

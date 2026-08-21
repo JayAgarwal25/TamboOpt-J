@@ -10,4 +10,4 @@
 
 source slurm/env.sh
 
-python -u plots/eval_true_utility.py --grid-layout
+python -u plots/layouts/true_utility.py --grid-layout

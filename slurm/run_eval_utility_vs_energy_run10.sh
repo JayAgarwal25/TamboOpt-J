@@ -10,6 +10,6 @@
 
 source slurm/env.sh
 
-python -u plots/eval_utility_vs_energy.py --run-dir \
+python -u plots/layouts/utility_vs_energy.py --run-dir \
     "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/07_750k_primaires_meanvar/run 10 simple utility coverage/test_v6_run_04_optimize_lbfgs_activation_center" \
     "/n/holylfs05/LABS/arguelles_delgado_lab/Everyone/zdimitrov/detector_optimization_v6/07_750k_primaires_meanvar/run 10 simple utility coverage/test_v6_run_04_optimize_lbfgs_activation_grid"

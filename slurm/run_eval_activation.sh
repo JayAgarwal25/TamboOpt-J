@@ -24,5 +24,5 @@ source slurm/env.sh
 # happened.
 O="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import OPT_FOLDER; print(OPT_FOLDER)')"
 O="${O}_lbfgs_activation"
-python -u plots/eval_activation_counts.py \
+python -u plots/layouts/activation_counts.py \
     --layout "${O}_grid/layout_best.pt" "${O}_center/layout_best.pt"

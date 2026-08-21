@@ -542,7 +542,7 @@ def main():
         import importlib.util
         _spec = importlib.util.spec_from_file_location(
             "_plot_tvp",
-            os.path.join(V6_ROOT, "plots", "02_plot_nn_target_vs_pred.py"),
+            os.path.join(V6_ROOT, "plots", "training", "02_nn_target_vs_pred.py"),
         )
         assert _spec is not None and _spec.loader is not None
         _mod = importlib.util.module_from_spec(_spec)

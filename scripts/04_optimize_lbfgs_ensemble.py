@@ -57,7 +57,7 @@ from modules.geometry import SurfaceUpMap
 
 # Shared optimizer core (objective, alignment, model loading, the gradient-turn
 # diagnostic, constants) lives in modules/optimize/objective.py; the figures live in
-# plots/opt_plotting.py (loaded by path). utility_of_xy is NOT no_grad-wrapped,
+# plots/lib/opt_plotting.py (loaded by path). utility_of_xy is NOT no_grad-wrapped,
 # so Adam / L-BFGS backprop through it here.
 from modules.optimize import (
     utility_of_xy, align_to_reference, consecutive_cos_distance, load_models,
@@ -67,7 +67,7 @@ from modules.optimize import (
 )
 from modules.geometry.placement import _ne_max_gap
 _plt_spec = importlib.util.spec_from_file_location(
-    "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
+    "opt_plotting", os.path.join(V6_ROOT, "plots", "lib", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
 
 

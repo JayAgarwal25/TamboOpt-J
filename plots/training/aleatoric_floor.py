@@ -29,7 +29,7 @@ Generation needs a GPU (the AllShowers flow-matching sampler is impractically sl
 on CPU). The path resolution is CWD-independent, so run it from anywhere, e.g.:
 
     cd TambOpt
-    python plots/compute_aleatoric_floor.py --n-prim 128 --m-real 64
+    python plots/training/aleatoric_floor.py --n-prim 128 --m-real 64
 """
 import argparse
 import json
@@ -40,9 +40,17 @@ import time
 
 # v6 folder = parent of this file's plots/ dir. File-relative (NOT cwd-relative) so
 # the script imports modules no matter where it's launched from.
-_HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _HERE not in sys.path:
-    sys.path.insert(0, _HERE)
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 import torch
@@ -69,7 +77,7 @@ from modules.geometry import SurfaceUpMap
 from modules.showers.generate import GenerateShowers  # noqa: F401 — triggers TAMBO-opt sys.path injection in modules.showers.generate
 import importlib.util as _ilu
 _spec00 = _ilu.spec_from_file_location(
-    "gen00", os.path.join(_HERE, "scripts", "00_generate_data_dual_species.py"))
+    "gen00", os.path.join(_V6, "scripts", "00_generate_data_dual_species.py"))
 gen00 = _ilu.module_from_spec(_spec00); _spec00.loader.exec_module(gen00)
 sample_primary_particles = gen00.sample_primary_particles   # re-export
 
@@ -197,7 +205,7 @@ def main():
     ap.add_argument("--seed",      type=int, default=0)
     ap.add_argument("--gen-batch", type=int, default=32, help="AllShowers gen batch")
     ap.add_argument("--out", type=str,
-                    default=os.path.join(_HERE, f"aleatoric_floor_{time.strftime('%Y%m%d_%H%M%S')}.json"))
+                    default=os.path.join(_V6, f"aleatoric_floor_{time.strftime('%Y%m%d_%H%M%S')}.json"))
     args = ap.parse_args()
 
     print("=" * 72)

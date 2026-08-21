@@ -2,7 +2,7 @@
 
 Same ensemble machinery as ``04_optimize_lbfgs_ensemble.py``; only the objective
 differs. That script maximizes the composite U (how well the frozen recon recovers
-theta, phi, E), and `plots/eval_activation_counts.py` showed its layouts light up
+theta, phi, E), and `plots/layouts/activation_counts.py` showed its layouts light up
 FEWER detectors and collect FEWER particles than a plain grid (-1.6 detectors,
 -3.8e4 particles/shower, both outside their standard errors) while scoring +3.1
 higher on U. The two goals genuinely pull apart; this optimizes the other one,
@@ -25,7 +25,7 @@ Adam-bests from every scheme before refining.
 
 Caveats:
   * The objective runs through the SURROGATE — the kernel is `@torch.no_grad()`
-    and cannot be optimized through. `plots/eval_activation_counts.py` scores the
+    and cannot be optimized through. `plots/layouts/activation_counts.py` scores the
     result against the kernel on the held-out reserve afterwards; that is the
     number that counts.
   * Nothing here rewards reconstruction, so expect this layout to LOSE on U
@@ -46,7 +46,7 @@ Usage:
 
     python scripts/04_optimize_lbfgs_activation.py
     python scripts/04_optimize_lbfgs_activation.py --objective detectors --chains 1
-    python plots/eval_activation_counts.py --layout \\
+    python plots/layouts/activation_counts.py --layout \\
         "<OPT_FOLDER>_lbfgs_activation_grid/layout_best.pt"
 """
 import importlib.util
@@ -79,7 +79,7 @@ from modules.geometry import SurfaceUpMap
 
 # Shared optimizer core (objective, alignment, model loading, the gradient-turn
 # diagnostic, constants) lives in modules/optimize/objective.py; the figures live in
-# plots/opt_plotting.py (loaded by path). activation_of_xy is NOT no_grad-wrapped,
+# plots/lib/opt_plotting.py (loaded by path). activation_of_xy is NOT no_grad-wrapped,
 # so Adam / L-BFGS backprop through it here.
 from modules.optimize import (
     activation_of_xy, align_to_reference, consecutive_cos_distance, load_models,
@@ -89,7 +89,7 @@ from modules.optimize import (
 )
 from modules.geometry.placement import _ne_max_gap
 _plt_spec = importlib.util.spec_from_file_location(
-    "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
+    "opt_plotting", os.path.join(V6_ROOT, "plots", "lib", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
 
 

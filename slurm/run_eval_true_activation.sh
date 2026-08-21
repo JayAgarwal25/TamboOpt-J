@@ -15,7 +15,7 @@ source slurm/env.sh
 O="$(python -c 'import sys; sys.path.insert(0, "."); from modules.constants import OPT_FOLDER; print(OPT_FOLDER)')"
 O="${O}_lbfgs_activation"
 
-python -u plots/eval_true_activation.py --layout "${O}_grid/layout_best.pt"
+python -u plots/layouts/true_activation.py --layout "${O}_grid/layout_best.pt"
 echo
-python -u plots/eval_true_activation.py --layout "${O}_center/layout_best.pt" \
+python -u plots/layouts/true_activation.py --layout "${O}_center/layout_best.pt" \
     --center-layout

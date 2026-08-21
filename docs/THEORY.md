@@ -332,7 +332,7 @@ Three sibling scripts wrap the same frozen FNN+recon objective ($U_\text{var}$, 
 
 - **`04_optimize_lbfgs_ensemble.py`** — frequentist ensemble. Each of K perturbed Adam optima is refined by **L-BFGS** on a fixed batch, then the K layouts are **aligned by physical position** — a Hungarian assignment (`linear_sum_assignment`, with a greedy fallback) matches detectors by closest $(x,y)$, since permutation-equivariance makes detector *index* meaningless across runs. Per aligned group it reports **mean and std** (a network-input-invariant uncertainty map), and logs a **per-run consecutive-step gradient cosine distance** ($W$-step vector-averaged to cancel minibatch noise) as a convergence diagnostic.
 
-- **`04_optimize_lbfgs_activation.py`** — same ensemble machinery, different objective: `opt_core.activation_of_xy`, maximising what the layout **collects** rather than how well the recon inverts it. Three modes via `--objective`: `particles` (summed flux — the kernel double-counts overlapping detectors, so this is maximised by stacking), `detectors` (mean soft trigger count, saturating per detector so it pays to spread), and `distinct` (flux counted once each via `opt_core.overlap_multiplicity` — collection area with no stacking degeneracy). All three are logged whichever is chosen. Expect it to **lose** on composite $U$ against the ensemble script: the two objectives genuinely pull apart, and that is the experiment. Scored afterwards against the kernel on held-out events by `plots/eval_activation_counts.py`.
+- **`04_optimize_lbfgs_activation.py`** — same ensemble machinery, different objective: `opt_core.activation_of_xy`, maximising what the layout **collects** rather than how well the recon inverts it. Three modes via `--objective`: `particles` (summed flux — the kernel double-counts overlapping detectors, so this is maximised by stacking), `detectors` (mean soft trigger count, saturating per detector so it pays to spread), and `distinct` (flux counted once each via `opt_core.overlap_multiplicity` — collection area with no stacking degeneracy). All three are logged whichever is chosen. Expect it to **lose** on composite $U$ against the ensemble script: the two objectives genuinely pull apart, and that is the experiment. Scored afterwards against the kernel on held-out events by `plots/layouts/activation_counts.py`.
 
 - **`04_optimize_differential_evolution.py`** — global, **gradient-free** `scipy.optimize.differential_evolution` over the 200-D layout (100 North + 100 East, **North–East convention** §3.5), bounded by the North bbox and East span `[east_lo, east_hi]` **widened by `max_gap`** (§3.5 init-vs-bounds note). Each candidate is mountain-projected (`project_to_mountain_ne`) and scored by the same composite $U$ on a fixed batch; reports the best layout — a global baseline to check whether the gradient optimisers sit in a local optimum. Expensive in 200-D (population = `popsize` × 200) — keep `popsize`/`maxiter` modest. **Requires NE-retrained Steps 2–3** (§2 caveat) to be physically meaningful.
 
@@ -462,7 +462,7 @@ test_v6_run_04_optimize_de_ensemble_{scheme}/  ← DE ensemble (gradient-free ba
 
 `{scheme}` is the init scheme (`grid` | `center`). The exact prefixes above are the
 `OPT_DIR_TEMPLATE` values in each 04 script and are hardcoded by
-`plots/05_paper_figures.py`, so renaming one means updating both.
+`plots/layouts/05_paper_figures.py`, so renaming one means updating both.
 
 
 ## 8. Execution Environment
@@ -596,14 +596,14 @@ Directional validity is regime-dependent: surrogate gradients are roughly right 
 
 1. **The surrogate was never a meaningful speedup.** A full-corpus kernel pass is ≈ 5 TFLOP forward (~15 fwd+bwd) — seconds on an A100, only ~6–10× the surrogate's own cost. It manufactures the +134 artifact at ~1/6 the kernel's price.
 2. **The kernel is already differentiable in principle.** `compute_labels_batch` (`modules/dataset_builder.py`) is pure torch; its `@torch.no_grad()` decorator is the only blocker to exact ∂U/∂(E, N).
-3. **The adapter already exists.** `KernelDualLabels` in `plots/eval_true_utility.py` has the surrogate's exact call signature and feeds the *unmodified* `utility_of_xy` — kernel-in-the-loop is one promotion away.
+3. **The adapter already exists.** `KernelDualLabels` in `plots/layouts/true_utility.py` has the surrogate's exact call signature and feeds the *unmodified* `utility_of_xy` — kernel-in-the-loop is one promotion away.
 4. **Mechanism.** The recon was trained on kernel labels but is fed surrogate outputs at optimization time — smooth mean-fields, out of distribution for it. "Surrogate-U" measures how well the recon decodes the surrogate's mean field, not layout physics, so more optimization pressure digs further into that composite's idiosyncrasies.
 
 **Three cheap experiments that settle the direction**, none of which commits to a design:
 
 1. Un-`no_grad` `compute_labels_batch` behind a flag and time one fwd+bwd minibatch — decides kernel-in-the-loop feasibility with numbers.
 2. Run a voxel/superpoint compaction fidelity check on ~512 events — the clouds are stored well above kernel resolution (σ_spatial), so compaction at ~σ/4 should make the corpus GPU-resident with a measurable fidelity knob.
-3. Re-run `plots/compute_aleatoric_floor.py` per species against the Stage-2 val loss — decides whether any surrogate-centric path has headroom left at all (§10.4 says it does not).
+3. Re-run `plots/training/aleatoric_floor.py` per species against the Stage-2 val loss — decides whether any surrogate-centric path has headroom left at all (§10.4 says it does not).
 
 ### 11.4 AllShowers cols 0/1 are horizontal offsets, not transverse coordinates
 

@@ -688,7 +688,7 @@ def train_species(tag:        str,
         import importlib.util
         _spec = importlib.util.spec_from_file_location(
             "_plot_tvp",
-            os.path.join(V6_ROOT, "plots", "02_plot_nn_target_vs_pred.py"),
+            os.path.join(V6_ROOT, "plots", "training", "02_nn_target_vs_pred.py"),
             )
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)

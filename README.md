@@ -13,7 +13,7 @@ modules/          # importable library, six domain subpackages:
                   #     from modules.geometry import load_tr_mountain, SurfaceUpMap
 scripts/          # 00-04 pipeline stages: generate data → build dataset → train surrogate → train recon → optimize layout
 slurm/            # SLURM sbatch wrappers; env.sh is the shared preamble they all source
-plots/            # plotting + evaluation (surrogate-vs-ground-truth checks, paper figures)
+plots/            # figures + evaluation, grouped: lib/ showers/ training/ layouts/
 decay_locations/  # CORSIKA observation-plane source + Julia tau-injection pipeline
 notebooks/        # EDA / diagnostic notebooks
 docs/             # THEORY.md (architecture reference) and dev diary

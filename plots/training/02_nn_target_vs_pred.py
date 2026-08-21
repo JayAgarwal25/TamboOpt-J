@@ -5,8 +5,8 @@ shower-level validation split, and plots target vs prediction against a 1:1 line
 The recon runs on FNN-predicted (E, T) rather than ground truth, so its scatter
 shows end-to-end FNN -> recon error.
 
-    python plots/02_plot_nn_target_vs_pred.py
-    python plots/02_plot_nn_target_vs_pred.py --dual   # dual-species surrogate
+    python plots/training/02_nn_target_vs_pred.py
+    python plots/training/02_nn_target_vs_pred.py --dual   # dual-species surrogate
 
 In --dual mode the FNN scatter is rendered PER SPECIES — each per-species DeepSets
 model against its own species-filtered subset (split on the Step-1 species_ids
@@ -32,12 +32,19 @@ import os
 import sys
 from collections import namedtuple
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V6_DIR = os.path.dirname(_HERE)
-if _V6_DIR not in sys.path:
-    sys.path.insert(0, _V6_DIR)
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-# Font sizes, externalized (same convention as plots/opt_plotting.py's FS_*) so a
+# Font sizes, externalized (same convention as plots/lib/opt_plotting.py's FS_*) so a
 # caller can override them before rendering — e.g. 05_paper_figures.py scales
 # these up before calling in, to compensate for the large figsize LaTeX shrinks
 # back down to a fraction of \textwidth.
@@ -979,7 +986,7 @@ def main():
     args = ap.parse_args()
 
     print("=" * 72)
-    print("v6/plots/02_plot_nn_target_vs_pred.py" + ("  [dual]" if args.dual else ""))
+    print("v6/plots/training/02_nn_target_vs_pred.py" + ("  [dual]" if args.dual else ""))
     print("=" * 72)
     if args.dual:
         plot_fnn_dual()

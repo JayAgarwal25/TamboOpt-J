@@ -15,9 +15,9 @@ extent) so "match" is quantitative, not just visual.
 Run:
 
     cd TambOpt
-    python plots/plot_hamza_ml_vs_sim.py                 # 6 showers spanning zenith, 2D
-    python plots/plot_hamza_ml_vs_sim.py --mode 3d
-    python plots/plot_hamza_ml_vs_sim.py --indices 0 10 100 --mode both
+    python plots/showers/hamza_ml_vs_sim.py                 # 6 showers spanning zenith, 2D
+    python plots/showers/hamza_ml_vs_sim.py --mode 3d
+    python plots/showers/hamza_ml_vs_sim.py --indices 0 10 100 --mode both
 """
 import argparse
 import os

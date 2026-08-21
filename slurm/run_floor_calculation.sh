@@ -11,4 +11,4 @@
 
 source slurm/env.sh
 
-python -u plots/compute_aleatoric_floor.py
+python -u plots/training/aleatoric_floor.py

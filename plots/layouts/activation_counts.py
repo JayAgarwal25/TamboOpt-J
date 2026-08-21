@@ -34,15 +34,15 @@ reproduces `score_on_set` so the figure can be tied to the run in its
 provenance, not a result.
 
     cd TambOpt
-    python plots/eval_activation_counts.py                       # whole reserve
-    python plots/eval_activation_counts.py --n-events 512        # quick look
+    python plots/layouts/activation_counts.py                       # whole reserve
+    python plots/layouts/activation_counts.py --n-events 512        # quick look
 
 An archived run — pass both scheme dirs' layouts; output lands beside them:
 
     R="$(python -c 'import sys; sys.path.insert(0, "."); \
         from modules.constants import RUN_LOCATION; print(RUN_LOCATION)')"
     R="$R/run 6 update energy calc common eval"
-    python plots/eval_activation_counts.py \\
+    python plots/layouts/activation_counts.py \\
         --layout "$R/..._center/layout_best.pt" "$R/..._grid/layout_best.pt"
 """
 import argparse
@@ -51,9 +51,15 @@ import json
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))          # plots/
-_V6 = os.path.dirname(_HERE)
-for _p in (_V6, _HERE):                                     # _HERE: eval_true_utility
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -81,7 +87,7 @@ from modules.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, OPT_FOLDER, TRAINING_DATASET_FOLDER,
     HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH,
 )
-from eval_true_utility import KernelDualLabels, _snap, grid_layout, center_layout
+from true_utility import KernelDualLabels, _snap, grid_layout, center_layout
 
 # Heldout pairs eval_true_utility.py has consumed (its --n-events default, always
 # from row 0). Skipping them is what makes this script's sample untouched.

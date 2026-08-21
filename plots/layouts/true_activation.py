@@ -30,17 +30,23 @@ fractional change (opt - base)/base is scale-free and is what the verdict uses.
 All paths come from constants.py, so this scores whatever run those point at.
 
     cd TambOpt
-    python plots/eval_true_activation.py                       # grid baseline
-    python plots/eval_true_activation.py --center-layout       # center baseline
-    python plots/eval_true_activation.py --objective particles --n-events 512
+    python plots/layouts/true_activation.py                       # grid baseline
+    python plots/layouts/true_activation.py --center-layout       # center baseline
+    python plots/layouts/true_activation.py --objective particles --n-events 512
 """
 import argparse
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))          # plots/
-_V6 = os.path.dirname(_HERE)
-for _p in (_V6, _HERE):                                     # _HERE: eval_true_utility
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -58,7 +64,7 @@ from modules.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, SIGMA_SPATIAL,
     HELDOUT_SHOWER_CACHE_PATH, OPT_FOLDER,
 )
-from eval_true_utility import (
+from true_utility import (
     KernelDualLabels, load_events, _snap, grid_layout, center_layout,
 )
 

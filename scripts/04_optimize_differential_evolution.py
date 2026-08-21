@@ -65,7 +65,7 @@ from modules.constants import (
 from modules.geometry      import load_tr_mountain
 
 # Shared optimizer core (objective, alignment, model loading, constants) lives in
-# modules/optimize/objective.py; the figures live in plots/opt_plotting.py (loaded by
+# modules/optimize/objective.py; the figures live in plots/lib/opt_plotting.py (loaded by
 # path — its package dir isn't importable by name). DE keeps the _plot_ensemble /
 # _plot_density_heatmap names so replot_de_ensemble_up.py still finds them.
 from modules.optimize import (
@@ -75,7 +75,7 @@ from modules.optimize import (
 )
 from modules.constants import GEOMETRY_PATH_RESOLVED
 _plt_spec = importlib.util.spec_from_file_location(
-    "opt_plotting", os.path.join(V6_ROOT, "plots", "opt_plotting.py"))
+    "opt_plotting", os.path.join(V6_ROOT, "plots", "lib", "opt_plotting.py"))
 _plt = importlib.util.module_from_spec(_plt_spec); _plt_spec.loader.exec_module(_plt)
 _plot_ensemble        = _plt.plot_ensemble
 _plot_density_heatmap = _plt.plot_density_heatmap

@@ -16,19 +16,26 @@ without editing (and re-running) the optimizer.
 Run from the v6 folder:
 
     cd TambOpt
-    python plots/04_plot_init_layouts.py
-    python plots/04_plot_init_layouts.py --sigma 20        # preview a change
-    python plots/04_plot_init_layouts.py -o /path/out.png
+    python plots/layouts/init_stage4.py
+    python plots/layouts/init_stage4.py --sigma 20        # preview a change
+    python plots/layouts/init_stage4.py -o /path/out.png
 """
 import argparse
 import importlib.util
 import os
 import sys
 
+# `_HERE` is this file's own directory; `_V6` the repo root, found by walking up
+# to the _pathfix.py marker instead of counting parents. Counting is what broke
+# the old plots/single_species/ scripts: written for plots/*.py, they resolved
+# the "repo root" to plots/ and could not import `modules` at all.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_V6_DIR = os.path.dirname(_HERE)
-if _V6_DIR not in sys.path:
-    sys.path.insert(0, _V6_DIR)
+_V6 = _HERE
+while _V6 != os.path.dirname(_V6) and not os.path.exists(os.path.join(_V6, "_pathfix.py")):
+    _V6 = os.path.dirname(_V6)
+for _p in (_V6, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import numpy as np
 import torch
@@ -50,7 +57,7 @@ def _optimizer_config():
     """Read INIT_SCHEMES / INIT_OVERDISP_SIGMA from the optimizer itself, so this
     plot cannot drift from the values the run actually uses. Loaded by path
     because the module name starts with a digit."""
-    path = os.path.join(_V6_DIR, "scripts", "04_optimize_lbfgs_ensemble.py")
+    path = os.path.join(_V6, "scripts", "04_optimize_lbfgs_ensemble.py")
     spec = importlib.util.spec_from_file_location("_opt04", path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
