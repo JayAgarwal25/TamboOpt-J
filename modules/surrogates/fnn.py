@@ -2,7 +2,7 @@
 
 `encode_primary` and `compute_normalization` are shared by every stage.
 `FNNSurrogate` itself is superseded by `deepsets.DeepSetsSurrogate` and is kept
-only so `plots/02_plot_nn_target_vs_pred.py` can load old checkpoints.
+only so `plots/training/02_nn_target_vs_pred.py` can load old checkpoints.
 """
 
 import os

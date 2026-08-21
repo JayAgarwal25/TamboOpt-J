@@ -3,7 +3,7 @@
 Holds the objective itself, the ensemble bookkeeping (`assign`,
 `align_to_reference`), the gradient-turn diagnostic, model loading, and the
 composite weights and thresholds. Figure helpers live in
-`plots/opt_plotting.py`.
+`plots/lib/opt_plotting.py`.
 
 **`utility_of_xy` is deliberately NOT `@torch.no_grad()`-decorated** so L-BFGS
 can backprop through it; the gradient-free DE optimizers wrap their own score
@@ -235,7 +235,7 @@ def utility_of_xy(x_det: torch.Tensor,
 
     `mesh_en` + `penalty_w` > 0 subtract the differentiable off-mesh penalty,
     putting the mountain boundary inside the objective. OFF by default so existing
-    callers — notably plots/eval_true_utility.py, which depends on scoring exactly
+    callers — notably plots/layouts/true_utility.py, which depends on scoring exactly
     what the optimizer scored — get identical numbers. The returned U is the
     PENALISED objective; raw utility and penalty are both in `parts`. With
     r0 = max_gap a converged in-band layout has penalty exactly 0.
@@ -335,7 +335,7 @@ def activation_of_xy(x_det: torch.Tensor,
 
     **Surrogate-fed, so these numbers are NOT comparable to the kernel
     evaluator's** — the two disagree ~19x on total particles (see PARTICLE_SCALE).
-    `plots/eval_activation_counts.py` scoring held-out events is the honest check.
+    `plots/layouts/activation_counts.py` scoring held-out events is the honest check.
 
     Contains no reconstruction term by design, so it is expected to disagree with
     `utility_of_xy`. Returns (U, r, parts) so the ensemble machinery is a drop-in;
