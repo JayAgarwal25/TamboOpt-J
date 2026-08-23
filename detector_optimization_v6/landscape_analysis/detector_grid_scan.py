@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
+from common import load_layout
 import modules_v6  # injects v3/v4 paths
 
 from modules_v6.constants import (
@@ -95,11 +96,6 @@ def eval_U_mean(x, y):
         U, _, _ = utility_of_xy(x.to(DEVICE), y.to(DEVICE), p, fnn, recon)
         Us.append(float(U.item()))
     return float(np.mean(Us))
-
-
-def load_layout(path):
-    d = torch.load(path, map_location="cpu", weights_only=False)
-    return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
 
 
 lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(args.layout_path)

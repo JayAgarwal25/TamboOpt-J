@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-from common import Scorer, TRAINING_DATASET_FOLDER, align_to_reference
+from common import Scorer, TRAINING_DATASET_FOLDER, align_to_reference, load_layout
 
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
@@ -56,11 +56,6 @@ BATCHES = sc.batches
 
 
 eval_U = sc.U
-
-def load_layout(path):
-    d = torch.load(path, map_location="cpu", weights_only=False)
-    return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
-
 
 x_grid, y_grid, U_grid_saved = load_layout(
     _layouts.primary())

@@ -23,7 +23,7 @@ import torch
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-from common import DEVICE, Scorer, N_DETECTORS, utility_of_xy
+from common import DEVICE, load_layout, Scorer, N_DETECTORS, utility_of_xy
 
 
 # Results live beside the other run outputs, not next to the code.
@@ -46,11 +46,6 @@ fnn, recon = sc.fnn, sc.recon
 
 def fresh_batches(seed_base, n_batches):
     return [sc.draw(seed_base + b, BATCH_SIZE) for b in range(n_batches)]
-
-
-def load_layout(path):
-    d = torch.load(path, map_location="cpu", weights_only=False)
-    return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
 
 
 lbfgs_x, lbfgs_y, _ = load_layout(

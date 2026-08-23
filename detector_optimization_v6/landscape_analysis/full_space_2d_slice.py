@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-from common import Scorer, N_DETECTORS, TRAINING_DATASET_FOLDER
+from common import Scorer, N_DETECTORS, TRAINING_DATASET_FOLDER, load_layout
 
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.detector_strategies_ne import layout_uniform_random
@@ -88,11 +88,6 @@ BATCHES = sc.batches
 
 
 eval_U = sc.U
-
-def load_layout(path):
-    d = torch.load(path, map_location="cpu", weights_only=False)
-    return d["x"].float().reshape(-1), d["y"].float().reshape(-1), float(d["U"])
-
 
 lbfgs_x, lbfgs_y, lbfgs_U_saved = load_layout(args.layout_path)
 base_U_opt = eval_U(lbfgs_x, lbfgs_y)
