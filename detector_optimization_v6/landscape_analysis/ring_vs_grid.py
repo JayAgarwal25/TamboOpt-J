@@ -65,6 +65,10 @@ strategies = {
 }
 
 results = {name: [] for name in strategies}
+# Every seed is scored on the SAME N_BATCHES primary batches, so the 25 values
+# per strategy are 5 layouts x 5 shared batches, not 25 independent draws. The
+# layout is what varies between strategies, so it is the unit of replication.
+seed_means = {name: [] for name in strategies}
 mean_r_last = {}
 for name, fn in strategies.items():
     for seed in range(N_SEEDS):
@@ -76,6 +80,7 @@ for name, fn in strategies.items():
             u, mean_r = eval_U(x, y, primary)
             batch_Us.append(u)
         results[name].extend(batch_Us)
+        seed_means[name].append(float(np.mean(batch_Us)))
         mean_r_last[name] = mean_r
         print(f"  {name:15s} seed={seed}: U mean={np.mean(batch_Us):.3f}  "
               f"std={np.std(batch_Us):.3f}  mean_r={mean_r:.4f}")
@@ -87,7 +92,8 @@ print("=" * 70)
 summary = {}
 for name, vals in results.items():
     vals = np.array(vals)
-    summary[name] = dict(mean=float(vals.mean()), std=float(vals.std()), n=len(vals))
+    summary[name] = dict(mean=float(vals.mean()), std=float(vals.std()), n=len(vals),
+                         seed_means=seed_means[name])
     print(f"  {name:15s}: U = {vals.mean():.3f} +/- {vals.std():.3f}  (n={len(vals)})")
 
 out_path = os.path.join(_layouts.results_dir(), "ring_vs_grid_results.json")
@@ -96,14 +102,24 @@ with open(out_path, "w") as f:
 print(f"\nSaved to {out_path}")
 
 print()
-gap = summary["grid"]["mean"] - summary["edge_ring"]["mean"]
-print(f"Grid - Edge-ring gap: {gap:+.3f}")
-if gap > 5:
-    print("  => Grid clearly beats edge-only ring: interior coverage matters, "
-          "utility needs full-area evaluation, not just the envelope.")
-elif gap < -5:
-    print("  => Edge-only ring beats grid: utility mostly rewards boundary flux "
-          "interception; interior coverage may be wasted detectors.")
-else:
+g = np.array(seed_means["grid"])
+e = np.array(seed_means["edge_ring"])
+gap = float(g.mean() - e.mean())
+# Standard error of the difference of the two layout-level means. The old
+# version compared the gap against a hard-coded 5 utility units and called
+# anything smaller "within noise", which was not a noise calculation: the
+# layout-to-layout scatter here is well under one unit.
+se = float(np.sqrt(g.var(ddof=1) / len(g) + e.var(ddof=1) / len(e)))
+print(f"Grid - Edge-ring gap: {gap:+.3f} +/- {se:.3f} "
+      f"({100.0 * gap / g.mean():+.1f}% of grid U)")
+if abs(gap) < 2.0 * se:
     print("  => Grid and edge-ring are within noise of each other: coverage shape "
-          "doesn't strongly matter at this detector count/area size.")
+          "does not measurably matter at this detector count and area.")
+elif gap > 0:
+    print(f"  => Grid beats edge-only ring by {gap / se:.1f} standard errors: "
+          "interior coverage matters, utility needs full-area evaluation rather "
+          "than just the envelope.")
+else:
+    print(f"  => Edge-only ring beats grid by {abs(gap) / se:.1f} standard errors: "
+          "utility mostly rewards boundary flux interception, and interior "
+          "coverage may be wasted detectors.")
