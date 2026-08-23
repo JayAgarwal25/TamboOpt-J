@@ -127,8 +127,24 @@ for idx in sweep_indices:
         time_s=dt,
     )
 
+
+# Panels share ONE colour and z scale, decided after every detector is swept.
+# Auto-scaling each panel to its own range makes a 0.3-unit wobble look as
+# structured as a 2-unit one, which matters most here: this is the CONTROL that
+# the optimized scan is compared against.
+u_global_min = min(r["U_min"] for r in results.values())
+u_global_max = max(r["U_max"] for r in results.values())
+print(f"\n[shared scale] U range across panels: [{u_global_min:.3f}, {u_global_max:.3f}]")
+
+for idx_s, r in results.items():
+    idx = r["idx"]
+    orig_N, orig_E, argmax_N, argmax_E = r["orig_N"], r["orig_E"], r["argmax_N"], r["argmax_E"]
+    base_U_r = r["base_U"]
+    U_grid_2d = np.array(r["U_grid"])
+
     fig, ax = plt.subplots(figsize=(7, 6))
-    im = ax.pcolormesh(e_grid, n_grid, U_grid_2d, shading="auto", cmap="viridis")
+    im = ax.pcolormesh(e_grid, n_grid, U_grid_2d, shading="auto", cmap="viridis",
+                       vmin=u_global_min, vmax=u_global_max)
     plt.colorbar(im, ax=ax, label="U (this detector swept, other 99 fixed, RANDOM layout)")
     other_mask = np.ones(N_DETECTORS, dtype=bool)
     other_mask[idx] = False
@@ -150,10 +166,11 @@ for idx in sweep_indices:
     fig3d = plt.figure(figsize=(8, 6.5))
     ax3d = fig3d.add_subplot(projection="3d")
     ax3d.plot_surface(E_mesh, N_mesh, U_grid_2d, cmap="viridis", edgecolor="none",
-                       antialiased=True, alpha=0.95)
-    ax3d.scatter([orig_E], [orig_N], [base_U], marker="*", s=200, c="red", depthshade=False,
+                       antialiased=True, alpha=0.95, vmin=u_global_min, vmax=u_global_max)
+    ax3d.set_zlim(u_global_min, u_global_max)
+    ax3d.scatter([orig_E], [orig_N], [base_U_r], marker="*", s=200, c="red", depthshade=False,
                  label="original random position")
-    ax3d.scatter([argmax_E], [argmax_N], [float(U_grid.max())], marker="X", s=100, c="cyan",
+    ax3d.scatter([argmax_E], [argmax_N], [r["U_max"]], marker="X", s=100, c="cyan",
                  depthshade=False, label="grid argmax")
     ax3d.set_xlabel("East (m)")
     ax3d.set_ylabel("North (m)")
