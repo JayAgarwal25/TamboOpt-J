@@ -111,7 +111,7 @@ def layout_edge_ring(mountain, n_det: int = N_DETECTORS, rng=None):
 
     N_t = torch.as_tensor(N, dtype=torch.float32)
     E_t = torch.as_tensor(E, dtype=torch.float32)
-    return project_to_mountain_ne(mountain, N_t, E_t)
+    return project_to_mountain_ne(mountain, E_t, N_t)
 
 
 def layout_uniform_random(mountain, n_det: int = N_DETECTORS, rng=None):
