@@ -76,7 +76,7 @@ print(f"L-BFGS best U (saved): {lbfgs_U_saved:.4f}  (re-evaluated, {N_BATCHES} f
 
 cn = 0.5 * (mountain.n_min + mountain.n_max)
 ce = 0.5 * (mountain.east_lo + mountain.east_hi)
-dist = ((lbfgs_x - cn) ** 2 + (lbfgs_y - ce) ** 2).sqrt()
+dist = ((lbfgs_x - ce) ** 2 + (lbfgs_y - cn) ** 2).sqrt()
 order = torch.argsort(dist)  # ascending: nearest-to-center first
 # Pick N_DET_SWEEP indices evenly spaced through the sorted-by-distance order,
 # so we get a spread from near-center to far-edge, not just the two extremes.
@@ -91,7 +91,7 @@ e_grid = np.linspace(mountain.east_lo, mountain.east_hi, GRID_N).astype(np.float
 NN, EE = np.meshgrid(n_grid, e_grid, indexing="ij")
 grid_N_flat = torch.as_tensor(NN.reshape(-1), dtype=torch.float32)
 grid_E_flat = torch.as_tensor(EE.reshape(-1), dtype=torch.float32)
-grid_N_proj, grid_E_proj = project_to_mountain_ne(mountain, grid_N_flat, grid_E_flat)
+grid_E_proj, grid_N_proj = project_to_mountain_ne(mountain, grid_E_flat, grid_N_flat)
 
 results = {}
 for idx in sweep_indices:
@@ -99,16 +99,16 @@ for idx in sweep_indices:
     t0 = time.time()
     n_pts = GRID_N * GRID_N
     U_grid = np.zeros(n_pts, dtype=np.float32)
-    orig_N, orig_E = float(lbfgs_x[idx]), float(lbfgs_y[idx])
+    orig_E, orig_N = float(lbfgs_x[idx]), float(lbfgs_y[idx])
     for k in range(n_pts):
         x_mod = lbfgs_x.clone()
         y_mod = lbfgs_y.clone()
-        x_mod[idx] = grid_N_proj[k]
-        y_mod[idx] = grid_E_proj[k]
+        x_mod[idx] = grid_E_proj[k]
+        y_mod[idx] = grid_N_proj[k]
         U_grid[k] = eval_U_mean(x_mod, y_mod)
     dt = time.time() - t0
     argmax_k = int(U_grid.argmax())
-    argmax_N, argmax_E = float(grid_N_proj[argmax_k]), float(grid_E_proj[argmax_k])
+    argmax_E, argmax_N = float(grid_E_proj[argmax_k]), float(grid_N_proj[argmax_k])
     disp = ((argmax_N - orig_N) ** 2 + (argmax_E - orig_E) ** 2) ** 0.5
     rng = float(U_grid.max() - U_grid.min())
     print(f"[idx={idx}] done in {dt:.0f}s.  U range=[{U_grid.min():.3f}, {U_grid.max():.3f}]  "

@@ -120,7 +120,7 @@ print(f"[{LAYOUT_LABEL}] U (re-evaluated, {N_BATCHES} fresh batches): {base_U:.4
 # Pick two detectors: closest to bbox center, and farthest from it (edge).
 cn = 0.5 * (mountain.n_min + mountain.n_max)
 ce = 0.5 * (mountain.east_lo + mountain.east_hi)
-d2 = (lbfgs_x - cn) ** 2 + (lbfgs_y - ce) ** 2
+d2 = (lbfgs_x - ce) ** 2 + (lbfgs_y - cn) ** 2
 idx_center = int(d2.argmin())
 idx_edge = int(d2.argmax())
 print(f"idx_center={idx_center}  pos=({lbfgs_x[idx_center]:.1f},{lbfgs_y[idx_center]:.1f})  "
@@ -134,7 +134,7 @@ e_grid = np.linspace(mountain.east_lo, mountain.east_hi, GRID_N).astype(np.float
 NN, EE = np.meshgrid(n_grid, e_grid, indexing="ij")
 grid_N_flat = torch.as_tensor(NN.reshape(-1), dtype=torch.float32)
 grid_E_flat = torch.as_tensor(EE.reshape(-1), dtype=torch.float32)
-grid_N_proj, grid_E_proj = project_to_mountain_ne(mountain, grid_N_flat, grid_E_flat)
+grid_E_proj, grid_N_proj = project_to_mountain_ne(mountain, grid_E_flat, grid_N_flat)
 
 results = {}
 for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
@@ -142,18 +142,18 @@ for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
     t0 = time.time()
     n_pts = GRID_N * GRID_N
     U_grid = np.zeros(n_pts, dtype=np.float32)
-    orig_N, orig_E = float(lbfgs_x[idx]), float(lbfgs_y[idx])
+    orig_E, orig_N = float(lbfgs_x[idx]), float(lbfgs_y[idx])
     for k in range(n_pts):
         x_mod = lbfgs_x.clone()
         y_mod = lbfgs_y.clone()
-        x_mod[idx] = grid_N_proj[k]
-        y_mod[idx] = grid_E_proj[k]
+        x_mod[idx] = grid_E_proj[k]
+        y_mod[idx] = grid_N_proj[k]
         U_grid[k] = eval_U_mean(x_mod, y_mod)
         if (k + 1) % 200 == 0:
             print(f"  {k+1}/{n_pts}  ({time.time()-t0:.0f}s elapsed)")
     U_grid_2d = U_grid.reshape(GRID_N, GRID_N)
     argmax_k = int(U_grid.argmax())
-    argmax_N, argmax_E = float(grid_N_proj[argmax_k]), float(grid_E_proj[argmax_k])
+    argmax_E, argmax_N = float(grid_E_proj[argmax_k]), float(grid_N_proj[argmax_k])
     dt = time.time() - t0
     print(f"[{tag}] done in {dt:.0f}s. U range [{U_grid.min():.3f}, {U_grid.max():.3f}]  "
           f"orig U={base_U:.3f} at ({orig_N:.1f},{orig_E:.1f})  "
@@ -185,7 +185,7 @@ for tag, r in results.items():
     plt.colorbar(im, ax=ax, label="U (this detector swept, other 99 fixed)")
     other_mask = np.ones(N_DETECTORS, dtype=bool)
     other_mask[idx] = False
-    ax.scatter(lbfgs_y[other_mask], lbfgs_x[other_mask], s=8, c="white",
+    ax.scatter(lbfgs_x[other_mask], lbfgs_y[other_mask], s=8, c="white",
                edgecolor="black", linewidth=0.3, label="other 99 detectors (fixed)")
     ax.scatter([orig_E], [orig_N], marker="*", s=250, c="red",
                edgecolor="black", label=f"optimized position ({LAYOUT_LABEL})")

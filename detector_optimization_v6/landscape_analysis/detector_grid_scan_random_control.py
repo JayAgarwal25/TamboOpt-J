@@ -81,7 +81,7 @@ print(f"Random layout (seed={RANDOM_LAYOUT_SEED}) U (re-evaluated, {N_BATCHES} f
 
 cn = 0.5 * (mountain.n_min + mountain.n_max)
 ce = 0.5 * (mountain.east_lo + mountain.east_hi)
-dist = ((rand_x - cn) ** 2 + (rand_y - ce) ** 2).sqrt()
+dist = ((rand_x - ce) ** 2 + (rand_y - cn) ** 2).sqrt()
 order = torch.argsort(dist)
 pick_positions = np.linspace(0, N_DETECTORS - 1, N_DET_SWEEP).round().astype(int)
 sweep_indices = [int(order[p]) for p in pick_positions]
@@ -94,7 +94,7 @@ e_grid = np.linspace(mountain.east_lo, mountain.east_hi, GRID_N).astype(np.float
 NN, EE = np.meshgrid(n_grid, e_grid, indexing="ij")
 grid_N_flat = torch.as_tensor(NN.reshape(-1), dtype=torch.float32)
 grid_E_flat = torch.as_tensor(EE.reshape(-1), dtype=torch.float32)
-grid_N_proj, grid_E_proj = project_to_mountain_ne(mountain, grid_N_flat, grid_E_flat)
+grid_E_proj, grid_N_proj = project_to_mountain_ne(mountain, grid_E_flat, grid_N_flat)
 
 results = {}
 for idx in sweep_indices:
@@ -102,16 +102,16 @@ for idx in sweep_indices:
     t0 = time.time()
     n_pts = GRID_N * GRID_N
     U_grid = np.zeros(n_pts, dtype=np.float32)
-    orig_N, orig_E = float(rand_x[idx]), float(rand_y[idx])
+    orig_E, orig_N = float(rand_x[idx]), float(rand_y[idx])
     for k in range(n_pts):
         x_mod = rand_x.clone()
         y_mod = rand_y.clone()
-        x_mod[idx] = grid_N_proj[k]
-        y_mod[idx] = grid_E_proj[k]
+        x_mod[idx] = grid_E_proj[k]
+        y_mod[idx] = grid_N_proj[k]
         U_grid[k] = eval_U_mean(x_mod, y_mod)
     dt = time.time() - t0
     argmax_k = int(U_grid.argmax())
-    argmax_N, argmax_E = float(grid_N_proj[argmax_k]), float(grid_E_proj[argmax_k])
+    argmax_E, argmax_N = float(grid_E_proj[argmax_k]), float(grid_N_proj[argmax_k])
     disp = ((argmax_N - orig_N) ** 2 + (argmax_E - orig_E) ** 2) ** 0.5
     rng_span = float(U_grid.max() - U_grid.min())
     print(f"[idx={idx}] done in {dt:.0f}s.  U range=[{U_grid.min():.3f}, {U_grid.max():.3f}]  "
@@ -132,7 +132,7 @@ for idx in sweep_indices:
     plt.colorbar(im, ax=ax, label="U (this detector swept, other 99 fixed, RANDOM layout)")
     other_mask = np.ones(N_DETECTORS, dtype=bool)
     other_mask[idx] = False
-    ax.scatter(rand_y[other_mask], rand_x[other_mask], s=8, c="white",
+    ax.scatter(rand_x[other_mask], rand_y[other_mask], s=8, c="white",
                edgecolor="black", linewidth=0.3, label="other 99 detectors (fixed, random)")
     ax.scatter([orig_E], [orig_N], marker="*", s=250, c="red", edgecolor="black", label="original random position")
     ax.scatter([argmax_E], [argmax_N], marker="X", s=150, c="cyan", edgecolor="black", label="grid argmax")
