@@ -29,18 +29,10 @@ import matplotlib.pyplot as plt
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from common import Scorer, TRAINING_DATASET_FOLDER, align_to_reference
 
-from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
-)
-from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models, align_to_reference
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 6            # cheap experiment (few points), afford more batches for precision
@@ -50,29 +42,20 @@ print("=" * 70)
 print("Mode connectivity: grid-scheme vs. center-scheme L-BFGS optima")
 print("=" * 70)
 
-fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
+sc = Scorer(n_batches=N_BATCHES, batch_size=BATCH_SIZE, seed_base=BATCH_SEED_BASE)
+fnn, recon = sc.fnn, sc.recon
+mountain = sc.mountain
 
 primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
                          weights_only=False).float()
-n_total = primary_all.shape[0]
 
 
-def fresh_batch(seed):
-    g = torch.Generator().manual_seed(seed)
-    idx = torch.randint(0, n_total, (BATCH_SIZE,), generator=g)
-    return primary_all[idx].to(DEVICE)
+fresh_batch = sc.draw
+
+BATCHES = sc.batches
 
 
-BATCHES = [fresh_batch(BATCH_SEED_BASE + b) for b in range(N_BATCHES)]
-
-
-@torch.no_grad()
-def eval_U(x, y):
-    Us = [float(utility_of_xy(x.to(DEVICE), y.to(DEVICE), p, fnn, recon)[0].item()) for p in BATCHES]
-    return float(np.mean(Us))
-
+eval_U = sc.U
 
 def load_layout(path):
     d = torch.load(path, map_location="cpu", weights_only=False)

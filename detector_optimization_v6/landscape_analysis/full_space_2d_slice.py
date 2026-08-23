@@ -1,41 +1,24 @@
 #!/usr/bin/env python3
 """
-Random 2D slice through the FULL 200-dim layout space (all 100 detectors
-perturbed simultaneously along 2 random directions), around both the
-L-BFGS-best layout and a random layout for contrast.
+Random 2D slice through the full 200-dim layout space: all 100 detectors moved
+at once along two random directions, around both an optimized layout and a
+random one for contrast. Complements the single-detector grid scans, which vary
+only the 2 dims of one detector.
 
-This is the "Visualizing the Loss Landscape of Neural Nets" (Li et al. 2018)
-technique, simplified: their "filter normalization" step exists to correct
-for a neural-network-weight-specific pathology (ReLU scale invariance across
-filters/layers), which doesn't apply here -- our parameters are just
-detector (East, North) positions, already on one natural, homogeneous scale
-(meters). So plain random Gaussian directions are used directly, no
-normalization trick needed.
+Li et al. 2018 ("Visualizing the Loss Landscape of Neural Nets") without the
+filter-normalization step, which corrects a ReLU scale invariance that detector
+positions do not have: these are metres, already on one homogeneous scale. Each
+direction is drawn N(0,1) per detector and NOT globally L2-normalized, so
+alpha/beta read directly as typical per-detector displacement in metres.
 
-Direction convention: each direction is (dN, dE), dN/dE ~ N(0,1) per
-detector (NOT globally L2-normalized across all 200 dims), so the step size
-alpha/beta directly corresponds to "typical per-detector displacement in
-meters" along that direction, matching how sigma is used in the basin-
-hopping/infill scripts elsewhere in this project.
+The default 400m sweep pushes boundary detectors past the mesh snap tolerance
+(~160m), so part of what it measures is snapping rather than landscape: the snap
+correction ran 39-70m mean, 169m max. Re-run with --step-range 100 --out-prefix
+full_space_2d_slice_fine for a cleaner reading, matching the surrogate's own
+kernel scale. Everything else is identical, so the two are comparable.
 
-Complements the single-detector grid scans (which vary only 2 of 200 dims,
-tied to ONE detector): this varies all 200 dims at once, testing a more
-global notion of flatness.
-
-Two step ranges are worth running. The default 400m sweep pushes
-boundary-adjacent detectors past the mesh snap tolerance (~160m), so part of what
-it measures is discrete snapping rather than the landscape: mean snap correction
-came out at 39-70m with a max of 169m. Re-run with --step-range 100 --out-prefix
-full_space_2d_slice_fine for a reading below that threshold, which also matches
-the surrogate's own spatial kernel scale (SIGMA_SPATIAL). Grid resolution,
-direction-pair count and seeds are unchanged, so the two are directly comparable.
-
-Reusable across any saved layout via --layout_path/--layout_tag (defaults to
-the L-BFGS-best layout, matching the original single-layout investigation).
-Pass --layout_tag to run this on a different optimizer's layout -- outputs
-then land in other_optimizers/<tag>/ instead of this directory directly. The
-random-layout comparison panel is always included regardless of --layout_tag,
-so each optimizer's layout still gets its own contrast baseline.
+--layout_path and --layout_tag select which saved layout to analyse; a tag sends
+output to other_optimizers/<tag>/. The random-layout panel is always drawn.
 """
 import argparse
 import os, sys, json, time
@@ -48,19 +31,11 @@ import matplotlib.pyplot as plt
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from common import Scorer, N_DETECTORS, TRAINING_DATASET_FOLDER
 
-from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
-)
-from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
 from modules_v6.detector_strategies_ne import layout_uniform_random
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEFAULT_LAYOUT_PATH = _layouts.primary()
 
 ap = argparse.ArgumentParser()
@@ -99,29 +74,20 @@ print("=" * 70)
 print(f"Random full-space 2D slice (all 100 detectors perturbed at once) -- layout: {LAYOUT_LABEL}")
 print("=" * 70)
 
-fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
+sc = Scorer(n_batches=N_BATCHES, batch_size=BATCH_SIZE, seed_base=BATCH_SEED_BASE)
+fnn, recon = sc.fnn, sc.recon
+mountain = sc.mountain
 
 primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
                          weights_only=False).float()
-n_total = primary_all.shape[0]
 
 
-def fresh_batch(seed):
-    g = torch.Generator().manual_seed(seed)
-    idx = torch.randint(0, n_total, (BATCH_SIZE,), generator=g)
-    return primary_all[idx].to(DEVICE)
+fresh_batch = sc.draw
+
+BATCHES = sc.batches
 
 
-BATCHES = [fresh_batch(BATCH_SEED_BASE + b) for b in range(N_BATCHES)]
-
-
-@torch.no_grad()
-def eval_U(x, y):
-    Us = [float(utility_of_xy(x.to(DEVICE), y.to(DEVICE), p, fnn, recon)[0].item()) for p in BATCHES]
-    return float(np.mean(Us))
-
+eval_U = sc.U
 
 def load_layout(path):
     d = torch.load(path, map_location="cpu", weights_only=False)

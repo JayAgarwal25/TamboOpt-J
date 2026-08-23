@@ -1,34 +1,22 @@
 #!/usr/bin/env python3
 """
-Redundancy / submodularity-style analysis: how much does each individual
-detector actually matter, and how much redundancy is there among the 100?
+How much does each detector actually matter, and how much redundancy is there
+among the 100?
 
-Part 1: leave-one-out sweep. For each of the 100 detectors, remove it (99
-remain) and measure the utility dip vs. the full 100-detector layout. This
-works because the FNN/recon (DeepSets) are genuinely permutation- AND
-count-invariant -- the pooling (mean/max) doesn't care how many tokens go
-in, so evaluating with 99 detectors is a perfectly valid forward pass, not
-an approximation.
+Part 1, leave-one-out: remove each detector in turn and measure the utility dip
+against the full layout. Valid rather than approximate, because the DeepSets
+pooling is permutation- and count-invariant, so 99 detectors is a genuine
+forward pass.
 
-Part 2: three greedy/random removal SEQUENCES, tracking U as detectors are
-progressively stripped away from 100 down to a floor of 20:
-  - "highest_dip_first": at each step, remove whichever remaining detector
-    currently causes the LARGEST utility dip (the most critical/irreplacable
-    one), re-evaluated fresh at every step (not just sorted once up front).
-  - "lowest_dip_first": remove whichever remaining detector causes the
-    SMALLEST dip (the most redundant one) at each step.
-  - "random": remove in one fixed random shuffle order.
+Part 2, three removal sequences from 100 down to a floor of 20. "highest_dip
+first" strips the most critical remaining detector at each step, re-evaluated
+fresh rather than sorted once; "lowest_dip_first" strips the most redundant;
+"random" uses one fixed shuffle. If the plateau really comes from redundancy,
+lowest-first should strip many detectors before U moves while highest-first
+craters, which tests WHY the landscape is flat rather than restating that it is.
 
-If detectors are highly redundant (consistent with the "broad flat plateau"
-finding), "lowest_dip_first" should be able to strip away many detectors
-before U drops much, while "highest_dip_first" should crater quickly.
-Comparing the three curves is a direct, mechanistic test of *why* the
-landscape looks flat (redundancy) rather than just re-confirming that it is.
-
-Reusable across any saved layout via --layout_path/--layout_tag (defaults to
-the L-BFGS-best layout, matching the original single-layout investigation).
-Pass --layout_tag to run this on a different optimizer's layout -- outputs
-then land in other_optimizers/<tag>/ instead of this directory directly.
+--layout_path and --layout_tag select which saved layout to analyse; a tag sends
+output to other_optimizers/<tag>/.
 """
 import argparse
 import os, sys, json, time
@@ -38,12 +26,9 @@ import torch
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from common import Scorer, N_DETECTORS, TRAINING_DATASET_FOLDER
 
-from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
-from modules_v6.opt_core import utility_of_xy, load_models
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEFAULT_LAYOUT_PATH = _layouts.primary()
 
 ap = argparse.ArgumentParser()
@@ -70,29 +55,19 @@ print("=" * 70)
 print(f"Detector removal / redundancy analysis -- layout: {LAYOUT_LABEL}")
 print("=" * 70)
 
-fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
+sc = Scorer(n_batches=N_BATCHES, batch_size=BATCH_SIZE, seed_base=BATCH_SEED_BASE)
+fnn, recon = sc.fnn, sc.recon
 
 primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
                          weights_only=False).float()
-n_total = primary_all.shape[0]
 
 
-def fresh_batch(seed):
-    g = torch.Generator().manual_seed(seed)
-    idx = torch.randint(0, n_total, (BATCH_SIZE,), generator=g)
-    return primary_all[idx].to(DEVICE)
+fresh_batch = sc.draw
+
+BATCHES = sc.batches
 
 
-BATCHES = [fresh_batch(BATCH_SEED_BASE + b) for b in range(N_BATCHES)]
-
-
-@torch.no_grad()
-def eval_U(x, y):
-    """x, y are 1-D tensors of ANY length (not necessarily 100) -- DeepSets
-    pooling is count-invariant, this is a genuine forward pass, not a hack."""
-    Us = [float(utility_of_xy(x.to(DEVICE), y.to(DEVICE), p, fnn, recon)[0].item()) for p in BATCHES]
-    return float(np.mean(Us))
-
+eval_U = sc.U
 
 def load_layout(path):
     d = torch.load(path, map_location="cpu", weights_only=False)

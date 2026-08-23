@@ -1,28 +1,18 @@
 #!/usr/bin/env python3
 """
-Single-detector utility grid scan 
+Single-detector utility grid scan.
 
-Take a near-optimal layout (L-BFGS-best, the one we trust over GES per
-standing guidance -- the Hessian probe showed GES-best sits on a numerical
-singularity, not a genuine optimum), move ONE detector's position over a grid
-spanning the mountain, hold the other 99 fixed, and re-evaluate U at each
-grid point with the frozen FNN+recon surrogate. No optimization -- just
-repeated forward evaluation. Unlike the Hessian probe (which only sees the
-infinitesimal neighborhood of the optimum), this sees the full, possibly
-non-quadratic, non-local structure of U as a function of one detector's
-position.
+Take a near-optimal layout, move ONE detector over a grid spanning the mountain,
+hold the other 99 fixed, and re-evaluate U at each grid point with the frozen
+surrogate. No optimization, just repeated forward evaluation. A curvature probe
+sees only the infinitesimal neighbourhood of the optimum; this sees the full,
+possibly non-quadratic and non-local, structure of U in one detector's position.
 
-Two detectors are swept: the one closest to the mountain bbox center, and the
-one farthest from it (closest to the boundary), to compare interior vs.
-edge sensitivity.
+Two detectors are swept, the one closest to the mountain bbox centre and the one
+farthest from it, to compare interior against edge sensitivity.
 
-Reusable across any saved layout via --layout_path/--layout_tag (defaults to
-the L-BFGS-best layout, matching the original single-layout investigation).
-Pass --layout_tag to run this on a different optimizer's layout (EvoGrad, DE,
-GES, v5's (mu+lambda)-ES, etc.) -- outputs then land in
-other_optimizers/<tag>/ instead of this directory directly, keeping the
-per-optimizer extension study cleanly separated from the original L-BFGS
-results.
+--layout_path and --layout_tag select which saved layout to analyse; a tag sends
+output to other_optimizers/<tag>/ so a per-optimizer study stays separate.
 """
 import argparse
 import sys, os, json, time

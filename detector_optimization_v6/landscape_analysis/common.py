@@ -16,13 +16,15 @@ matplotlib.use("Agg")
 import numpy as np
 import torch
 
-from modules_v6.constants import (
+from modules_v6.constants import (  # noqa: F401  (re-exported for the scripts)
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
+    EAST_ENTRY, LAYER_EAST_DX, N_PLANES, N_DETECTORS,
     TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
 )
 from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
+from modules_v6.opt_core import (  # noqa: F401  (re-exported for the scripts)
+    utility_of_xy, load_models, align_to_reference, RECONSTRUCT_THRESHOLD,
+)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -78,7 +80,7 @@ class Scorer:
         self.device = device
         self.fnn, self.recon = load_models(device, fnn_folder=FNN_FOLDER,
                                            recon_dir=RECON_FOLDER + "_deepsets")
-        self.mountain = load_mountain()
+        self._mountain = None
         self.primary_all = torch.load(
             os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
             weights_only=False).float()
@@ -88,6 +90,14 @@ class Scorer:
         if verbose:
             print(f"[scorer] {n_batches} batches of {batch_size} "
                   f"from {self.n_total} primaries on {device}")
+
+    @property
+    def mountain(self):
+        """The mesh, read on first use. Several scripts never touch it, and the
+        h5 read is pure cost for those."""
+        if self._mountain is None:
+            self._mountain = load_mountain()
+        return self._mountain
 
     def draw(self, seed, size=BATCH_SIZE):
         """One reproducible primary batch."""

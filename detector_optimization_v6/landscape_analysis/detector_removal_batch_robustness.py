@@ -23,12 +23,9 @@ import torch
 _V6 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (layout paths live in one place)
-import modules_v6  # noqa: F401
+from common import DEVICE, Scorer, N_DETECTORS, utility_of_xy
 
-from modules_v6.constants import N_DETECTORS, TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER
-from modules_v6.opt_core import utility_of_xy, load_models
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Results live beside the other run outputs, not next to the code.
 HERE = _layouts.results_dir()
 BATCH_SIZE = 512
@@ -41,20 +38,14 @@ print("=" * 70)
 print("Detector removal: batch-resampling robustness check")
 print("=" * 70)
 
-fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-
-primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
-                         weights_only=False).float()
-n_total = primary_all.shape[0]
+# The whole point of this script is to re-draw batches per seed base, so no
+# fixed set is held: ask the scorer for none and use its draw() directly.
+sc = Scorer(n_batches=0, batch_size=BATCH_SIZE)
+fnn, recon = sc.fnn, sc.recon
 
 
 def fresh_batches(seed_base, n_batches):
-    out = []
-    for b in range(n_batches):
-        g = torch.Generator().manual_seed(seed_base + b)
-        idx = torch.randint(0, n_total, (BATCH_SIZE,), generator=g)
-        out.append(primary_all[idx].to(DEVICE))
-    return out
+    return [sc.draw(seed_base + b, BATCH_SIZE) for b in range(n_batches)]
 
 
 def load_layout(path):
