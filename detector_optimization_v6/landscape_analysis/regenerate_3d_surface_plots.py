@@ -3,7 +3,7 @@
 Regenerates 3D surface plots (and their heatmap companions) for results that
 predate two additions to the source scripts:
   1. 3D `plot_surface` companions (detector_grid_scan.py, full_space_2d_slice.py,
-     full_space_2d_slice_fine.py all produce them automatically now).
+     full_space_2d_slice.py all produce them automatically now).
   2. A SHARED color/z scale across every panel that's meant to be compared
      side by side, instead of each panel auto-scaling to its own range --
      otherwise a panel with a genuinely tiny U range (e.g. one detector moved,

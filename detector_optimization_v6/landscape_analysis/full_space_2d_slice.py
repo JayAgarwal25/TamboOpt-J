@@ -22,6 +22,14 @@ Complements the single-detector grid scans (which vary only 2 of 200 dims,
 tied to ONE detector): this varies all 200 dims at once, testing a more
 global notion of flatness.
 
+Two step ranges are worth running. The default 400m sweep pushes
+boundary-adjacent detectors past the mesh snap tolerance (~160m), so part of what
+it measures is discrete snapping rather than the landscape: mean snap correction
+came out at 39-70m with a max of 169m. Re-run with --step-range 100 --out-prefix
+full_space_2d_slice_fine for a reading below that threshold, which also matches
+the surrogate's own spatial kernel scale (SIGMA_SPATIAL). Grid resolution,
+direction-pair count and seeds are unchanged, so the two are directly comparable.
+
 Reusable across any saved layout via --layout_path/--layout_tag (defaults to
 the L-BFGS-best layout, matching the original single-layout investigation).
 Pass --layout_tag to run this on a different optimizer's layout -- outputs
@@ -58,6 +66,16 @@ DEFAULT_LAYOUT_PATH = _layouts.primary()
 ap = argparse.ArgumentParser()
 ap.add_argument("--layout_path", type=str, default=DEFAULT_LAYOUT_PATH,
                 help="Path to a layout_best.pt to analyze (default: L-BFGS-best).")
+ap.add_argument("--step-range", dest="step_range", type=float, default=400.0,
+                help="alpha/beta sweep half-range in metres. 400 is the original "
+                     "run. Use 100 to stay below the mesh snap tolerance (~160m), "
+                     "which the 400m run exceeded on boundary-adjacent detectors "
+                     "(mean snap correction 39-70m, max 169m). Everything else is "
+                     "identical, so the two are directly comparable.")
+ap.add_argument("--out-prefix", dest="out_prefix", type=str,
+                default="full_space_2d_slice",
+                help="Filename stem for the results. Give the 100m run its own "
+                     "stem so it does not overwrite the 400m one.")
 ap.add_argument("--layout_tag", type=str, default=None,
                 help="Label for this layout. If given, outputs land in "
                      "other_optimizers/<tag>/; if omitted, outputs use the original "
@@ -73,7 +91,7 @@ BATCH_SEED_BASE = 1000
 BATCH_SIZE = 512
 N_BATCHES = 4
 GRID_N = 21
-STEP_RANGE = 400.0   # alpha, beta range: [-STEP_RANGE, +STEP_RANGE] meters
+STEP_RANGE = args.step_range   # sweep is [-STEP_RANGE, +STEP_RANGE] metres
 N_DIR_PAIRS = 2
 RANDOM_LAYOUT_SEED = 7
 
@@ -191,7 +209,7 @@ for tag, r in results.items():
     ax.set_title(f"Full-space random 2D slice ({LAYOUT_LABEL}): {tag}")
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    out_png = os.path.join(OUT_DIR, f"full_space_2d_slice_{tag}.png")
+    out_png = os.path.join(OUT_DIR, f"{args.out_prefix}_{tag}.png")
     fig.savefig(out_png, dpi=150)
     plt.close(fig)
     print(f"[plot] wrote {out_png}")
@@ -210,12 +228,12 @@ for tag, r in results.items():
     ax3d.set_title(f"Full-space random 2D slice (3D, {LAYOUT_LABEL}): {tag}")
     ax3d.view_init(elev=25, azim=-60)
     fig3d.tight_layout()
-    out_png_3d = os.path.join(OUT_DIR, f"full_space_2d_slice_{tag}_3d.png")
+    out_png_3d = os.path.join(OUT_DIR, f"{args.out_prefix}_{tag}_3d.png")
     fig3d.savefig(out_png_3d, dpi=150)
     plt.close(fig3d)
     print(f"[plot] wrote {out_png_3d}")
 
-out_json = os.path.join(OUT_DIR, "full_space_2d_slice_results.json")
+out_json = os.path.join(OUT_DIR, f"{args.out_prefix}_results.json")
 with open(out_json, "w") as f:
     json.dump(results, f, indent=2)
 print(f"\nSaved to {out_json}")
