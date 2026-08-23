@@ -183,11 +183,11 @@ for tag, path in COMPARISON_LAYOUTS.items():
     U_path = np.zeros(N_STEPS, dtype=np.float64)
     disp_path = np.zeros(N_STEPS, dtype=np.float64)
     for k, t in enumerate(ts):
-        N_t = (1 - t) * ref_x + t * cmp_x_aligned
-        E_t = (1 - t) * ref_y + t * cmp_y_aligned
-        N_proj, E_proj = project_to_mountain_ne(mountain, N_t, E_t)
-        U_path[k] = eval_U(N_proj, E_proj)
-        disp_path[k] = float(((N_proj - N_t) ** 2 + (E_proj - E_t) ** 2).sqrt().mean())
+        e_t = (1 - t) * ref_x + t * cmp_x_aligned
+        n_t = (1 - t) * ref_y + t * cmp_y_aligned
+        e_proj, n_proj = project_to_mountain_ne(mountain, e_t, n_t)
+        U_path[k] = eval_U(e_proj, n_proj)
+        disp_path[k] = float(((e_proj - e_t) ** 2 + (n_proj - n_t) ** 2).sqrt().mean())
     dt = time.time() - t0
     print(f"[{tag}] done in {dt:.0f}s")
 

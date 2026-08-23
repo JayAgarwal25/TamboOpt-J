@@ -130,10 +130,10 @@ for layout_tag, (base_x, base_y, base_U) in (
     ("random", (rand_x, rand_y, base_U_rand)),
 ):
     for pair_idx in range(N_DIR_PAIRS):
-        dN1 = torch.randn(N_DETECTORS)
-        dE1 = torch.randn(N_DETECTORS)
-        dN2 = torch.randn(N_DETECTORS)
-        dE2 = torch.randn(N_DETECTORS)
+        de1 = torch.randn(N_DETECTORS)
+        dn1 = torch.randn(N_DETECTORS)
+        de2 = torch.randn(N_DETECTORS)
+        dn2 = torch.randn(N_DETECTORS)
 
         tag = f"{layout_tag}_pair{pair_idx}"
         print(f"\n[{tag}] sweeping {GRID_N}x{GRID_N} grid, step range +/-{STEP_RANGE:.0f}m ...")
@@ -146,11 +146,11 @@ for layout_tag, (base_x, base_y, base_U) in (
         disp_grid = np.zeros((GRID_N, GRID_N), dtype=np.float32)
         for i, alpha in enumerate(alphas):
             for j, beta in enumerate(betas):
-                N_new = base_x + alpha * dN1 + beta * dN2
-                E_new = base_y + alpha * dE1 + beta * dE2
-                N_proj, E_proj = project_to_mountain_ne(mountain, N_new, E_new)
-                disp_grid[i, j] = float(((N_proj - N_new) ** 2 + (E_proj - E_new) ** 2).sqrt().mean())
-                U_grid[i, j] = eval_U(N_proj, E_proj)
+                e_new = base_x + alpha * de1 + beta * de2
+                n_new = base_y + alpha * dn1 + beta * dn2
+                e_proj, n_proj = project_to_mountain_ne(mountain, e_new, n_new)
+                disp_grid[i, j] = float(((e_proj - e_new) ** 2 + (n_proj - n_new) ** 2).sqrt().mean())
+                U_grid[i, j] = eval_U(e_proj, n_proj)
             if (i + 1) % 5 == 0:
                 print(f"  row {i+1}/{GRID_N}  ({time.time()-t0:.0f}s elapsed)")
         dt = time.time() - t0

@@ -116,11 +116,11 @@ ts = np.linspace(0.0, 1.0, N_STEPS)
 U_path = np.zeros(N_STEPS, dtype=np.float64)
 disp_path = np.zeros(N_STEPS, dtype=np.float64)
 for k, t in enumerate(ts):
-    N_t = (1 - t) * x_grid + t * x_center_aligned
-    E_t = (1 - t) * y_grid + t * y_center_aligned
-    N_proj, E_proj = project_to_mountain_ne(mountain, N_t, E_t)
-    U_path[k] = eval_U(N_proj, E_proj)
-    disp_path[k] = float(((N_proj - N_t) ** 2 + (E_proj - E_t) ** 2).sqrt().mean())
+    e_t = (1 - t) * x_grid + t * x_center_aligned
+    n_t = (1 - t) * y_grid + t * y_center_aligned
+    e_proj, n_proj = project_to_mountain_ne(mountain, e_t, n_t)
+    U_path[k] = eval_U(e_proj, n_proj)
+    disp_path[k] = float(((e_proj - e_t) ** 2 + (n_proj - n_t) ** 2).sqrt().mean())
     if (k + 1) % 10 == 0:
         print(f"  {k+1}/{N_STEPS}  t={t:.3f}  U={U_path[k]:.3f}  ({time.time()-t0:.0f}s elapsed)")
 
