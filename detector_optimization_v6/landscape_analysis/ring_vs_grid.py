@@ -16,20 +16,12 @@ sys.path.insert(0, _V6)
 import layouts as _layouts  # noqa: E402  (input/output locations)
 import modules_v6  # injects v3/v4 paths
 
-from modules_v6.constants import (
-    N_DETECTORS, GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
-    TRAINING_DATASET_FOLDER, FNN_FOLDER, RECON_FOLDER,
-)
-from modules_v4.tr_geometry import load_tr_mountain
-from modules_v6.opt_core import utility_of_xy, load_models
+from common import Scorer
 from modules_v6.detector_strategies_ne import (
     layout_grid, layout_uniform_random, layout_edge_ring,
 )
 
-DEVICE = torch.device("cpu")
 SEED = 42
-BATCH_SIZE = 512
 N_SEEDS = 5     # independent layout instantiations per strategy (jitter/phase differs)
 N_BATCHES = 5   # independent fresh primary batches per layout (avoid batch-overfitting bias)
 
@@ -37,25 +29,12 @@ print("=" * 70)
 print("Q3 follow-up: edge-ring vs. uniform grid coverage")
 print("=" * 70)
 
-fnn, recon = load_models(DEVICE, fnn_folder=FNN_FOLDER, recon_dir=RECON_FOLDER + "_deepsets")
-mountain = load_tr_mountain(GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
-    east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
-
-primary_all = torch.load(os.path.join(TRAINING_DATASET_FOLDER, "primary.pt"),
-                         weights_only=False).float()
-n_total = primary_all.shape[0]
-
-
-def fresh_batch(seed):
-    g = torch.Generator().manual_seed(seed)
-    idx = torch.randint(0, n_total, (BATCH_SIZE,), generator=g)
-    return primary_all[idx].to(DEVICE)
-
-
-@torch.no_grad()
-def eval_U(x, y, primary):
-    U, r, _ = utility_of_xy(x.to(DEVICE), y.to(DEVICE), primary, fnn, recon)
-    return float(U.item()), float(r.mean().item())
+# Batches are drawn per (layout seed) below rather than held fixed, so ask the
+# scorer for none up front and use its draw() directly.
+sc = Scorer(n_batches=0, device=torch.device("cpu"))
+mountain = sc.mountain
+fresh_batch = sc.draw
+eval_U = sc.U_on
 
 
 strategies = {
