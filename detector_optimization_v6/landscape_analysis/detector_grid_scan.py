@@ -109,9 +109,9 @@ ce = 0.5 * (mountain.east_lo + mountain.east_hi)
 d2 = (lbfgs_x - ce) ** 2 + (lbfgs_y - cn) ** 2
 idx_center = int(d2.argmin())
 idx_edge = int(d2.argmax())
-print(f"idx_center={idx_center}  pos=({lbfgs_x[idx_center]:.1f},{lbfgs_y[idx_center]:.1f})  "
+print(f"idx_center={idx_center}  pos=E{lbfgs_x[idx_center]:.1f} N{lbfgs_y[idx_center]:.1f}  "
       f"dist_to_bbox_center={d2[idx_center]**0.5:.1f}m")
-print(f"idx_edge  ={idx_edge}    pos=({lbfgs_x[idx_edge]:.1f},{lbfgs_y[idx_edge]:.1f})  "
+print(f"idx_edge  ={idx_edge}    pos=E{lbfgs_x[idx_edge]:.1f} N{lbfgs_y[idx_edge]:.1f}  "
       f"dist_to_bbox_center={d2[idx_edge]**0.5:.1f}m")
 
 # Sweep grid over the full mountain bbox, projected onto the surface once (vectorized).
@@ -142,8 +142,8 @@ for tag, idx in [("center", idx_center), ("edge", idx_edge)]:
     argmax_E, argmax_N = float(grid_E_proj[argmax_k]), float(grid_N_proj[argmax_k])
     dt = time.time() - t0
     print(f"[{tag}] done in {dt:.0f}s. U range [{U_grid.min():.3f}, {U_grid.max():.3f}]  "
-          f"orig U={base_U:.3f} at ({orig_N:.1f},{orig_E:.1f})  "
-          f"argmax U={U_grid.max():.3f} at ({argmax_N:.1f},{argmax_E:.1f})")
+          f"orig U={base_U:.3f} at E={orig_E:.1f} N={orig_N:.1f}  "
+          f"argmax U={U_grid.max():.3f} at E={argmax_E:.1f} N={argmax_N:.1f}")
 
     results[tag] = dict(
         idx=idx, orig_N=orig_N, orig_E=orig_E, base_U=base_U,
