@@ -122,10 +122,18 @@ HELDOUT_SHOWER_CACHE_PATH = os.path.splitext(DUAL_SHOWER_CACHE_PATH)[0] + "_held
 HELDOUT_SPECIES_IDS_PATH  = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_species.pt"
 HELDOUT_POSITIONS_PATH    = os.path.splitext(HELDOUT_SHOWER_CACHE_PATH)[0] + "_positions.pt"
 
+# A shower point counts as DETECTED at a detector when its deposit there,
+# energy * kernel acceptance, clears this. It defines the T label: T is the time
+# of the earliest detected point (see tr_plane_kernel), so the threshold sets
+# where the leading edge is read, exactly like a trigger discriminator. Swept
+# over 1e-1..1e-6 upstream: the TIME barely moves, so the edge is robust and this
+# only sets how many detectors report at all.
+#
+# E > 0 is a WEAKER condition than T > 0 and always will be: E sums many
+# sub-threshold deposits, so a detector can carry energy with no single detected
+# point and therefore T == 0. Do not treat T == 0 as "E == 0".
+HIT_DEPOSIT_MIN = 1e-3
+
 # 02 log-compresses T targets as log1p(T*T_LOG_SCALE); dual_surrogate.py must
-# invert the same transform, so the scale lives here. The normalized
-# kernel-weighted mean arrival times (GetCounts_planeaware, time_normalized=True)
-# are ~1e-6..1e-4 s, so log1p(T*1e6) spans roughly 0.7..4.6. The old 1e8 was
-# calibrated to the legacy unnormalized T scale (kernel-weighted sum over the
-# padded point count), which ran orders of magnitude smaller.
-T_LOG_SCALE = 1.0e6
+# invert the same transform, so the scale lives here.
+T_LOG_SCALE = 1.0e8

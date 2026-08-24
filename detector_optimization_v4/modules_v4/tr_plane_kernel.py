@@ -26,13 +26,11 @@ Post-processing (SmearN, TimeAverage_vectorized) is identical to v3 — the
 callables are imported from v3's modules.detector_response and passed in.
 
 Return convention: local_intensity is the raw kernel-weighted energy sum
-(matches v3's GetCounts_differentiable, no post-processing). arrival_time is
-the kernel-weighted MEAN arrival time sum(t*K)/sum(K) per THEORY.md, i.e. it
-is normalized by the kernel weight actually landing on each detector, not by
-the padded point count; the two only agree when every padded row happens to
-carry zero kernel weight AND the live kernel weight sums to the point count,
-which is not the general case. The legacy (pre-fix) unnormalized form is kept
-available via time_normalized=False for reproducing historical numbers.
+(matches v3's GetCounts_differentiable, no post-processing). arrival_time is a
+LEADING EDGE: the time of the earliest point whose deposit at that detector
+clears `hit_deposit_min`, which is what a photodetector actually reports. It
+also makes the multi-species combination a `min`, which is associative and so
+independent of how many species the corpus is split into.
 """
 
 import torch
@@ -47,7 +45,7 @@ def GetCounts_planeaware(
     fluxB_e:  torch.Tensor,
     TimeAverage_vectorized_fn,
     sigma:   float = 200.0,
-    time_normalized: bool = True,
+    hit_deposit_min: float = None,
 ) -> tuple:
     """Plane-aware differentiable count extraction.
 
@@ -66,15 +64,14 @@ def GetCounts_planeaware(
         fluxB_e               : accepted for interface compatibility, not called.
         TimeAverage_vectorized_fn : accepted for interface compatibility, not called.
         sigma    : Gaussian spatial kernel width [m] (default 200 m, same as v3).
-        time_normalized : if True (default), arrival_time is the kernel-weighted
-                   MEAN arrival time sum(t*K)/sum(K), per THEORY.md. If False,
-                   reproduces the legacy form sum(t*K)/P (P = padded point count,
-                   a constant that does not track how much kernel weight actually
-                   lands on the detector) for reproducing historical numbers.
+        hit_deposit_min : a point is DETECTED at a detector when its deposit
+                   there (energy * kernel acceptance) exceeds this. Defaults to
+                   constants.HIT_DEPOSIT_MIN.
 
     Returns:
-        (local_intensity, arrival_time) : each (B, n_det), differentiable in
-        x_det, y_det, z_cont. local_intensity is the raw kernel-weighted energy
+        (local_intensity, arrival_time) : each (B, n_det). local_intensity is
+        differentiable in x_det, y_det, z_cont; arrival_time is a min over
+        detected points and is not. local_intensity is the raw kernel-weighted energy
         sum, matching v3's GetCounts_differentiable convention. Padding rows
         (energy=0) carry zero weight in local_intensity by construction and
         additionally carry zero kernel weight through the plane term whenever
@@ -104,15 +101,23 @@ def GetCounts_planeaware(
     energy_kernel = point_e.unsqueeze(2) * kernel                 # (B, P, n_det)
 
     local_intensity = energy_kernel.sum(dim=1)                    # (B, n_det)
-    if time_normalized:
-        # Kernel-weighted mean arrival time, per THEORY.md. Detectors with zero
-        # total kernel weight (nothing near them) get T=0 rather than 0/0.
-        arrival_time = (point_t.unsqueeze(2) * kernel).sum(dim=1) / kernel.sum(dim=1).clamp(min=1e-12)
-    else:
-        # Legacy unnormalized form: kernel-weighted sum divided by the padded
-        # point count P, not by the kernel weight actually landing on the
-        # detector. Kept for reproducing historical numbers.
-        arrival_time = (point_t.unsqueeze(2) * kernel).mean(dim=1)
+
+    # Leading edge: the earliest point whose deposit clears the threshold.
+    # Padding rows carry energy 0 (showerdata zero-fills), so they never clear it
+    # and drop out on their own, with no separate mask and no dependence on the
+    # corpus's padded width. T is a selection, so it carries no gradient; E still
+    # does, and layouts get gradients through the surrogate trained on these
+    # labels rather than through the kernel.
+    if hit_deposit_min is None:
+        from modules_v6.constants import HIT_DEPOSIT_MIN
+        hit_deposit_min = HIT_DEPOSIT_MIN
+    detected     = energy_kernel > hit_deposit_min                 # (B, P, n_det)
+    t_masked     = torch.where(detected, point_t.unsqueeze(2),
+                               torch.full_like(energy_kernel, float("inf")))
+    arrival_time = t_masked.amin(dim=1)                            # (B, n_det)
+    # No detected point -> 0, the same "no signal" sentinel the E channel uses.
+    arrival_time = torch.where(torch.isinf(arrival_time),
+                               torch.zeros_like(arrival_time), arrival_time)
 
     # Return (local_intensity, arrival_time), matching v3's GetCounts_differentiable
     # behaviour.  SmearN_fn / TimeAverage_vectorized_fn are accepted for

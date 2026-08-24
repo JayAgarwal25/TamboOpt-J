@@ -44,24 +44,43 @@ ELECTRON_CKPT = "fnn_electron.pt"
 MUON_CKPT     = "fnn_muon.pt"
 
 
-def combine_species_outputs(pred_e: torch.Tensor,
-                            pred_mu: torch.Tensor) -> torch.Tensor:
+def combine_species_outputs(*preds: torch.Tensor) -> torch.Tensor:
     """Physically combine per-species (B, n_det, 2) predictions into one event.
 
-    Differentiable everywhere; negative model outputs are clamped to zero
-    counts / zero time before combining (a detector with no predicted signal
-    contributes nothing, matching the kernel's behavior on empty clouds).
+    Deposits are extensive so they add; T is a LEADING EDGE, so the event's
+    arrival is whichever species got there first. Both generalise to any number
+    of components:
+
+        n_tot = sum_s n_s          t_tot = min_s t_s   (over species that hit)
+
+    The min is what makes this species-count independent: it is associative and
+    idempotent, so splitting a shower into more components cannot move the
+    combined arrival. The count-weighted mean it replaced could.
+
+    A species with no predicted signal at a detector (encoded T <= 0) is
+    EXCLUDED from the min rather than contributing t=0; it never arrived, and
+    letting its sentinel win would report an arrival the shower never produced.
+    Detectors no species hits keep the 0 sentinel.
+
+    `log1p(t * T_LOG_SCALE)` is strictly increasing, so the min commutes with it
+    and T needs no decode/re-encode round trip. Only E does.
+
+    Variadic; for two inputs the E sum still accumulates in the given order, so
+    `(e, mu)` is bit-identical to the old two-argument form.
     """
-    n_e  = torch.expm1(pred_e[..., 0]).clamp(min=0.0)        # counts, electron
-    n_mu = torch.expm1(pred_mu[..., 0]).clamp(min=0.0)       # counts, muon
-    t_e  = torch.expm1(pred_e[..., 1]).clamp(min=0.0) / T_LOG_SCALE
-    t_mu = torch.expm1(pred_mu[..., 1]).clamp(min=0.0) / T_LOG_SCALE
-
-    n_tot = n_e + n_mu
-    t_tot = (n_e * t_e + n_mu * t_mu) / n_tot.clamp(min=1e-12)
-
+    if not preds:
+        raise ValueError("combine_species_outputs needs at least one prediction")
+    n_tot = None
+    t_enc = None                        # stays log1p(t * T_LOG_SCALE)
+    for pred in preds:
+        n_s = torch.expm1(pred[..., 0]).clamp(min=0.0)          # deposits
+        e_s = pred[..., 1].clamp(min=0.0)                       # encoded T
+        n_tot = n_s if n_tot is None else n_tot + n_s
+        # Exclude non-hits from the min by sending them to +inf.
+        cand = torch.where(e_s > 0, e_s, torch.full_like(e_s, float("inf")))
+        t_enc = cand if t_enc is None else torch.minimum(t_enc, cand)
     E_out = torch.log1p(n_tot)
-    T_out = torch.log1p(t_tot * T_LOG_SCALE)
+    T_out = torch.where(torch.isinf(t_enc), torch.zeros_like(t_enc), t_enc)
     return torch.stack([E_out, T_out], dim=-1)
 
 
