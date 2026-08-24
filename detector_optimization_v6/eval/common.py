@@ -19,7 +19,8 @@ import numpy as np
 import torch
 
 from modules_v6.constants import HELDOUT_SHOWER_CACHE_PATH, HELDOUT_POSITIONS_PATH
-from modules_v6.fnn_surrogate_ne import encode_primary, _load_positions_sidecar
+from modules_v6.fnn_surrogate import encode_primary
+from modules_v6.fnn_surrogate_ne import _load_positions_sidecar
 
 # Where the scoring module sits, newest layout first. Both are real: the plots
 # tree was regrouped by subject, and older checkouts still have the flat name.

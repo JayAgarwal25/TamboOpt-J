@@ -8,7 +8,7 @@ fit a plane wavefront to the per-detector arrival times and read off its normal.
 
 Per event, per fired detector, the kernel gives (E = energy-weighted count,
 T = kernel-weighted MEAN arrival time [s]). This script assumes that mean-time
-normalization holds (a parallel change is landing it in modules_v4/tr_plane_kernel.py)
+normalization holds (a parallel change is landing it in the kernel module)
 -- a kernel that instead returns a summed or otherwise unnormalized time will silently
 wreck the linear model below, since the fit treats T as a physical arrival time, not
 an accumulator.
