@@ -38,10 +38,9 @@ def fit_plane_wave(positions, times, weights, min_detectors=4, ref_dir=None):
     (1, East, North, Up), scaled by sqrt(weight) so brighter detectors dominate.
     The direction is beta[1:4] renormalized; the common 1/c cancels.
 
-    `ref_dir` resolves the sign. The model has no ambiguity in principle, but
-    which sign of d the corpus's stored directions use is a thing to check
-    against data rather than assume, so a caller can pin every event to one
-    convention without touching that event's own truth.
+    `ref_dir` resolves the sign: the model is unambiguous in principle, but which
+    sign the corpus's stored directions use is worth checking against data rather
+    than assuming, so a caller can pin every event to one convention.
 
     Args:
         positions     : (n, 3) detector (East, North, Up) [m].
