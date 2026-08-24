@@ -80,6 +80,7 @@ if _HERE not in sys.path:
 import numpy as np
 import torch
 
+import common as _common  # noqa: E402  (shared eval setup)
 import modules_v6  # noqa: F401 - sys.path injection for v3 + v4
 from modules_v6.opt_core import load_models
 from modules_v6.fnn_surrogate_ne import compute_labels_batch
@@ -92,9 +93,7 @@ from modules_v6.constants import (
     FNN_FOLDER,
 )
 
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
-_etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
+_etu = _common.load_true_utility(_ROOT)
 
 N_DET_THRESHOLDS = (1, 5, 10, 20)
 N_ENERGY_BINS = 8
@@ -626,9 +625,9 @@ def main():
                            east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
     surf = SurfaceUpMap.from_mountain(mtn).to(dev)
 
-    corpus_path, _ = _etu._corpus_paths(args.corpus)
+    corpus_path, _ = _common._corpus_paths(args.corpus)
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
-    prim = _etu.build_primaries(corpus_path, B, mtn).to(dev)
+    prim = _common.build_primaries(corpus_path, B, mtn).to(dev)
 
     fnn, _recon = load_models(dev,
                               fnn_folder=args.fnn_folder or FNN_FOLDER,

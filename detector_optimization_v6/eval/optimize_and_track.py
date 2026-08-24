@@ -15,6 +15,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import numpy as np, torch
+import common as _common  # noqa: E402  (shared eval setup)
 import modules_v6  # noqa: F401
 from modules_v6.opt_core import load_models, utility_of_xy
 from modules_v6.tr_geometry_ne import project_to_mountain_ne
@@ -25,9 +26,7 @@ from modules_v6.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, TRAINING_DATASET_FOLDER,
     FNN_FOLDER, RECON_FOLDER,
 )
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
-_etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
+_etu = _common.load_true_utility(_ROOT)
 
 
 def main():

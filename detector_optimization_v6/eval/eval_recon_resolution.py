@@ -23,6 +23,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import numpy as np, torch
+import common as _common  # noqa: E402  (shared eval setup)
 import modules_v6  # noqa: F401
 import showerdata
 from modules_v6.opt_core import load_models
@@ -36,9 +37,7 @@ from modules_v6.constants import (
     RECON_FOLDER,
     FNN_FOLDER,
 )
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
-_etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
+_etu = _common.load_true_utility(_ROOT)
 
 # Split constants — MUST match 03_train_recon_deepsets.py (SEED, VAL_FRAC).
 SPLIT_SEED = 1
@@ -189,7 +188,7 @@ def main():
         # primary.pt is row-aligned with the TRAINING corpus, so re-encode instead.
         elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev,
                                                   corpus_override=args.corpus)
-        prim = _etu.build_primaries(args.corpus, B, mtn).to(dev)
+        prim = _common.build_primaries(args.corpus, B, mtn).to(dev)
         ev_desc = f"{B} of {n_pairs} events from a corpus held out from ALL stages"
     elif args.all_events:
         elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev)

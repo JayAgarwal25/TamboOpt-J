@@ -18,7 +18,15 @@ import modules_v6  # noqa: F401
 sys.path.insert(0, _V6)  # 02_ scripts are importable by path (filename starts with a digit)
 import importlib.util as _ilu
 
-_spec = _ilu.spec_from_file_location("train_fnn_deepsets", os.path.join(_V6, "02_train_fnn_deepsets.py"))
+# The training script sits at the repo root in some checkouts and under
+# scripts/ in others, and its name starts with a digit so it is not importable
+# the normal way. Look for it rather than naming one location.
+_T2 = next((p for p in (os.path.join(_V6, "scripts", "02_train_fnn_deepsets.py"),
+                        os.path.join(_V6, "02_train_fnn_deepsets.py"))
+            if os.path.exists(p)), None)
+if _T2 is None:
+    raise SystemExit("[fired_val_check] cannot find 02_train_fnn_deepsets.py under " + _V6)
+_spec = _ilu.spec_from_file_location("train_fnn_deepsets", _T2)
 train_mod = _ilu.module_from_spec(_spec)
 # Avoid running main() on import.
 _orig_name = train_mod.__name__

@@ -40,6 +40,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import numpy as np, torch
+import common as _common  # noqa: E402  (shared eval setup)
 import modules_v6  # noqa: F401 -- sys.path injection for v3 + v4
 from modules_v6.fnn_surrogate_ne import compute_labels_batch
 from modules_v6.tr_surface_map_ne import SurfaceUpMap
@@ -48,9 +49,7 @@ from modules_v6.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_etu", os.path.join(_HERE, "plots", "eval_true_utility.py"))
-_etu = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_etu)
+_etu = _common.load_true_utility(_ROOT)
 
 # Vacuum speed of light [m/s]. Documented for the model in the module docstring; the
 # fit itself never needs to divide by it, since normalizing beta[1:4] to a unit
@@ -173,9 +172,9 @@ def main():
                            east_entry=EAST_ENTRY, layer_east_dx=LAYER_EAST_DX, n_planes=N_PLANES)
     surf = SurfaceUpMap.from_mountain(mtn).to(dev)
 
-    corpus_path, _ = _etu._corpus_paths(args.corpus)
+    corpus_path, _ = _common._corpus_paths(args.corpus)
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
-    prim = _etu.build_primaries(corpus_path, B, mtn).to(dev)
+    prim = _common.build_primaries(corpus_path, B, mtn).to(dev)
 
     if args.layout == "grid":
         e_l, n_l = _etu.grid_layout(mtn)

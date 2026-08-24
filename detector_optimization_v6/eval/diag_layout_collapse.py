@@ -48,6 +48,7 @@ for _p in (_HERE, _PLOTS):
 import numpy as np
 import torch
 
+import common as _common  # noqa: E402  (shared eval setup)
 import modules_v6  # noqa: F401
 from modules_v6.opt_core import load_models
 from modules_v4.tr_geometry import load_tr_mountain
@@ -58,7 +59,7 @@ from modules_v6.constants import (
     FNN_FOLDER, RECON_FOLDER,
 )
 
-import eval_true_utility as _etu
+_etu = _common.load_true_utility(_ROOT)
 
 
 def pair_stats(e, n):
@@ -145,9 +146,9 @@ def main():
                                 n_planes=N_PLANES)
     surf = SurfaceUpMap.from_mountain(mountain).to(dev)
 
-    corpus_path, _ = _etu._corpus_paths(args.corpus)
+    corpus_path, _ = _common._corpus_paths(args.corpus)
     elec, muon, B, n_pairs = _etu.load_events(args.n_events, dev, corpus_override=args.corpus)
-    prim = _etu.build_primaries(corpus_path, B, mountain).to(dev)
+    prim = _common.build_primaries(corpus_path, B, mountain).to(dev)
     kfn = _etu.KernelDualLabels(elec, muon, surf, dev, chunk=args.kernel_chunk)
     fnn, recon = load_models(dev,
                              fnn_folder=args.fnn_folder or FNN_FOLDER,
