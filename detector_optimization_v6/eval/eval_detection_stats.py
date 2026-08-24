@@ -1,73 +1,11 @@
-"""Detection diagnostic: how many detectors light up, kernel vs surrogate.
+"""Detection statistics: which detectors light up, kernel against surrogate.
 
-This measures DETECTION, not angular reconstruction quality. It is a narrower
-question than eval_recon_resolution.py: on the SAME held-out events and the
-SAME layout, how many detectors cross the firing threshold under the
-ground-truth plane-aware KERNEL (run directly on the real shower point
-clouds) versus under the learned dual-species SURROGATE that stands in for
-the kernel everywhere else in the pipeline (stage 3 recon training, stage 4
-layout optimization)?
-
-A detector is "lit" if its predicted particle count exceeds --threshold
-(default 1.0, the same LAYOUT_THRESHOLD opt_core.py uses to define
-reconstructability - see the comment there for why 1.0 and not the old 5e-2).
-Both sources are compared in RAW count units, not log-compressed ones:
-
-  kernel     N_tot = E_e + E_mu, from compute_labels_batch run separately on
-             the electron and muon clouds. compute_labels_batch returns the
-             kernel's raw local_intensity counts directly, no log1p.
-  surrogate  fnn(primary, xy) is the frozen dual-species surrogate; it returns
-             the combined event response in log1p space, channel 0 being
-             log1p(N_tot) (see combine_species_outputs in dual_surrogate.py).
-             torch.expm1 on that channel recovers the same raw count units as
-             the kernel, so the two sources are threshold-compared on equal
-             footing.
-
-Reports, in order:
-  a. per-event n_lit distribution (mean, p10/p25/p50/p75/p90, frac n_lit==0),
-     for each source separately.
-  b. the per-event difference n_lit_surrogate - n_lit_kernel (median, p10,
-     p90), so the surrogate's tendency to over- or under-count is explicit.
-  b2. PARTICLES per event, the total counts summed over all detectors, for each
-     source plus their ratio. Detector counts alone are a thresholded view and
-     discard magnitude, so this says whether the two sources agree on how much
-     signal an event deposits, not merely on how many slots cross the cut.
-  b3. where the surrogate's excess lands on slots the kernel leaves DARK, split
-     by whether it stays under the firing threshold or crosses it. This
-     separates two failure modes that produce identical detector counts: a
-     small surplus everywhere that tips near-threshold slots over, versus
-     invented bright detectors. Only the ABOVE-threshold share causes false
-     detections.
-  c. per-detector confusion between the two sources, aggregated over every
-     event and detector: both-lit, kernel-only, surrogate-only, neither
-     counts and rates, plus precision/recall/F1 of the surrogate treating the
-     kernel as truth. This is the direct answer to "which detectors light up
-     and which do not".
-  d. detection efficiency vs primary energy: 8 bins spaced uniformly across
-     the trained log10(E) range, each reporting n_events, mean n_lit
-     (kernel), and the fraction of events with at least N_DET detectors lit,
-     for N_DET in (1, 5, 10, 20). The classic aperture-style curve.
-  e. the same table vs decay vertex distance from the array centre (8
-     quantile bins in the horizontal distance sqrt(rel_E^2 + rel_N^2)).
-  f. one compact summary line giving the overall kernel detection fractions
-     at each N_DET.
-
-Everything is chunked over events like eval_recon_resolution.py and
-eval_true_utility.py, so this scales to tens of thousands of held-out events
-without holding (events, points, detectors) kernel intermediates or
-(events, detectors) surrogate activations all at once. Chunking here is only
-summation and concatenation over the event axis, both of which are exact, not
-an approximation of the whole-batch result.
-
-With --plot_dir, the same arrays each table above is printed from are also
-drawn into PNG figures (n_lit histogram, n_lit scatter density, confusion
-matrix, efficiency vs energy, efficiency vs vertex distance) written to that
-directory. Plotting never recomputes anything and a plotting failure never
-drops the printed tables.
+Compares the two on the same showers and the same layout, where they should
+agree. Reports the lit-count distributions, the per-event pairing, a confusion
+breakdown over detector slots, and efficiency binned by energy and by decay
+distance.
 
     python eval/eval_detection_stats.py --n-events 8000 --layout grid
-    python eval/eval_detection_stats.py --recon_dir <dir> --layout /path/to/layout_best.pt \
-        --plot_dir /path/to/figures
 """
 import argparse
 import os
@@ -93,7 +31,7 @@ from modules_v6.constants import (
     FNN_FOLDER,
 )
 
-_etu = _common.load_true_utility(_ROOT)
+_etu = _common.load_true_utility()
 
 N_DET_THRESHOLDS = (1, 5, 10, 20)
 N_ENERGY_BINS = 8

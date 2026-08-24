@@ -26,7 +26,7 @@ from modules_v6.constants import (
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES, TRAINING_DATASET_FOLDER,
     FNN_FOLDER, RECON_FOLDER,
 )
-_etu = _common.load_true_utility(_ROOT)
+_etu = _common.load_true_utility()
 
 
 def main():

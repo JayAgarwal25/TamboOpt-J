@@ -30,8 +30,16 @@ _TRUE_UTILITY_CANDIDATES = (
 )
 
 
-def load_true_utility(root):
-    """Import the scoring module by path, wherever it lives in this checkout."""
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_true_utility(root=None):
+    """Import the scoring module by path, wherever it lives in this checkout.
+
+    The root is derived from this file rather than passed in, because the
+    scripts do not agree on what to call their root variable.
+    """
+    root = root or _REPO_ROOT
     for parts in _TRUE_UTILITY_CANDIDATES:
         path = os.path.join(root, *parts)
         if os.path.exists(path):

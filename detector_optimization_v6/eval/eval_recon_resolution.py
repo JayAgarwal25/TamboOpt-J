@@ -37,7 +37,7 @@ from modules_v6.constants import (
     RECON_FOLDER,
     FNN_FOLDER,
 )
-_etu = _common.load_true_utility(_ROOT)
+_etu = _common.load_true_utility()
 
 # Split constants — MUST match 03_train_recon_deepsets.py (SEED, VAL_FRAC).
 SPLIT_SEED = 1

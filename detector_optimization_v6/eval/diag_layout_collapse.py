@@ -1,36 +1,12 @@
-"""How much of an optimized layout's utility depends on detectors being stacked?
+"""How much of an optimized layout's gain survives a separation floor?
 
-`04_optimize_lbfgs_ensemble.py` reports the minimum pairwise separation of the
-layout it saves, and the phase3 run came back with 0.541 m (grid, 2 pairs under
-1 m) and 0.108 m (center, 12 pairs). Detectors 11 cm apart are not two detectors.
-The kernel evaluates each one independently against the same point cloud, so
-co-locating them counts the same particles twice and raises U without collecting
-anything more.
+Optimized layouts can place detectors arbitrarily close together, which is not
+buildable. This enforces a minimum pairwise separation, re-scores the layout, and
+reports the utility lost, against the grid and centre baselines for scale.
+Scoring reuses the shared scorer so the numbers stay comparable.
 
-That makes the reported U ambiguous: some unknown share of it is physics and some
-is the double count. This measures the split by enforcing a floor on the pairwise
-separation and re-scoring.
-
-    for each d_min: push every pair closer than d_min apart, re-snap to the
-    mountain, iterate to a fixed point, then score with the UNMODIFIED
-    `eval_true_utility.score` so the numbers are directly comparable to that
-    script's, on both the surrogate and the kernel.
-
-HOW TO READ IT. The relaxation confounds two things, and the confound only ever
-makes the artifact look BIGGER than it is: separating detectors removes the
-double count, but it also moves them off the optimum the sweep found. So
-
-    U survives a 10-20 m floor nearly intact -> stacking was not load-bearing,
-                                                the gain is mostly real.
-    U collapses toward baseline               -> upper bound on the artifact;
-                                                cannot separate the two causes,
-                                                but the reported U is not safe.
-
-Baselines (grid, center, unrelaxed) are scored in the same run so the sweep is
-read against them rather than in absolute terms.
-
-    python eval/diag_layout_collapse.py --layout <layout_best.pt> \
-        --fnn_folder <dir> --recon_dir <dir> --n-events 2048
+A small loss means the near-coincident detectors are cosmetic; a large one means
+the reported gain depends on a geometry nobody can build.
 """
 import argparse
 import json
@@ -59,7 +35,7 @@ from modules_v6.constants import (
     FNN_FOLDER, RECON_FOLDER,
 )
 
-_etu = _common.load_true_utility(_ROOT)
+_etu = _common.load_true_utility()
 
 
 def pair_stats(e, n):

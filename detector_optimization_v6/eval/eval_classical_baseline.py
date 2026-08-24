@@ -1,39 +1,10 @@
-"""Classical plane-wave timing fit -- the first NON-ML baseline for this project.
+"""Classical baseline: how well does a plane-wave fit reconstruct direction?
 
-Every angular number quoted so far (recon median ~18.5 deg at the grid layout) comes
-from a learned reconstruction. There has never been a classical number to calibrate
-those against: is 18.5 deg good, bad, or about what a textbook timing fit gets on
-this array? This script answers that with the oldest trick in shower reconstruction:
-fit a plane wavefront to the per-detector arrival times and read off its normal.
+Fits the shower front directly from detector positions and arrival times, with no
+network anywhere, so it bounds what the timing alone carries. The learned recon
+should beat it; if it does not, the network is not adding information.
 
-Per event, per fired detector, the kernel gives (E = energy-weighted count,
-T = kernel-weighted MEAN arrival time [s]). This script assumes that mean-time
-normalization holds (a parallel change is landing it in the kernel module)
--- a kernel that instead returns a summed or otherwise unnormalized time will silently
-wreck the linear model below, since the fit treats T as a physical arrival time, not
-an accumulator.
-
-The two species (electron, muon) are combined in RAW physical space before fitting,
-never in the log1p channels the ML surrogate/recon use -- those are training-space
-transforms, not physics:
-
-    N_tot = E_e + E_mu
-    T_tot = (E_e * T_e + E_mu * T_mu) / N_tot
-
-Fit: assume a plane wavefront, t_i = t0 + (d . r_i) / c, linear in the unknowns
-beta = (t0, d_x/c, d_y/c, d_z/c). Solved per event by weighted least squares
-(weights = N_tot, so bright/well-timed detectors dominate); the direction estimate
-is beta[1:4] renormalized to a unit vector. c cancels under that renormalization,
-so it never has to appear explicitly in the algebra -- it is kept here only as a
-documented physical constant.
-
-Reports median/68%/95% great-circle error against the true directions, for the
-plane fit and for a constant "predict the population mean" prior, overall and
-broken out by fired-detector-count band, mirroring eval_recon_resolution.py's
-band-reporting style.
-
-    python eval/eval_classical_baseline.py --n-events 4000 --layout grid
-    python eval/eval_classical_baseline.py --n-events 4000 --layout /path/to/layout_best.pt
+    python eval/eval_classical_baseline.py --n-events 2000
 """
 import argparse, math, os, sys
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +20,7 @@ from modules_v6.constants import (
     GEOMETRY_PATH_RESOLVED, GEOMETRY_GROUP, DET_KEY,
     EAST_ENTRY, LAYER_EAST_DX, N_PLANES,
 )
-_etu = _common.load_true_utility(_ROOT)
+_etu = _common.load_true_utility()
 
 # Vacuum speed of light [m/s]. Documented for the model in the module docstring; the
 # fit itself never needs to divide by it, since normalizing beta[1:4] to a unit
@@ -63,34 +34,27 @@ BANDS = [(0, 4, "0-4"), (5, 14, "5-14"), (15, 29, "15-29"), (30, None, "30+")]
 def fit_plane_wave(positions, times, weights, min_detectors=4, ref_dir=None):
     """Weighted least-squares plane-wave timing fit for a SINGLE event.
 
-    Model: t_i = t0 + (d . r_i) / c, linear in beta = (t0, d_x/c, d_y/c, d_z/c).
-    The design row per detector is (1, East_i, North_i, Up_i); rows are scaled by
-    sqrt(weight) so brighter detectors dominate a straightforward weighted normal-
-    equations fit. The direction estimate is beta[1:4] renormalized to a unit
-    vector -- the 1/c factor is common to all three components and cancels there.
+    Model t_i = t0 + (d . r_i) / c, linear in (t0, d/c). Design rows are
+    (1, East, North, Up), scaled by sqrt(weight) so brighter detectors dominate.
+    The direction is beta[1:4] renormalized; the common 1/c cancels.
 
-    Sign convention: this linear model has no ambiguity in principle (unlike e.g. a
-    fit to |d|^2 = 1), but which physical sign of d the corpus's stored directions
-    use relative to "the direction time increases along" is exactly the kind of
-    thing that should be checked against data, not assumed. `ref_dir`, when given,
-    resolves the sign by flipping to whichever branch has positive dot product
-    with it, so a caller can pin every event to a single consistent convention
-    without ever touching that event's own truth (see the population-mean prior
-    built in main() for how this script builds `ref_dir`).
+    `ref_dir` resolves the sign. The model has no ambiguity in principle, but
+    which sign of d the corpus's stored directions use is a thing to check
+    against data rather than assume, so a caller can pin every event to one
+    convention without touching that event's own truth.
 
     Args:
         positions     : (n, 3) detector (East, North, Up) [m].
         times         : (n,) combined arrival times [s].
-        weights       : (n,) nonnegative fit weights (typically detector counts).
-        min_detectors : below this many fired detectors the 4-unknown system is
-            underdetermined; returns None rather than an unreliable fit.
+        weights       : (n,) nonnegative fit weights, typically detector counts.
+        min_detectors : below this the 4-unknown system is underdetermined and
+            None is returned rather than an unreliable fit.
         ref_dir       : optional (3,) reference direction for sign resolution.
-            When None, the raw least-squares sign is returned as-is.
 
     Returns:
-        (3,) unit direction tensor, or None when `positions` has fewer than
-        `min_detectors` rows (or the fit is numerically degenerate).
+        (3,) unit direction tensor, or None if underdetermined or degenerate.
     """
+
     positions = torch.as_tensor(positions)
     times = torch.as_tensor(times)
     weights = torch.as_tensor(weights)
