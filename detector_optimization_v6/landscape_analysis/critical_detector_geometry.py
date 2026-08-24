@@ -55,8 +55,12 @@ assert dips.shape[0] == N_DETECTORS
 layout = torch.load(
     _layouts.primary(),
     map_location="cpu", weights_only=False)
-N_pos = layout["x"].float().reshape(-1)   # North
-E_pos = layout["y"].float().reshape(-1)   # East
+# layout_best.pt stores x = East and y = North (04 sets best_x = e_init), so the
+# North array is "y" and the East array is "x". Reading them the other way round
+# fed East into surface()'s North slot and into east_to_z_cont, and measured the
+# distance to the bbox edge against the wrong extents.
+E_pos = layout["x"].float().reshape(-1)   # East
+N_pos = layout["y"].float().reshape(-1)   # North
 assert N_pos.shape[0] == N_DETECTORS
 
 with torch.no_grad():

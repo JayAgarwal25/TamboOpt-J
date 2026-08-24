@@ -208,12 +208,12 @@ try:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(7, 6))
-    ax.scatter(center_pos[:, 1], center_pos[:, 0], s=30, c="lightgray", label="center-scheme (all)")
-    ax.scatter(grid_pos_aligned[:, 1], grid_pos_aligned[:, 0], s=30, c="lightblue",
+    ax.scatter(center_pos[:, 0], center_pos[:, 1], s=30, c="lightgray", label="center-scheme (all)")
+    ax.scatter(grid_pos_aligned[:, 0], grid_pos_aligned[:, 1], s=30, c="lightblue",
                marker="^", label="grid-scheme (all, aligned)")
-    ax.scatter(center_critical_pos[:, 1], center_critical_pos[:, 0], s=150, c="red",
+    ax.scatter(center_critical_pos[:, 0], center_critical_pos[:, 1], s=150, c="red",
                edgecolor="black", label="center-scheme critical")
-    ax.scatter(grid_critical_pos[:, 1], grid_critical_pos[:, 0], s=150, c="blue",
+    ax.scatter(grid_critical_pos[:, 0], grid_critical_pos[:, 1], s=150, c="blue",
                marker="^", edgecolor="black", label="grid-scheme critical")
     ax.set_xlabel("East (m)")
     ax.set_ylabel("North (m)")
